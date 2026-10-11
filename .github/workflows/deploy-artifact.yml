@@ -51,6 +51,7 @@ jobs:
       - name: Build and test exact commit
         run: |
           npm ci --ignore-scripts
+          npx playwright install --with-deps chromium
           npm run verify:all
 
       - name: Build immutable runtime images

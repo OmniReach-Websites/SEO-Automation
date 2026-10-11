@@ -29,7 +29,9 @@ jobs:
           cache: npm
 
       - name: Install locked dependencies
-        run: npm ci --ignore-scripts
+        run: |
+          npm ci --ignore-scripts
+          npx playwright install --with-deps chromium
 
       - name: Validate workflow policy
         run: npm run check:workflows
