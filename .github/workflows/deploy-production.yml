@@ -33,8 +33,13 @@ jobs:
 
       - name: Build and test exact commit
         run: |
+          cleanup() {
+            docker compose --file infrastructure/compose/dev.compose.yml down --volumes --remove-orphans
+          }
+          trap cleanup EXIT
           npm ci --ignore-scripts
           npx playwright install --with-deps chromium
+          docker compose --file infrastructure/compose/dev.compose.yml up --detach --wait
           npm run verify:goal -- G30
           npm run verify:production-compose
           npm run scan:secrets -- --full-history

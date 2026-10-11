@@ -92,6 +92,18 @@ export function checkWorkflows(directory = workflowsDirectory) {
         errors.push(`${file}: reusable artifacts must use the fixed target incoming directory`);
       }
     }
+    if (isReusableDeploy || isProductionDeploy) {
+      if (
+        !source.includes(
+          'docker compose --file infrastructure/compose/dev.compose.yml up --detach --wait',
+        ) ||
+        !source.includes(
+          'docker compose --file infrastructure/compose/dev.compose.yml down --volumes --remove-orphans',
+        )
+      ) {
+        errors.push(`${file}: full release verification must manage its disposable dependency stack`);
+      }
+    }
 
     visit(workflow, (value, path) => {
       if (path.at(-1) === 'uses' && typeof value === 'string') {
