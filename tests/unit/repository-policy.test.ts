@@ -50,7 +50,7 @@ describe('public repository policy', () => {
   it('keeps branch CI read-only, SHA-pinned, and free of deployment paths', () => {
     expect(checkWorkflows()).toMatchObject({
       errors: [],
-      files: ['ci.yml', 'deploy-artifact.yml'],
+      files: ['ci.yml', 'deploy-artifact.yml', 'deploy-production.yml'],
       ok: true,
     });
   });

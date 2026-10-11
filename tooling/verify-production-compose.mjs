@@ -121,7 +121,13 @@ try {
   for (const secret of before) assert.ok(!rendered.stdout.includes(secret));
 
   stackCreated = true;
-  dockerCompose(['up', '--detach', '--build', '--wait']);
+  try {
+    dockerCompose(['up', '--detach', '--build', '--wait']);
+  } catch (error) {
+    dockerCompose(['ps'], { allowFailure: true });
+    dockerCompose(['logs', '--no-color', '--tail', '100', 'redis'], { allowFailure: true });
+    throw error;
+  }
 
   const unauthenticatedRedis = dockerCompose(['exec', '--no-TTY', 'redis', 'redis-cli', 'ping'], {
     allowFailure: true,

@@ -37,13 +37,14 @@ export function checkWorkflows(directory = workflowsDirectory) {
     const workflow = document.toJS();
     const isBranchCi = file === 'ci.yml';
     const isReusableDeploy = file === 'deploy-artifact.yml';
+    const isProductionDeploy = file === 'deploy-production.yml';
     if (isBranchCi && (!workflow?.on?.push || !Object.hasOwn(workflow.on, 'pull_request'))) {
       errors.push(`${file}: branch CI must run for pushes and pull requests`);
     }
     if (isReusableDeploy && !Object.hasOwn(workflow?.on ?? {}, 'workflow_call')) {
       errors.push(`${file}: inert deploy foundation must be reusable only`);
     }
-    if (!isBranchCi && !isReusableDeploy)
+    if (!isBranchCi && !isReusableDeploy && !isProductionDeploy)
       errors.push(`${file}: workflow is not registered by policy`);
     if (workflow?.pull_request_target) errors.push(`${file}: pull_request_target is forbidden`);
     if (
@@ -61,6 +62,18 @@ export function checkWorkflows(directory = workflowsDirectory) {
       )
     ) {
       errors.push(`${file}: reusable foundation must not bind a production environment`);
+    }
+    if (isProductionDeploy) {
+      if (workflow?.on?.push?.branches?.length !== 1 || workflow.on.push.branches[0] !== 'main') {
+        errors.push(`${file}: production deployment must trigger only from main`);
+      }
+      const jobs = Object.values(workflow?.jobs ?? {});
+      if (jobs.length !== 1 || jobs[0]?.environment !== 'production') {
+        errors.push(`${file}: production deployment must bind the production environment`);
+      }
+      if (!source.includes('omnireach-release deploy ${GITHUB_SHA}')) {
+        errors.push(`${file}: production deployment must activate the exact pushed SHA`);
+      }
     }
     if (
       isReusableDeploy &&

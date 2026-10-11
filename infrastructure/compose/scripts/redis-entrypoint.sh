@@ -27,4 +27,3 @@ exec docker-entrypoint.sh redis-server \
   --appendfsync everysec \
   --save 60 1 \
   --aclfile /run/omnireach-redis/users.acl
-

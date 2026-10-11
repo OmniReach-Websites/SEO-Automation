@@ -1,7 +1,8 @@
 # Production Compose and Datastore Runbook
 
-**Status:** Repository implementation only; no production installation or activation  
-**Authority:** This runbook does not authorize VPS, DNS, Caddy, provider, or service changes
+**Status:** Production release automation implemented; activation still requires an authorized change
+**Authority:** The owner authorized production completion on 2026-10-11. Provider spending
+and destructive backup operations remain separately controlled by their documented gates.
 
 ## Security and ownership model
 
@@ -47,8 +48,9 @@ files.
 
 ## First deployment procedure
 
-These commands are for a future authorized maintenance window. Do not run them merely
-because they are documented.
+The target bootstrap is intentionally a one-time root action. Subsequent deployments use
+the restricted `omnireach-deploy` account and never grant it Docker-socket access or
+general sudo.
 
 1. Re-run the read-only inventory and verify available CPU, RAM, disk, ports, Docker
    version, Christians Reunite health, and shared Caddy state.
