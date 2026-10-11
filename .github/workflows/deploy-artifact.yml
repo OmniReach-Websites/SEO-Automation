@@ -57,6 +57,7 @@ jobs:
           npm ci --ignore-scripts
           npx playwright install --with-deps chromium
           docker compose --file infrastructure/compose/dev.compose.yml up --detach --wait
+          npm run verify:local-stack
           npm run verify:goal -- G30
           npm run verify:production-compose
           npm run scan:secrets -- --full-history

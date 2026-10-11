@@ -99,7 +99,8 @@ export function checkWorkflows(directory = workflowsDirectory) {
         ) ||
         !source.includes(
           'docker compose --file infrastructure/compose/dev.compose.yml down --volumes --remove-orphans',
-        )
+        ) ||
+        !source.includes('npm run verify:local-stack')
       ) {
         errors.push(
           `${file}: full release verification must manage its disposable dependency stack`,
