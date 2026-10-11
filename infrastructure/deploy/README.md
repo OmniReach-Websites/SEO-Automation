@@ -33,3 +33,10 @@ configuration/secret paths to `production.compose.yml`, holds the release lock t
 migration and readiness, loads only the checksummed CI-built images, invokes Compose with
 `--no-build`, and leaves shared Caddy untouched until its distinct approved step. See
 [`../../docs/production-compose.md`](../../docs/production-compose.md).
+
+`configure-caddy-route.sh` is the separately authorized, one-time integration step for
+the inventoried shared Caddy instance. It refuses to run if the inventoried Caddyfile has
+changed, creates a timestamped backup, adds only `admin.omnireach.cloud`, validates before
+reload, checks Christians Reunite after reload, and restores the prior file on failure.
+It requires root because the shared Caddy configuration is deliberately outside the
+restricted release account's authority. DNS changes remain a separate operation.
