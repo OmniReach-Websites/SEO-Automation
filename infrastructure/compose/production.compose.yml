@@ -147,6 +147,12 @@ services:
   api:
     <<: *omnireach-runtime
     profiles: ['application']
+    networks:
+      backend:
+      egress:
+      proxy:
+        aliases:
+          - omnireach-api
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -183,6 +189,9 @@ networks:
     internal: true
   egress:
     name: ${OMNIREACH_RESOURCE_PREFIX:-omnireach-production}-egress
+  proxy:
+    external: true
+    name: ${OMNIREACH_PROXY_NETWORK:-christiansreunite_frontend}
 
 volumes:
   platform-data:

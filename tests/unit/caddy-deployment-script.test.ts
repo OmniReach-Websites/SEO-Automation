@@ -33,7 +33,9 @@ describe('shared Caddy integration script', () => {
 
   it('adds only the approved host and loopback-published API upstream', () => {
     expect(source).toContain('admin.omnireach.cloud {');
-    expect(source).toContain('reverse_proxy host.docker.internal:44100');
+    expect(source).toContain('reverse_proxy omnireach-api:4100');
+    expect(source).toContain('caddy validate --config /dev/stdin');
+    expect(source).toContain('caddy reload --force --config /dev/stdin');
     expect(source).toContain('X-Robots-Tag "noindex, nofollow, noarchive"');
     expect(source).not.toContain('www.omnireach.cloud {');
   });

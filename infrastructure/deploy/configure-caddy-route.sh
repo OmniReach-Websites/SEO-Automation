@@ -31,22 +31,22 @@ cat >>"$candidate" <<'EOF'
 admin.omnireach.cloud {
     encode gzip
     header X-Robots-Tag "noindex, nofollow, noarchive"
-    reverse_proxy host.docker.internal:44100
+    reverse_proxy omnireach-api:4100
 }
 EOF
 
 mv -- "$candidate" "$caddyfile"
 if ! docker compose --file "$compose_file" exec -T caddy \
-  caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile; then
+  caddy validate --config /dev/stdin --adapter caddyfile <"$caddyfile"; then
   cp --preserve=mode,ownership -- "$backup" "$caddyfile"
   fail 'candidate configuration was invalid; the prior file was restored'
 fi
 
 if ! docker compose --file "$compose_file" exec -T caddy \
-  caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile; then
+  caddy reload --force --config /dev/stdin --adapter caddyfile <"$caddyfile"; then
   cp --preserve=mode,ownership -- "$backup" "$caddyfile"
   docker compose --file "$compose_file" exec -T caddy \
-    caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile || true
+    caddy reload --force --config /dev/stdin --adapter caddyfile <"$caddyfile" || true
   fail 'reload failed; the prior file was restored and reload was retried'
 fi
 
@@ -55,7 +55,7 @@ status=$(curl --fail --silent --show-error --output /dev/null --write-out '%{htt
 if [ "$status" != 200 ]; then
   cp --preserve=mode,ownership -- "$backup" "$caddyfile"
   docker compose --file "$compose_file" exec -T caddy \
-    caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile || true
+    caddy reload --force --config /dev/stdin --adapter caddyfile <"$caddyfile" || true
   fail 'existing Christians Reunite route failed after reload; prior configuration restored'
 fi
 
