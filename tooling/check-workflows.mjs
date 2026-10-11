@@ -101,7 +101,9 @@ export function checkWorkflows(directory = workflowsDirectory) {
           'docker compose --file infrastructure/compose/dev.compose.yml down --volumes --remove-orphans',
         )
       ) {
-        errors.push(`${file}: full release verification must manage its disposable dependency stack`);
+        errors.push(
+          `${file}: full release verification must manage its disposable dependency stack`,
+        );
       }
     }
 
