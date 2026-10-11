@@ -74,12 +74,23 @@ export function checkWorkflows(directory = workflowsDirectory) {
       if (!source.includes('omnireach-release deploy ${GITHUB_SHA}')) {
         errors.push(`${file}: production deployment must activate the exact pushed SHA`);
       }
+      if (!source.includes('${TARGET_USER}@${TARGET_HOST}:/opt/servers/omnireach/incoming/')) {
+        errors.push(`${file}: production artifacts must use the fixed target incoming directory`);
+      }
     }
     if (
       isReusableDeploy &&
       (!source.includes('StrictHostKeyChecking=yes') || !source.includes('known_hosts'))
     ) {
       errors.push(`${file}: reusable foundation must pin and strictly verify the SSH host key`);
+    }
+    if (isReusableDeploy) {
+      if (!source.includes('omnireach-release deploy ${GITHUB_SHA}')) {
+        errors.push(`${file}: reusable deployment must use the restricted deploy operation`);
+      }
+      if (!source.includes('${TARGET_USER}@${TARGET_HOST}:/opt/servers/omnireach/incoming/')) {
+        errors.push(`${file}: reusable artifacts must use the fixed target incoming directory`);
+      }
     }
 
     visit(workflow, (value, path) => {

@@ -35,7 +35,10 @@ jobs:
         run: |
           npm ci --ignore-scripts
           npx playwright install --with-deps chromium
-          npm run verify:all
+          npm run verify:goal -- G30
+          npm run verify:production-compose
+          npm run scan:secrets -- --full-history
+          npm audit --omit=dev --audit-level=high
 
       - name: Build immutable runtime images
         env:
@@ -74,7 +77,7 @@ jobs:
           test -n "${TARGET_HOST}"
           test "${TARGET_USER}" = omnireach-deploy
           scp -o BatchMode=yes -o StrictHostKeyChecking=yes "${GITHUB_SHA}.tgz" "${GITHUB_SHA}.tgz.sha256" \
-            "${TARGET_USER}@${TARGET_HOST}:incoming/"
+            "${TARGET_USER}@${TARGET_HOST}:/opt/servers/omnireach/incoming/"
           ssh -o BatchMode=yes -o StrictHostKeyChecking=yes "${TARGET_USER}@${TARGET_HOST}" \
             "omnireach-release deploy ${GITHUB_SHA}"
 
