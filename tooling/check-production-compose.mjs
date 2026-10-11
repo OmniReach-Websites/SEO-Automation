@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -126,6 +127,28 @@ export function checkProductionCompose() {
   if (!bootstrap.includes('openssl rand -hex 32')) errors.push('bootstrap lacks strong generation');
   if (!bootstrap.includes('if [ -e "$target" ]')) errors.push('bootstrap is not idempotent');
   if (/set\s+-x/u.test(bootstrap)) errors.push('bootstrap may echo secret-bearing commands');
+
+  const indexedModes = execFileSync(
+    'git',
+    [
+      'ls-files',
+      '--stage',
+      'infrastructure/compose/scripts/bootstrap-secrets.sh',
+      'infrastructure/compose/scripts/migrate-entrypoint.sh',
+      'infrastructure/compose/scripts/redis-entrypoint.sh',
+      'infrastructure/compose/scripts/runtime-entrypoint.sh',
+    ],
+    { cwd: root, encoding: 'utf8' },
+  );
+  for (const script of [
+    'bootstrap-secrets.sh',
+    'migrate-entrypoint.sh',
+    'redis-entrypoint.sh',
+    'runtime-entrypoint.sh',
+  ]) {
+    const line = indexedModes.split(/\r?\n/u).find((entry) => entry.endsWith(`/scripts/${script}`));
+    if (!line?.startsWith('100755 ')) errors.push(`${script} must be executable in Git`);
+  }
 
   if (/POSTGRES_PASSWORD:\s*(?!FILE)/u.test(source)) {
     errors.push('production Compose contains a literal PostgreSQL password setting');
