@@ -246,6 +246,27 @@ describe('authentication route safety', () => {
     expect(challenge.statusCode).toBe(202);
     expect(challenge.headers['set-cookie']).toBeUndefined();
 
+    const formChallenge = await server.inject({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        host: 'admin.fictional.test',
+        origin: 'https://admin.fictional.test',
+      },
+      method: 'POST',
+      payload: 'email=owner%40example.test&password=fictional-password',
+      url: '/auth/login',
+    });
+    expect(formChallenge.statusCode).toBe(303);
+    expect(formChallenge.headers.location).toBe('/mfa?challengeId=challenge-a');
+
+    const mfaPage = await server.inject({
+      headers: { host: 'admin.fictional.test' },
+      method: 'GET',
+      url: '/mfa?challengeId=challenge-a',
+    });
+    expect(mfaPage.body).toContain('action="/auth/mfa/verify"');
+    expect(mfaPage.body).toContain('value="challenge-a"');
+
     const verified = await server.inject({
       headers: { host: 'admin.fictional.test', origin: 'https://admin.fictional.test' },
       method: 'POST',
@@ -254,6 +275,20 @@ describe('authentication route safety', () => {
     });
     expect(verified.statusCode).toBe(200);
     expect(verified.headers['set-cookie']).toContain('fictional-mfa-session-token');
+
+    const verifiedForm = await server.inject({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        host: 'admin.fictional.test',
+        origin: 'https://admin.fictional.test',
+      },
+      method: 'POST',
+      payload: 'challengeId=challenge-a&code=123456',
+      url: '/auth/mfa/verify',
+    });
+    expect(verifiedForm.statusCode).toBe(303);
+    expect(verifiedForm.headers.location).toBe('/orap/sites');
+    expect(verifiedForm.headers['set-cookie']).toContain('fictional-mfa-session-token');
 
     const revoked = await server.inject({
       cookies: { '__Host-omnireach_session': 'current-token' },
