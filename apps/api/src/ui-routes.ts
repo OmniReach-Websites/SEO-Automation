@@ -23,8 +23,8 @@ export function registerUiRoutes(
   server.get('/login', async (request, reply) =>
     reply.type('text/html; charset=utf-8').send(renderLogin(request.hostname)),
   );
-  server.get('/mfa', async (_request, reply) =>
-    reply.type('text/html; charset=utf-8').send(renderMfa()),
+  server.get<{ Querystring: { challengeId?: string } }>('/mfa', async (request, reply) =>
+    reply.type('text/html; charset=utf-8').send(renderMfa(request.query?.challengeId ?? '')),
   );
   server.get<{ Querystring: { token?: string } }>(
     '/auth/invitations/accept',
@@ -126,8 +126,8 @@ function renderLogin(hostname: string): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><title>Sign in | OmniReach</title></head><body><a href="#main">Skip to content</a><main id="main"><h1>Sign in</h1><p>Continue to the administration site for <strong>${escapeHtml(hostname)}</strong>.</p><form method="post" action="/auth/login"><label for="email">Email</label><input id="email" name="email" type="email" autocomplete="username" required><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required><button type="submit">Sign in</button></form><p><a href="/auth/recovery">Recover access</a></p></main></body></html>`;
 }
 
-function renderMfa(): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><title>Verify sign in | OmniReach</title></head><body><a href="#main">Skip to content</a><main id="main"><h1>Verify sign in</h1><form method="post" action="/auth/mfa"><label for="challengeId">Challenge</label><input id="challengeId" name="challengeId" autocomplete="off" required><label for="code">Authenticator or recovery code</label><input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" required><button type="submit">Verify</button></form></main></body></html>`;
+function renderMfa(challengeId: string): string {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><title>Verify sign in | OmniReach</title></head><body><a href="#main">Skip to content</a><main id="main"><h1>Verify sign in</h1><form method="post" action="/auth/mfa/verify"><input name="challengeId" type="hidden" value="${escapeHtml(challengeId)}"><label for="code">Authenticator or recovery code</label><input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" required autofocus><button type="submit">Verify</button></form></main></body></html>`;
 }
 
 function renderInvitation(token: string): string {

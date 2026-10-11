@@ -117,12 +117,21 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
       });
       if (result.kind === 'invalid') return reply.code(401).send({ error: 'invalid_credentials' });
       if (result.kind === 'mfa-required') {
+        if (isFormSubmission(request)) {
+          return reply
+            .code(303)
+            .redirect(`/mfa?challengeId=${encodeURIComponent(result.challengeId)}`);
+        }
         return reply.code(202).send({ challengeId: result.challengeId, status: result.kind });
       }
-      return reply
-        .setCookie('__Host-omnireach_session', result.sessionToken, sessionCookieOptions())
-        .code(200)
-        .send({ status: result.kind });
+      const authenticated = reply.setCookie(
+        '__Host-omnireach_session',
+        result.sessionToken,
+        sessionCookieOptions(),
+      );
+      return isFormSubmission(request)
+        ? authenticated.code(303).redirect('/')
+        : authenticated.code(200).send({ status: result.kind });
     },
   );
 
@@ -215,10 +224,14 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
       if (result.kind !== 'authenticated') {
         return reply.code(401).send({ error: 'invalid_challenge' });
       }
-      return reply
-        .setCookie('__Host-omnireach_session', result.sessionToken, sessionCookieOptions())
-        .code(200)
-        .send({ status: 'authenticated' });
+      const authenticated = reply.setCookie(
+        '__Host-omnireach_session',
+        result.sessionToken,
+        sessionCookieOptions(),
+      );
+      return isFormSubmission(request)
+        ? authenticated.code(303).redirect('/orap/sites')
+        : authenticated.code(200).send({ status: 'authenticated' });
     },
   );
 
@@ -280,6 +293,12 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
       return revoked ? reply.code(204).send() : reply.code(404).send({ error: 'not_found' });
     },
   );
+}
+
+function isFormSubmission(request: FastifyRequest): boolean {
+  return String(request.headers['content-type'] ?? '')
+    .toLowerCase()
+    .startsWith('application/x-www-form-urlencoded');
 }
 
 function sessionToken(request: FastifyRequest): string | undefined {
