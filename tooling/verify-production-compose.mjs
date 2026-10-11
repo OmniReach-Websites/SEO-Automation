@@ -269,6 +269,11 @@ try {
       project: basename(project),
     }),
   );
+} catch (error) {
+  if (stackCreated) {
+    dockerCompose(['logs', '--no-color', 'migrate', 'postgres'], { allowFailure: true });
+  }
+  throw error;
 } finally {
   if (stackCreated) {
     dockerCompose(['down', '--volumes', '--remove-orphans'], { allowFailure: true });
