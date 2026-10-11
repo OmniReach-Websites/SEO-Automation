@@ -12,6 +12,7 @@ const bootstrapScript = '/workspace/infrastructure/compose/scripts/bootstrap-sec
 const runId = randomBytes(6).toString('hex');
 const project = `omnireach-production-test-${runId}`;
 const resourcePrefix = `omnireach-test-${runId}`;
+const proxyNetwork = `${resourcePrefix}-proxy`;
 const releaseSha = randomBytes(20).toString('hex');
 const apiPort = String(45_000 + (process.pid % 1_000));
 const temporaryRoot = await mkdtemp(resolve(tmpdir(), 'omnireach-production-compose-'));
@@ -25,6 +26,7 @@ const environment = {
   OMNIREACH_ENV_FILE: environmentFile,
   OMNIREACH_RELEASE_SHA: releaseSha,
   OMNIREACH_RESOURCE_PREFIX: resourcePrefix,
+  OMNIREACH_PROXY_NETWORK: proxyNetwork,
   OMNIREACH_SECRETS_DIR: secretsDirectory,
 };
 const compose = [
@@ -72,7 +74,10 @@ async function secretValues() {
 }
 
 let stackCreated = false;
+let proxyNetworkCreated = false;
 try {
+  run('docker', ['network', 'create', proxyNetwork]);
+  proxyNetworkCreated = true;
   run('docker', [
     'run',
     '--rm',
@@ -114,6 +119,8 @@ try {
   assert.deepEqual(configuration.services.postgres.ports ?? [], []);
   assert.deepEqual(configuration.services.redis.ports ?? [], []);
   assert.match(configuration.services.api.ports[0].host_ip, /^127\.0\.0\.1$/u);
+  assert.deepEqual(configuration.services.api.networks.proxy.aliases, ['omnireach-api']);
+  assert.equal(configuration.networks.proxy.external, true);
   for (const serviceName of ['postgres', 'redis']) {
     assert.ok(configuration.services[serviceName].volumes.length > 0);
     assert.deepEqual(configuration.services[serviceName].networks, { backend: null });
@@ -283,6 +290,9 @@ try {
 } finally {
   if (stackCreated) {
     dockerCompose(['down', '--volumes', '--remove-orphans'], { allowFailure: true });
+  }
+  if (proxyNetworkCreated) {
+    run('docker', ['network', 'rm', proxyNetwork], { allowFailure: true });
   }
   if (basename(temporaryRoot).startsWith('omnireach-production-compose-')) {
     await rm(temporaryRoot, { force: true, recursive: true });

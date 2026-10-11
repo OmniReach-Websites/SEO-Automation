@@ -86,6 +86,12 @@ export function checkProductionCompose() {
   ]) {
     if (!(api?.secrets ?? []).includes(secret)) errors.push(`API is missing secret ${secret}`);
   }
+  if (api?.networks?.proxy?.aliases?.[0] !== 'omnireach-api') {
+    errors.push('API must expose only the fixed omnireach-api alias on the shared proxy network');
+  }
+  if (compose.networks?.proxy?.external !== true) {
+    errors.push('proxy network must be an explicitly external network');
+  }
 
   const declaredVolumes = ['platform-data', 'postgres-data', 'redis-data'];
   for (const volume of declaredVolumes) {
