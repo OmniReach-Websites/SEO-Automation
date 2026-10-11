@@ -1,0 +1,82 @@
+name: Production deployment
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: omnireach-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Verify and deploy immutable release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: production
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Build and test exact commit
+        run: |
+          npm ci --ignore-scripts
+          npm run verify:all
+
+      - name: Build immutable runtime images
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          docker build --file infrastructure/compose/production.Dockerfile --target runtime --tag "omnireach-runtime:${RELEASE_SHA}" .
+          docker build --file infrastructure/compose/production.Dockerfile --target migrator --tag "omnireach-migrator:${RELEASE_SHA}" .
+          docker save "omnireach-runtime:${RELEASE_SHA}" "omnireach-migrator:${RELEASE_SHA}" | gzip -n > omnireach-images.tar.gz
+          sha256sum omnireach-images.tar.gz > omnireach-images.tar.gz.sha256
+
+      - name: Package immutable release
+        run: |
+          tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 -czf "${GITHUB_SHA}.tgz" \
+            .dockerignore .nvmrc apps infrastructure/compose infrastructure/deploy packages sites workers \
+            omnireach-images.tar.gz omnireach-images.tar.gz.sha256 package.json package-lock.json \
+            prisma.config.ts tsconfig.base.json tsconfig.json
+          sha256sum "${GITHUB_SHA}.tgz" > "${GITHUB_SHA}.tgz.sha256"
+
+      - name: Configure ephemeral restricted SSH identity
+        env:
+          DEPLOY_KEY: ${{ secrets.PRODUCTION_DEPLOY_KEY }}
+          KNOWN_HOSTS: ${{ secrets.PRODUCTION_KNOWN_HOSTS }}
+        run: |
+          test -n "${DEPLOY_KEY}"
+          test -n "${KNOWN_HOSTS}"
+          install -d -m 0700 "${HOME}/.ssh"
+          printf '%s\n' "${DEPLOY_KEY}" > "${HOME}/.ssh/id_ed25519"
+          printf '%s\n' "${KNOWN_HOSTS}" > "${HOME}/.ssh/known_hosts"
+          chmod 0600 "${HOME}/.ssh/id_ed25519" "${HOME}/.ssh/known_hosts"
+
+      - name: Transfer and activate verified release
+        env:
+          TARGET_HOST: ${{ vars.PRODUCTION_HOST }}
+          TARGET_USER: ${{ vars.PRODUCTION_USER }}
+        run: |
+          test -n "${TARGET_HOST}"
+          test "${TARGET_USER}" = omnireach-deploy
+          scp -o BatchMode=yes -o StrictHostKeyChecking=yes "${GITHUB_SHA}.tgz" "${GITHUB_SHA}.tgz.sha256" \
+            "${TARGET_USER}@${TARGET_HOST}:incoming/"
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes "${TARGET_USER}@${TARGET_HOST}" \
+            "omnireach-release deploy ${GITHUB_SHA}"
+
+      - name: Remove ephemeral identity
+        if: always()
+        run: rm -f "${HOME}/.ssh/id_ed25519" "${HOME}/.ssh/known_hosts"
