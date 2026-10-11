@@ -11,6 +11,7 @@ import { isForbiddenPath, scanText } from '../../tooling/scan-secrets.mjs';
 import { validateRegistry } from '../../tooling/verify-goal.mjs';
 
 const policy = JSON.parse(readFileSync(resolve('tooling/repository-policy.json'), 'utf8')) as {
+  allowedSensitivePathPatterns: string[];
   allowedSensitivePaths: string[];
   forbiddenPathPatterns: string[];
 };
@@ -29,6 +30,13 @@ describe('public repository policy', () => {
     expect(isForbiddenPath('.env.production', policy)).toBe(true);
     expect(isForbiddenPath('customer-data/export.json', policy)).toBe(true);
     expect(isForbiddenPath('tmp/database.dump', policy)).toBe(true);
+    expect(
+      isForbiddenPath(
+        'packages/database/prisma/migrations/20261010190000_g04_foundation/migration.sql',
+        policy,
+      ),
+    ).toBe(false);
+    expect(isForbiddenPath('packages/database/private.sql', policy)).toBe(true);
   });
 
   it('rejects empty, placeholder, and recursive goal verification entries', () => {

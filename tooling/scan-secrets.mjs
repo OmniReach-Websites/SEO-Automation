@@ -38,6 +38,12 @@ export function scanText(text, source) {
 export function isForbiddenPath(path, policy) {
   const normalized = path.replaceAll('\\', '/');
   if (policy.allowedSensitivePaths.includes(normalized)) return false;
+  if (
+    (policy.allowedSensitivePathPatterns ?? []).some((pattern) =>
+      new RegExp(pattern, 'i').test(normalized),
+    )
+  )
+    return false;
   return policy.forbiddenPathPatterns.some((pattern) => new RegExp(pattern, 'i').test(normalized));
 }
 

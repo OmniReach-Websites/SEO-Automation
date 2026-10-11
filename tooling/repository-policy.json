@@ -7,6 +7,9 @@
     "tooling/repository-policy.json",
     "tooling/scan-secrets.mjs"
   ],
+  "allowedSensitivePathPatterns": [
+    "^packages/database/prisma/migrations/[^/]+/migration\\.sql$"
+  ],
   "forbiddenPathPatterns": [
     "(^|/)\\.env(?:\\.|$)",
     "(^|/)(?:uploads|storage|runtime-data|customer-data|production-data|backups-data)(?:/|$)",
