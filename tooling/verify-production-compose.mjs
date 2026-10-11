@@ -17,6 +17,8 @@ const apiPort = String(45_000 + (process.pid % 1_000));
 const temporaryRoot = await mkdtemp(resolve(tmpdir(), 'omnireach-production-compose-'));
 const secretsDirectory = resolve(temporaryRoot, 'secrets');
 const environmentFile = resolve(temporaryRoot, 'production.env');
+const hostUid = typeof process.getuid === 'function' ? process.getuid() : 0;
+const hostGid = typeof process.getgid === 'function' ? process.getgid() : 0;
 const environment = {
   ...process.env,
   OMNIREACH_API_PORT: apiPort,
@@ -81,7 +83,7 @@ try {
     'alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8',
     'sh',
     '-ceu',
-    `apk add --no-cache openssl >/dev/null && mkdir -p /output/secrets && sh ${bootstrapScript} --secrets-dir /output/secrets`,
+    `apk add --no-cache openssl >/dev/null && mkdir -p /output/secrets && sh ${bootstrapScript} --secrets-dir /output/secrets && chown -R ${hostUid}:${hostGid} /output/secrets`,
   ]);
   const before = await secretValues();
   assert.equal(new Set(before).size, before.length, 'generated secrets must be independent');
@@ -97,7 +99,7 @@ try {
     'alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8',
     'sh',
     '-ceu',
-    `apk add --no-cache openssl >/dev/null && sh ${bootstrapScript} --secrets-dir /output/secrets`,
+    `apk add --no-cache openssl >/dev/null && sh ${bootstrapScript} --secrets-dir /output/secrets && chown -R ${hostUid}:${hostGid} /output/secrets`,
   ]);
   assert.deepEqual(
     await secretValues(),
