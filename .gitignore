@@ -28,6 +28,7 @@ production-data/
 backups-data/
 *.dump
 *.sql
+!packages/database/prisma/migrations/**/migration.sql
 *.sqlite
 *.sqlite3
 *.bak
