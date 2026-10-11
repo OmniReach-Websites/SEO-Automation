@@ -1,0 +1,23 @@
+www.alpha.example.test {
+	redir https://alpha.example.test{uri} permanent
+}
+
+alpha.example.test {
+	root * /srv/omnireach/releases/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/sites/alpha
+	encode zstd gzip
+	file_server
+}
+
+admin.alpha.example.test {
+	reverse_proxy 127.0.0.1:4100
+}
+
+beta.example.test {
+	root * /srv/omnireach/releases/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/sites/beta
+	encode zstd gzip
+	file_server
+}
+
+admin.beta.example.test {
+	reverse_proxy 127.0.0.1:4100
+}

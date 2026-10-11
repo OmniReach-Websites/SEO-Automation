@@ -1,0 +1,15 @@
+{
+  "name": "@omnireach/observability",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "types": "./src/index.ts",
+  "omnireach": {
+    "kind": "package"
+  },
+  "dependencies": {
+    "@omnireach/shared": "0.0.0",
+    "pino": "10.4.0"
+  }
+}

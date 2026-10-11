@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "noEmit": true
+  },
+  "include": [
+    "apps/**/*.ts",
+    "packages/*/src/**/*.ts",
+    "sites/*/src/**/*.ts",
+    "tests/**/*.ts",
+    "tooling/**/*.ts",
+    "workers/*/src/**/*.ts",
+    "*.config.ts"
+  ]
+}

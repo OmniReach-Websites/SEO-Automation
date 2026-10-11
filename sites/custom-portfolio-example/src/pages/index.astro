@@ -1,0 +1,9 @@
+---
+import { loadSiteContent, stringListField, textField } from '@omnireach/site-runtime';
+const content = loadSiteContent();
+const statement = textField(content, 'index.statement', 'Independent shapes for invented public spaces.');
+const projectTitles = stringListField(content, 'projects.items', ['Fictional field notes', 'Imaginary public room', 'Demonstration archive']);
+const projects = projectTitles.map((title, index) => ({ n: String(index + 1).padStart(2, '0'), title }));
+---
+<!doctype html><html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width"/><meta name="description" content="Fictional editorial portfolio contract fixture."/><title>Studio Arc — Fictional Fixture</title><style>
+:root{font-family:system-ui;background:#f2f0ea;color:#17222b}body{margin:0;padding:1.25rem}.top{display:flex;justify-content:space-between;border-bottom:1px solid;padding-bottom:1rem}.statement{font-family:Georgia,serif;font-size:clamp(2.2rem,7vw,6.5rem);line-height:1.02;max-width:14ch;margin:12vh 0}.projects{list-style:none;padding:0}.projects li{display:grid;grid-template-columns:4rem 1fr auto;gap:1rem;padding:1.5rem 0;border-top:1px solid}.fictional{font-size:.8rem;text-transform:uppercase;letter-spacing:.1em}@media(max-width:35rem){.projects li{grid-template-columns:3rem 1fr}.projects li span:last-child{grid-column:2}}</style></head><body><header class="top"><strong>STUDIO ARC</strong><span class="fictional">Fictional contract fixture</span></header><main><h1 class="statement">{statement}</h1><ol class="projects">{projects.map((project)=><li><span>{project.n}</span><strong>{project.title}</strong><span>Example only</span></li>)}</ol></main></body></html>

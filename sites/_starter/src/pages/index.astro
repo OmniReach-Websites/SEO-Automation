@@ -1,0 +1,25 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { loadSiteContent, textField } from '@omnireach/site-runtime';
+const content = loadSiteContent();
+const heading = textField(content, 'home.heading', 'Food with a story, served warmly.');
+const intro = textField(content, 'home.intro', 'This visible example content is invented and is never connected to a real restaurant.');
+const schema = { '@context': 'https://schema.org', '@type': 'Restaurant', name: 'The Copper Spoon — Fictional Example', description: 'A fictional restaurant used to validate the OmniReach starter contract.', priceRange: '$$' };
+---
+<Layout title="Home" description="Fictional accessible restaurant starter for OmniReach.">
+  <section class="hero">
+    <p class="eyebrow">Fictional neighborhood restaurant</p>
+    <h1>{heading}</h1>
+    <p>{intro}</p>
+    <a class="button" href="/contact/">Send a test inquiry</a>
+  </section>
+  <section class="page" aria-labelledby="highlights-heading">
+    <h2 id="highlights-heading">Starter contract highlights</h2>
+    <div class="cards">
+      <article class="card"><h3>Structured editing</h3><p>Stable fields and protected facts stay separate.</p></article>
+      <article class="card"><h3>Static delivery</h3><p>Pages remain available independently of the control plane.</p></article>
+      <article class="card"><h3>Custom design</h3><p>The contract does not dictate this layout.</p></article>
+    </div>
+  </section>
+  <script type="application/ld+json" set:html={JSON.stringify(schema)} />
+</Layout>

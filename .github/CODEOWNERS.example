@@ -1,0 +1,10 @@
+# Copy to .github/CODEOWNERS only after the repository owner supplies real GitHub handles.
+# Placeholder handles are intentionally not committed as an active policy.
+
+/packages/auth/ @OWNER_HANDLE
+/packages/tenant/ @OWNER_HANDLE
+/packages/ai/ @OWNER_HANDLE
+/infrastructure/ @OWNER_HANDLE
+/.github/workflows/ @OWNER_HANDLE
+/docs/security.md @OWNER_HANDLE
+/docs/operations.md @OWNER_HANDLE

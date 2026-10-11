@@ -1,0 +1,93 @@
+name: Reusable immutable artifact transfer
+
+on:
+  workflow_call:
+    inputs:
+      commit_sha:
+        description: Exact verified source commit
+        required: true
+        type: string
+      target_host:
+        description: Explicit non-secret target hostname
+        required: true
+        type: string
+      target_user:
+        description: Restricted target account
+        required: true
+        type: string
+    secrets:
+      deploy_key:
+        required: true
+      known_hosts:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  transfer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Validate immutable identity
+        env:
+          EXPECTED_SHA: ${{ inputs.commit_sha }}
+        run: |
+          test "${EXPECTED_SHA}" = "${GITHUB_SHA}"
+          printf '%s' "${EXPECTED_SHA}" | grep -Eq '^[0-9a-f]{40}$'
+
+      - name: Check out exact source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.commit_sha }}
+          persist-credentials: false
+
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Build and test exact commit
+        run: |
+          npm ci --ignore-scripts
+          npm run verify:all
+
+      - name: Build immutable runtime images
+        env:
+          RELEASE_SHA: ${{ inputs.commit_sha }}
+        run: |
+          docker build --file infrastructure/compose/production.Dockerfile --target runtime --tag "omnireach-runtime:${RELEASE_SHA}" .
+          docker build --file infrastructure/compose/production.Dockerfile --target migrator --tag "omnireach-migrator:${RELEASE_SHA}" .
+          docker save "omnireach-runtime:${RELEASE_SHA}" "omnireach-migrator:${RELEASE_SHA}" | gzip -n > omnireach-images.tar.gz
+          sha256sum omnireach-images.tar.gz > omnireach-images.tar.gz.sha256
+
+      - name: Package immutable release
+        run: |
+          tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 -czf omnireach-release.tgz \
+            .dockerignore .nvmrc apps infrastructure/compose infrastructure/deploy packages sites workers \
+            omnireach-images.tar.gz omnireach-images.tar.gz.sha256 package.json package-lock.json \
+            prisma.config.ts tsconfig.base.json tsconfig.json
+          sha256sum omnireach-release.tgz > omnireach-release.tgz.sha256
+
+      - name: Configure ephemeral restricted SSH identity
+        env:
+          DEPLOY_KEY: ${{ secrets.deploy_key }}
+          KNOWN_HOSTS: ${{ secrets.known_hosts }}
+        run: |
+          install -d -m 0700 "${HOME}/.ssh"
+          printf '%s\n' "${DEPLOY_KEY}" > "${HOME}/.ssh/id_ed25519"
+          printf '%s\n' "${KNOWN_HOSTS}" > "${HOME}/.ssh/known_hosts"
+          chmod 0600 "${HOME}/.ssh/id_ed25519" "${HOME}/.ssh/known_hosts"
+
+      - name: Transfer checksummed artifact without target checkout
+        env:
+          TARGET_HOST: ${{ inputs.target_host }}
+          TARGET_USER: ${{ inputs.target_user }}
+        run: |
+          scp -o BatchMode=yes -o StrictHostKeyChecking=yes omnireach-release.tgz omnireach-release.tgz.sha256 "${TARGET_USER}@${TARGET_HOST}:incoming/"
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes "${TARGET_USER}@${TARGET_HOST}" "omnireach-release stage ${GITHUB_SHA} incoming/omnireach-release.tgz incoming/omnireach-release.tgz.sha256"
+
+      - name: Remove ephemeral identity
+        if: always()
+        run: rm -f "${HOME}/.ssh/id_ed25519" "${HOME}/.ssh/known_hosts"

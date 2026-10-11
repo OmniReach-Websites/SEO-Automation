@@ -1,0 +1,15 @@
+{
+  "name": "@omnireach/seo-core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "types": "./src/index.ts",
+  "omnireach": {
+    "kind": "package"
+  },
+  "dependencies": {
+    "@omnireach/contracts": "0.0.0",
+    "@omnireach/shared": "0.0.0"
+  }
+}

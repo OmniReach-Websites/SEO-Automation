@@ -1,0 +1,49 @@
+name: omnireach-seo-automation-dev
+
+services:
+  postgres:
+    image: postgres:16.10-alpine@sha256:029660641a0cfc575b14f336ba448fb8a75fd595d42e1fa316b9fb4378742297
+    environment:
+      POSTGRES_DB: omnireach_dev
+      POSTGRES_PASSWORD: local-development-only
+      POSTGRES_USER: omnireach_dev
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U omnireach_dev -d omnireach_dev']
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    ports:
+      - '127.0.0.1:${POSTGRES_PORT:-54320}:5432'
+    cpus: 1.0
+    mem_limit: 1g
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    restart: 'no'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:8.2.4-alpine@sha256:a308ca111032fa8f306a2dc7be7ba5deb8b777ed5d258c733cddba48a1fd7904
+    command: ['redis-server', '--appendonly', 'yes', '--save', '60', '1']
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    ports:
+      - '127.0.0.1:${REDIS_PORT:-56379}:6379'
+    cpus: 0.5
+    mem_limit: 256m
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    restart: 'no'
+    volumes:
+      - redis-data:/data
+
+volumes:
+  postgres-data:
+    name: omnireach-seo-automation-dev-postgres-v1
+  redis-data:
+    name: omnireach-seo-automation-dev-redis-v1

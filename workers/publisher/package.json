@@ -1,0 +1,19 @@
+{
+  "name": "@omnireach/worker-publisher",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "omnireach": {
+    "kind": "worker"
+  },
+  "dependencies": {
+    "@omnireach/content": "0.0.0",
+    "@omnireach/contracts": "0.0.0",
+    "@omnireach/database": "0.0.0",
+    "@omnireach/observability": "0.0.0",
+    "@omnireach/queue": "0.0.0",
+    "@omnireach/shared": "0.0.0",
+    "@omnireach/tenant": "0.0.0"
+  }
+}

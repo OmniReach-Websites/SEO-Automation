@@ -1,0 +1,15 @@
+{
+  "name": "@omnireach/customer-admin",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@omnireach/contracts": "0.0.0",
+    "@omnireach/shared": "0.0.0",
+    "@omnireach/ui": "0.0.0"
+  },
+  "omnireach": {
+    "kind": "app"
+  }
+}

@@ -1,0 +1,156 @@
+{
+  "version": "1.0",
+  "site": { "id": "fictional-copper-spoon", "sourcePath": "sites/_starter" },
+  "locales": ["en-US"],
+  "components": [
+    { "id": "home", "type": "page" },
+    { "id": "about", "type": "page" },
+    { "id": "menu", "type": "collection" },
+    { "id": "contact", "type": "page" },
+    { "id": "privacy", "type": "page" },
+    { "id": "home.highlights", "type": "section" }
+  ],
+  "facts": [
+    { "id": "business.hours", "kind": "hours" },
+    { "id": "business.address", "kind": "address" },
+    { "id": "business.phone", "kind": "contact" },
+    { "id": "menu.prices", "kind": "price" },
+    { "id": "legal.privacy", "kind": "legal" }
+  ],
+  "fields": [
+    {
+      "id": "home.heading",
+      "componentId": "home",
+      "label": "Homepage heading",
+      "type": "text",
+      "editableBy": ["customer_owner", "customer_editor"],
+      "protected": false,
+      "aiMode": "auto"
+    },
+    {
+      "id": "home.intro",
+      "componentId": "home",
+      "label": "Homepage introduction",
+      "type": "richText",
+      "editableBy": ["customer_owner", "customer_editor"],
+      "protected": false,
+      "aiMode": "suggestion"
+    },
+    {
+      "id": "home.hero-image",
+      "componentId": "home",
+      "label": "Hero image",
+      "type": "image",
+      "editableBy": ["customer_owner", "customer_editor"],
+      "protected": false,
+      "aiMode": "disabled"
+    },
+    {
+      "id": "home.reserve-link",
+      "componentId": "home",
+      "label": "Contact button",
+      "type": "link",
+      "editableBy": ["customer_owner", "customer_editor"],
+      "protected": false,
+      "aiMode": "disabled"
+    },
+    {
+      "id": "home.highlights.items",
+      "componentId": "home.highlights",
+      "label": "Highlights",
+      "type": "cards",
+      "editableBy": ["customer_owner", "customer_editor"],
+      "protected": false,
+      "aiMode": "suggestion"
+    },
+    {
+      "id": "site.metadata",
+      "componentId": "home",
+      "label": "Search metadata",
+      "type": "metadata",
+      "editableBy": ["customer_owner", "customer_editor"],
+      "protected": false,
+      "aiMode": "suggestion"
+    },
+    {
+      "id": "site.theme",
+      "componentId": "home",
+      "label": "Theme",
+      "type": "theme",
+      "editableBy": ["customer_owner"],
+      "protected": false,
+      "aiMode": "disabled"
+    },
+    {
+      "id": "home.highlights.visible",
+      "componentId": "home.highlights",
+      "label": "Show highlights",
+      "type": "visibility",
+      "editableBy": ["customer_owner", "customer_editor"],
+      "protected": false,
+      "aiMode": "disabled"
+    },
+    {
+      "id": "home.section-order",
+      "componentId": "home",
+      "label": "Homepage section order",
+      "type": "sectionOrder",
+      "editableBy": ["customer_owner", "customer_editor"],
+      "protected": false,
+      "aiMode": "disabled"
+    },
+    {
+      "id": "contact.hours",
+      "componentId": "contact",
+      "label": "Opening hours",
+      "type": "text",
+      "editableBy": ["customer_owner"],
+      "protected": true,
+      "factRef": "business.hours",
+      "aiMode": "disabled"
+    },
+    {
+      "id": "contact.address",
+      "componentId": "contact",
+      "label": "Address",
+      "type": "text",
+      "editableBy": ["customer_owner"],
+      "protected": true,
+      "factRef": "business.address",
+      "aiMode": "disabled"
+    },
+    {
+      "id": "menu.prices",
+      "componentId": "menu",
+      "label": "Menu prices",
+      "type": "cards",
+      "editableBy": ["customer_owner"],
+      "protected": true,
+      "factRef": "menu.prices",
+      "aiMode": "disabled"
+    }
+  ],
+  "routes": [
+    { "id": "home", "path": "/", "componentId": "home" },
+    { "id": "about", "path": "/about/", "componentId": "about" },
+    { "id": "menu", "path": "/menu/", "componentId": "menu" },
+    { "id": "contact", "path": "/contact/", "componentId": "contact" },
+    { "id": "privacy", "path": "/privacy/", "componentId": "privacy" }
+  ],
+  "preview": { "entryRoute": "home" },
+  "build": { "workspace": "@omnireach/site-starter", "outputDirectory": "dist" },
+  "contactForms": [
+    {
+      "id": "general-inquiry",
+      "consentFieldId": "consent",
+      "destinationRef": "contact.primary",
+      "retentionCategory": "contact-operational",
+      "fields": [
+        { "id": "name", "type": "text", "required": true },
+        { "id": "email", "type": "email", "required": true },
+        { "id": "message", "type": "textarea", "required": true },
+        { "id": "consent", "type": "consent", "required": true }
+      ]
+    }
+  ]
+}

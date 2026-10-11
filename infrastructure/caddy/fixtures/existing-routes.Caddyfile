@@ -1,0 +1,4 @@
+# Synthetic non-production fixture. It represents a pre-existing import boundary only.
+existing.example.test {
+	respond "synthetic existing service" 200
+}

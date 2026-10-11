@@ -1,0 +1,17 @@
+{
+  "name": "@omnireach/site-restaurant-example",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "astro build"
+  },
+  "omnireach": {
+    "kind": "site"
+  },
+  "dependencies": {
+    "@omnireach/contracts": "0.0.0",
+    "@omnireach/site-runtime": "0.0.0",
+    "astro": "7.3.8"
+  }
+}

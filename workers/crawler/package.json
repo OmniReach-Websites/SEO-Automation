@@ -1,0 +1,18 @@
+{
+  "name": "@omnireach/worker-crawler",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "omnireach": {
+    "kind": "worker"
+  },
+  "dependencies": {
+    "@omnireach/contracts": "0.0.0",
+    "@omnireach/observability": "0.0.0",
+    "@omnireach/queue": "0.0.0",
+    "@omnireach/seo-core": "0.0.0",
+    "@omnireach/shared": "0.0.0",
+    "@omnireach/tenant": "0.0.0"
+  }
+}

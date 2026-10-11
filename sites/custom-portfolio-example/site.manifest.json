@@ -1,0 +1,34 @@
+{
+  "version": "1.0",
+  "site": { "id": "fictional-studio-arc", "sourcePath": "sites/custom-portfolio-example" },
+  "locales": ["en-US"],
+  "components": [
+    { "id": "index", "type": "page" },
+    { "id": "projects", "type": "collection" }
+  ],
+  "facts": [],
+  "fields": [
+    {
+      "id": "index.statement",
+      "componentId": "index",
+      "label": "Statement",
+      "type": "richText",
+      "editableBy": ["customer_owner", "customer_editor"],
+      "protected": false,
+      "aiMode": "suggestion"
+    },
+    {
+      "id": "projects.items",
+      "componentId": "projects",
+      "label": "Projects",
+      "type": "cards",
+      "editableBy": ["customer_owner", "customer_editor"],
+      "protected": false,
+      "aiMode": "auto"
+    }
+  ],
+  "routes": [{ "id": "index", "path": "/", "componentId": "index" }],
+  "preview": { "entryRoute": "index" },
+  "build": { "workspace": "@omnireach/site-custom-portfolio-example", "outputDirectory": "dist" },
+  "contactForms": []
+}

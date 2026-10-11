@@ -1,0 +1,55 @@
+# Dependencies and tool caches
+node_modules/
+.npm/
+.cache/
+.turbo/
+.eslintcache
+
+# Builds, tests, and generated artifacts
+dist/
+build/
+coverage/
+playwright-report/
+test-results/
+.vitest/
+.next/
+.astro/
+*.tsbuildinfo
+packages/database/generated/
+artifacts/
+releases/
+
+# Runtime data must never enter the public repository
+uploads/
+storage/
+runtime-data/
+customer-data/
+production-data/
+backups-data/
+*.dump
+*.sql
+*.sqlite
+*.sqlite3
+*.bak
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+service-account*.json
+google-services.json
+GoogleService-Info.plist
+
+# Logs and local OS/editor state
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo

@@ -1,0 +1,174 @@
+---
+export interface ContactFormField {
+  autocomplete?: string;
+  id: string;
+  label: string;
+  required: boolean;
+  type: 'email' | 'text' | 'textarea';
+}
+
+export interface Props {
+  action?: string;
+  consentLabel: string;
+  fields: ContactFormField[];
+  formId: string;
+  submitLabel?: string;
+}
+
+const {
+  action = '/v1/public/contact',
+  consentLabel,
+  fields,
+  formId,
+  submitLabel = 'Send message',
+} = Astro.props;
+---
+
+<form
+  action={action}
+  method="post"
+  class="omnireach-contact-form"
+  data-omnireach-contact-form
+  data-form-id={formId}
+>
+  <input type="hidden" name="formId" value={formId} />
+  <div class="omnireach-honeypot" aria-hidden="true">
+    <label for={`${formId}-website`}>Leave this field empty</label>
+    <input
+      id={`${formId}-website`}
+      name="website"
+      type="text"
+      tabindex="-1"
+      autocomplete="off"
+    />
+  </div>
+  {
+    fields.map((field) => (
+      <div class="omnireach-contact-field">
+        <label for={`${formId}-${field.id}`}>{field.label}</label>
+        {field.type === 'textarea' ? (
+          <textarea
+            id={`${formId}-${field.id}`}
+            name={field.id}
+            rows="6"
+            required={field.required}
+            autocomplete={field.autocomplete}
+          />
+        ) : (
+          <input
+            id={`${formId}-${field.id}`}
+            name={field.id}
+            type={field.type}
+            required={field.required}
+            autocomplete={field.autocomplete}
+          />
+        )}
+      </div>
+    ))
+  }
+  <label class="omnireach-consent">
+    <input name="consent" type="checkbox" required />
+    <span>{consentLabel}</span>
+  </label>
+  <div class="omnireach-turnstile"></div>
+  <p class="omnireach-form-notice" role="status">This contact form is not active yet.</p>
+  <button type="submit" disabled>{submitLabel}</button>
+</form>
+
+<script>
+  interface TurnstileApi {
+    render(
+      target: HTMLElement,
+      options: { callback: () => void; 'expired-callback': () => void; sitekey: string },
+    ): string;
+  }
+
+  declare global {
+    interface Window {
+      turnstile?: TurnstileApi;
+    }
+  }
+
+  let loader: Promise<TurnstileApi> | undefined;
+  function loadTurnstile(): Promise<TurnstileApi> {
+    if (window.turnstile) return Promise.resolve(window.turnstile);
+    loader ??= new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+      script.async = true;
+      script.defer = true;
+      script.addEventListener('load', () =>
+        window.turnstile ? resolve(window.turnstile) : reject(new Error('Turnstile unavailable')),
+      );
+      script.addEventListener('error', () => reject(new Error('Turnstile unavailable')));
+      document.head.append(script);
+    });
+    return loader;
+  }
+
+  async function initialize(form: HTMLFormElement): Promise<void> {
+    const formId = form.dataset.formId;
+    const notice = form.querySelector<HTMLElement>('.omnireach-form-notice');
+    const target = form.querySelector<HTMLElement>('.omnireach-turnstile');
+    const button = form.querySelector<HTMLButtonElement>('button[type="submit"]');
+    if (!formId || !notice || !target || !button) return;
+    try {
+      const response = await fetch(
+        `/v1/public/contact/config?formId=${encodeURIComponent(formId)}`,
+        { credentials: 'omit', headers: { Accept: 'application/json' } },
+      );
+      const config = (await response.json()) as { enabled?: boolean; turnstileSiteKey?: string };
+      if (!response.ok || !config.enabled || !config.turnstileSiteKey) return;
+      const turnstile = await loadTurnstile();
+      turnstile.render(target, {
+        callback: () => {
+          button.disabled = false;
+          notice.textContent = 'Spam protection complete. You can send your message.';
+        },
+        'expired-callback': () => {
+          button.disabled = true;
+          notice.textContent = 'Spam protection expired. Please try again.';
+        },
+        sitekey: config.turnstileSiteKey,
+      });
+      notice.textContent = 'Complete spam protection to send your message.';
+    } catch {
+      notice.textContent = 'This contact form is temporarily unavailable.';
+    }
+  }
+
+  for (const form of document.querySelectorAll<HTMLFormElement>('[data-omnireach-contact-form]')) {
+    void initialize(form);
+  }
+</script>
+
+<style>
+  .omnireach-honeypot {
+    position: absolute;
+    inline-size: 1px;
+    block-size: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  .omnireach-contact-field,
+  .omnireach-form-notice {
+    margin-block: 1rem;
+  }
+
+  .omnireach-consent {
+    display: flex;
+    gap: 0.65rem;
+    align-items: flex-start;
+    max-width: 42rem;
+  }
+
+  .omnireach-consent input {
+    width: auto;
+    margin-top: 0.35rem;
+  }
+
+  .omnireach-turnstile {
+    margin-block-start: 1rem;
+  }
+</style>

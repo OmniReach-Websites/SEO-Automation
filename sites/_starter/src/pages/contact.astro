@@ -1,0 +1,19 @@
+---
+import ContactForm from '@omnireach/site-runtime/ContactForm.astro';
+import Layout from '../layouts/Layout.astro';
+---
+<Layout title="Contact" description="Reusable contact-form contract example.">
+  <section class="page"><p class="eyebrow">Reusable contact component</p><h1>Send a test inquiry</h1><p>This fictional form remains inactive until its site recipient, consent wording, and spam protection are configured.</p>
+    <ContactForm
+      formId="general-inquiry"
+      consentLabel="I consent to this fictional form test."
+      submitLabel="Submit test form"
+      fields={[
+        { id: 'name', label: 'Name', type: 'text', required: true, autocomplete: 'name' },
+        { id: 'email', label: 'Email', type: 'email', required: true, autocomplete: 'email' },
+        { id: 'message', label: 'Message', type: 'textarea', required: true },
+      ]}
+    />
+    <noscript><p>The static page remains available. Form delivery requires the separate submission service.</p></noscript>
+  </section>
+</Layout>

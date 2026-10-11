@@ -1,0 +1,259 @@
+{
+  "workspaces": [
+    {
+      "name": "@omnireach/api",
+      "path": "apps/api",
+      "kind": "app",
+      "allowedWorkspaceDependencies": [
+        "@omnireach/ai",
+        "@omnireach/auth",
+        "@omnireach/content",
+        "@omnireach/contracts",
+        "@omnireach/database",
+        "@omnireach/integrations",
+        "@omnireach/observability",
+        "@omnireach/queue",
+        "@omnireach/seo-core",
+        "@omnireach/shared",
+        "@omnireach/tenant",
+        "@omnireach/ui",
+        "@omnireach/worker-publisher"
+      ]
+    },
+    {
+      "name": "@omnireach/orap",
+      "path": "apps/orap",
+      "kind": "app",
+      "allowedWorkspaceDependencies": ["@omnireach/contracts", "@omnireach/shared", "@omnireach/ui"]
+    },
+    {
+      "name": "@omnireach/customer-admin",
+      "path": "apps/customer-admin",
+      "kind": "app",
+      "allowedWorkspaceDependencies": ["@omnireach/contracts", "@omnireach/shared", "@omnireach/ui"]
+    },
+    {
+      "name": "@omnireach/site-starter",
+      "path": "sites/_starter",
+      "kind": "site",
+      "allowedWorkspaceDependencies": [
+        "@omnireach/contracts",
+        "@omnireach/shared",
+        "@omnireach/site-runtime",
+        "@omnireach/ui"
+      ]
+    },
+    {
+      "name": "@omnireach/site-restaurant-example",
+      "path": "sites/restaurant-example",
+      "kind": "site",
+      "allowedWorkspaceDependencies": [
+        "@omnireach/contracts",
+        "@omnireach/shared",
+        "@omnireach/site-runtime",
+        "@omnireach/ui"
+      ]
+    },
+    {
+      "name": "@omnireach/site-custom-portfolio-example",
+      "path": "sites/custom-portfolio-example",
+      "kind": "site",
+      "allowedWorkspaceDependencies": [
+        "@omnireach/contracts",
+        "@omnireach/shared",
+        "@omnireach/site-runtime",
+        "@omnireach/ui"
+      ]
+    },
+    {
+      "name": "@omnireach/worker-runner",
+      "path": "workers/runner",
+      "kind": "worker",
+      "allowedWorkspaceDependencies": [
+        "@omnireach/observability",
+        "@omnireach/queue",
+        "@omnireach/shared",
+        "@omnireach/tenant"
+      ]
+    },
+    {
+      "name": "@omnireach/worker-crawler",
+      "path": "workers/crawler",
+      "kind": "worker",
+      "allowedWorkspaceDependencies": [
+        "@omnireach/contracts",
+        "@omnireach/observability",
+        "@omnireach/queue",
+        "@omnireach/seo-core",
+        "@omnireach/shared",
+        "@omnireach/tenant"
+      ]
+    },
+    {
+      "name": "@omnireach/worker-seo",
+      "path": "workers/seo",
+      "kind": "worker",
+      "allowedWorkspaceDependencies": [
+        "@omnireach/content",
+        "@omnireach/observability",
+        "@omnireach/queue",
+        "@omnireach/seo-core",
+        "@omnireach/shared",
+        "@omnireach/tenant"
+      ]
+    },
+    {
+      "name": "@omnireach/worker-aio",
+      "path": "workers/aio",
+      "kind": "worker",
+      "allowedWorkspaceDependencies": [
+        "@omnireach/ai",
+        "@omnireach/content",
+        "@omnireach/observability",
+        "@omnireach/queue",
+        "@omnireach/seo-core",
+        "@omnireach/shared",
+        "@omnireach/tenant"
+      ]
+    },
+    {
+      "name": "@omnireach/worker-publisher",
+      "path": "workers/publisher",
+      "kind": "worker",
+      "allowedWorkspaceDependencies": [
+        "@omnireach/content",
+        "@omnireach/contracts",
+        "@omnireach/database",
+        "@omnireach/observability",
+        "@omnireach/queue",
+        "@omnireach/shared",
+        "@omnireach/tenant"
+      ]
+    },
+    {
+      "name": "@omnireach/worker-scheduler",
+      "path": "workers/scheduler",
+      "kind": "worker",
+      "allowedWorkspaceDependencies": [
+        "@omnireach/observability",
+        "@omnireach/queue",
+        "@omnireach/shared",
+        "@omnireach/tenant"
+      ]
+    },
+    {
+      "name": "@omnireach/worker-monitoring",
+      "path": "workers/monitoring",
+      "kind": "worker",
+      "allowedWorkspaceDependencies": [
+        "@omnireach/integrations",
+        "@omnireach/observability",
+        "@omnireach/queue",
+        "@omnireach/shared",
+        "@omnireach/tenant"
+      ]
+    },
+    {
+      "name": "@omnireach/database",
+      "path": "packages/database",
+      "kind": "package",
+      "allowedWorkspaceDependencies": ["@omnireach/shared"]
+    },
+    {
+      "name": "@omnireach/auth",
+      "path": "packages/auth",
+      "kind": "package",
+      "allowedWorkspaceDependencies": [
+        "@omnireach/database",
+        "@omnireach/observability",
+        "@omnireach/shared"
+      ]
+    },
+    {
+      "name": "@omnireach/tenant",
+      "path": "packages/tenant",
+      "kind": "package",
+      "allowedWorkspaceDependencies": [
+        "@omnireach/auth",
+        "@omnireach/database",
+        "@omnireach/observability",
+        "@omnireach/shared"
+      ]
+    },
+    {
+      "name": "@omnireach/contracts",
+      "path": "packages/contracts",
+      "kind": "package",
+      "allowedWorkspaceDependencies": ["@omnireach/shared"]
+    },
+    {
+      "name": "@omnireach/content",
+      "path": "packages/content",
+      "kind": "package",
+      "allowedWorkspaceDependencies": [
+        "@omnireach/contracts",
+        "@omnireach/database",
+        "@omnireach/observability",
+        "@omnireach/shared",
+        "@omnireach/tenant"
+      ]
+    },
+    {
+      "name": "@omnireach/queue",
+      "path": "packages/queue",
+      "kind": "package",
+      "allowedWorkspaceDependencies": [
+        "@omnireach/database",
+        "@omnireach/observability",
+        "@omnireach/shared",
+        "@omnireach/tenant"
+      ]
+    },
+    {
+      "name": "@omnireach/ai",
+      "path": "packages/ai",
+      "kind": "package",
+      "allowedWorkspaceDependencies": [
+        "@omnireach/observability",
+        "@omnireach/queue",
+        "@omnireach/shared"
+      ]
+    },
+    {
+      "name": "@omnireach/seo-core",
+      "path": "packages/seo-core",
+      "kind": "package",
+      "allowedWorkspaceDependencies": ["@omnireach/contracts", "@omnireach/shared"]
+    },
+    {
+      "name": "@omnireach/integrations",
+      "path": "packages/integrations",
+      "kind": "package",
+      "allowedWorkspaceDependencies": ["@omnireach/observability", "@omnireach/shared"]
+    },
+    {
+      "name": "@omnireach/observability",
+      "path": "packages/observability",
+      "kind": "package",
+      "allowedWorkspaceDependencies": ["@omnireach/shared"]
+    },
+    {
+      "name": "@omnireach/shared",
+      "path": "packages/shared",
+      "kind": "package",
+      "allowedWorkspaceDependencies": []
+    },
+    {
+      "name": "@omnireach/site-runtime",
+      "path": "packages/site-runtime",
+      "kind": "package",
+      "allowedWorkspaceDependencies": []
+    },
+    {
+      "name": "@omnireach/ui",
+      "path": "packages/ui",
+      "kind": "package",
+      "allowedWorkspaceDependencies": ["@omnireach/contracts", "@omnireach/shared"]
+    }
+  ]
+}

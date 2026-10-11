@@ -1,0 +1,20 @@
+{
+  "allowedSensitivePaths": [
+    ".env.example",
+    ".gitleaks.toml",
+    "infrastructure/backups/README.md",
+    "tests/unit/repository-policy.test.ts",
+    "tooling/repository-policy.json",
+    "tooling/scan-secrets.mjs"
+  ],
+  "forbiddenPathPatterns": [
+    "(^|/)\\.env(?:\\.|$)",
+    "(^|/)(?:uploads|storage|runtime-data|customer-data|production-data|backups-data)(?:/|$)",
+    "\\.(?:dump|sql|sqlite|sqlite3|bak|pem|key|p12|pfx)$",
+    "(^|/)(?:credentials|service-account)[^/]*\\.json$",
+    "(^|/)(?:google-services\\.json|GoogleService-Info\\.plist)$",
+    "(^|/)fixtures/(?:real|customer|production)(?:/|$)"
+  ],
+  "maxScannedFileBytes": 2097152,
+  "requiredFictionalMarkers": ["fictional", "example", "synthetic"]
+}

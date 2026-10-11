@@ -1,0 +1,15 @@
+{
+  "name": "@omnireach/queue",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "types": "./src/index.ts",
+  "omnireach": {
+    "kind": "package"
+  },
+  "dependencies": {
+    "bullmq": "5.61.2",
+    "zod": "4.6.5"
+  }
+}

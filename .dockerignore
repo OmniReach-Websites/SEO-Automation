@@ -1,0 +1,16 @@
+.git
+.github
+.env
+.env.*
+!.env.example
+node_modules
+coverage
+test-results
+playwright-report
+runtime-data
+uploads
+storage
+production-data
+backups-data
+*.log
+

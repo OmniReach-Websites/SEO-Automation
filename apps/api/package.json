@@ -1,0 +1,32 @@
+{
+  "name": "@omnireach/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/server.ts",
+    "./postgres-contact": "./src/postgres-contact.ts",
+    "./postgres-orap": "./src/postgres-orap.ts",
+    "./redis-auth": "./src/redis-auth.ts"
+  },
+  "omnireach": {
+    "kind": "app"
+  },
+  "dependencies": {
+    "@fastify/cookie": "11.1.3",
+    "@fastify/rate-limit": "11.2.1",
+    "@omnireach/auth": "0.0.0",
+    "@omnireach/content": "0.0.0",
+    "@omnireach/contracts": "0.0.0",
+    "@omnireach/database": "0.0.0",
+    "@omnireach/integrations": "0.0.0",
+    "@omnireach/observability": "0.0.0",
+    "@omnireach/shared": "0.0.0",
+    "@omnireach/tenant": "0.0.0",
+    "@omnireach/ui": "0.0.0",
+    "@omnireach/worker-publisher": "0.0.0",
+    "fastify": "5.12.5",
+    "redis": "6.3.0",
+    "zod": "4.6.5"
+  }
+}

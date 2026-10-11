@@ -1,0 +1,209 @@
+name: omnireach-production
+
+x-logging: &production-logging
+  driver: json-file
+  options:
+    max-file: '5'
+    max-size: 10m
+
+x-runtime-secrets: &runtime-secrets
+  - postgres_app_password
+  - redis_app_password
+  - session_secret
+  - mfa_encryption_key
+  - preview_signing_key
+  - contact_encryption_key
+
+x-omnireach-runtime: &omnireach-runtime
+  image: omnireach-runtime:${OMNIREACH_RELEASE_SHA:?Set OMNIREACH_RELEASE_SHA to the verified commit SHA}
+  build:
+    context: ../..
+    dockerfile: infrastructure/compose/production.Dockerfile
+    target: runtime
+  env_file:
+    - path: ${OMNIREACH_ENV_FILE:?Set OMNIREACH_ENV_FILE to the host-only production environment file}
+      required: true
+  environment:
+    SOURCE_COMMIT_SHA: ${OMNIREACH_RELEASE_SHA}
+  init: true
+  networks:
+    - backend
+    - egress
+  restart: unless-stopped
+  secrets: *runtime-secrets
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  logging: *production-logging
+
+services:
+  postgres:
+    image: postgres:16.10-alpine@sha256:029660641a0cfc575b14f336ba448fb8a75fd595d42e1fa316b9fb4378742297
+    environment:
+      POSTGRES_DB: omnireach
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_admin_password
+      POSTGRES_USER: omnireach_db_admin
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -q -U omnireach_db_admin -d omnireach']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    networks:
+      - backend
+    restart: unless-stopped
+    secrets:
+      - postgres_admin_password
+    security_opt:
+      - no-new-privileges:true
+    shm_size: 256m
+    stop_grace_period: 60s
+    cpus: 1.0
+    mem_limit: 2g
+    pids_limit: 256
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    logging: *production-logging
+
+  redis:
+    image: redis:8.2.4-alpine@sha256:a308ca111032fa8f306a2dc7be7ba5deb8b777ed5d258c733cddba48a1fd7904
+    entrypoint: ['/opt/omnireach/redis-entrypoint.sh']
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'REDISCLI_AUTH="$$(cat /run/secrets/redis_app_password)" redis-cli --user omnireach_runtime ping 2>/dev/null | grep -qx PONG',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - backend
+    restart: unless-stopped
+    secrets:
+      - redis_app_password
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+    cpus: 0.5
+    mem_limit: 512m
+    pids_limit: 128
+    tmpfs:
+      - /run:size=16m,mode=0755
+      - /tmp:size=16m,mode=1777
+    volumes:
+      - redis-data:/data
+      - ./scripts/redis-entrypoint.sh:/opt/omnireach/redis-entrypoint.sh:ro
+    logging: *production-logging
+
+  migrate:
+    profiles: ['application']
+    image: omnireach-migrator:${OMNIREACH_RELEASE_SHA:?Set OMNIREACH_RELEASE_SHA to the verified commit SHA}
+    build:
+      context: ../..
+      dockerfile: infrastructure/compose/production.Dockerfile
+      target: migrator
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend
+    restart: 'no'
+    secrets:
+      - postgres_admin_password
+      - postgres_app_password
+    security_opt:
+      - no-new-privileges:true
+    cpus: 0.5
+    mem_limit: 1g
+    pids_limit: 256
+    logging: *production-logging
+
+  platform-data-init:
+    profiles: ['application']
+    image: omnireach-runtime:${OMNIREACH_RELEASE_SHA:?Set OMNIREACH_RELEASE_SHA to the verified commit SHA}
+    build:
+      context: ../..
+      dockerfile: infrastructure/compose/production.Dockerfile
+      target: runtime
+    user: '0:0'
+    entrypoint: ['/bin/sh', '-eu', '-c']
+    command:
+      - install -d -o node -g node -m 0750 /var/lib/omnireach/assets /var/lib/omnireach/previews /var/lib/omnireach/publications
+    networks:
+      - backend
+    restart: 'no'
+    security_opt:
+      - no-new-privileges:true
+    cpus: 0.1
+    mem_limit: 64m
+    pids_limit: 32
+    volumes:
+      - platform-data:/var/lib/omnireach
+    logging: *production-logging
+
+  api:
+    <<: *omnireach-runtime
+    profiles: ['application']
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      platform-data-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:4100/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+    ports:
+      - 127.0.0.1:${OMNIREACH_API_PORT:-44100}:4100
+    cpus: 0.5
+    mem_limit: 1g
+    pids_limit: 256
+    stop_grace_period: 30s
+    volumes:
+      - platform-data:/var/lib/omnireach
+
+networks:
+  backend:
+    name: ${OMNIREACH_RESOURCE_PREFIX:-omnireach-production}-backend
+    internal: true
+  egress:
+    name: ${OMNIREACH_RESOURCE_PREFIX:-omnireach-production}-egress
+
+volumes:
+  platform-data:
+    name: ${OMNIREACH_RESOURCE_PREFIX:-omnireach-production}-platform-data-v1
+  postgres-data:
+    name: ${OMNIREACH_RESOURCE_PREFIX:-omnireach-production}-postgres-v1
+  redis-data:
+    name: ${OMNIREACH_RESOURCE_PREFIX:-omnireach-production}-redis-v1
+
+secrets:
+  postgres_admin_password:
+    file: ${OMNIREACH_SECRETS_DIR:?Set OMNIREACH_SECRETS_DIR to the protected secret directory}/postgres_admin_password
+  postgres_app_password:
+    file: ${OMNIREACH_SECRETS_DIR}/postgres_app_password
+  redis_app_password:
+    file: ${OMNIREACH_SECRETS_DIR}/redis_app_password
+  session_secret:
+    file: ${OMNIREACH_SECRETS_DIR}/session_secret
+  mfa_encryption_key:
+    file: ${OMNIREACH_SECRETS_DIR}/mfa_encryption_key
+  preview_signing_key:
+    file: ${OMNIREACH_SECRETS_DIR}/preview_signing_key
+  contact_encryption_key:
+    file: ${OMNIREACH_SECRETS_DIR}/contact_encryption_key

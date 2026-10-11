@@ -1,0 +1,14 @@
+{
+  "name": "@omnireach/site-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./ContactForm.astro": "./src/ContactForm.astro"
+  },
+  "types": "./src/index.ts",
+  "omnireach": {
+    "kind": "package"
+  }
+}

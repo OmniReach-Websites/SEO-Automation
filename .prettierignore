@@ -1,0 +1,17 @@
+node_modules
+package-lock.json
+docs/masterplan.md
+dist
+build
+packages/database/generated
+coverage
+playwright-report
+test-results
+.next
+.astro
+artifacts
+releases
+runtime-data
+uploads
+storage
+backups-data

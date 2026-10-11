@@ -1,0 +1,121 @@
+:root {
+  color-scheme: light;
+  font-family: Georgia, serif;
+  background: #f8f2e8;
+  color: #24160e;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  line-height: 1.6;
+}
+a {
+  color: #713a20;
+}
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid #0b6d74;
+  outline-offset: 3px;
+}
+.skip {
+  position: absolute;
+  left: -999px;
+}
+.skip:focus {
+  left: 1rem;
+  top: 1rem;
+  background: white;
+  padding: 0.5rem;
+  z-index: 2;
+}
+header,
+footer {
+  display: flex;
+  gap: 1.5rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.25rem clamp(1rem, 5vw, 5rem);
+  background: #ead8bd;
+}
+nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+.brand {
+  font-weight: 700;
+  text-decoration: none;
+}
+.brand small {
+  display: block;
+  font: 0.75rem system-ui;
+}
+main {
+  min-height: 65vh;
+}
+.hero,
+.page {
+  max-width: 70rem;
+  margin: auto;
+  padding: clamp(2rem, 7vw, 6rem) clamp(1rem, 5vw, 4rem);
+}
+.hero h1 {
+  max-width: 12ch;
+  font-size: clamp(2.7rem, 8vw, 6rem);
+  line-height: 0.95;
+}
+.eyebrow {
+  font: 700 0.8rem system-ui;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.button {
+  display: inline-block;
+  padding: 0.75rem 1rem;
+  background: #713a20;
+  color: white;
+  border-radius: 0.25rem;
+}
+.cards,
+.menu {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 1rem;
+}
+.card {
+  padding: 1.25rem;
+  border: 1px solid #bd9d77;
+  background: #fffaf3;
+}
+label {
+  display: block;
+  margin-block: 1rem 0.25rem;
+  font-weight: 700;
+}
+input,
+textarea {
+  width: 100%;
+  max-width: 38rem;
+  padding: 0.75rem;
+  font: inherit;
+}
+button {
+  margin-top: 1rem;
+  padding: 0.75rem 1rem;
+  font: inherit;
+}
+footer {
+  align-items: start;
+  font-family: system-ui;
+}
+@media (max-width: 40rem) {
+  header,
+  footer {
+    align-items: start;
+    flex-direction: column;
+  }
+}

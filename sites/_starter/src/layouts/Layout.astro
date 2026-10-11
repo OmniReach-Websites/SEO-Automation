@@ -1,0 +1,26 @@
+---
+import '../styles/global.css';
+
+interface Props { description: string; title: string }
+const { description, title } = Astro.props;
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width" />
+    <meta name="description" content={description} />
+    <title>{title} | The Copper Spoon — Fictional Example</title>
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+    <header>
+      <a class="brand" href="/">The Copper Spoon <small>fictional example</small></a>
+      <nav aria-label="Primary">
+        <a href="/about/">About</a><a href="/menu/">Menu</a><a href="/contact/">Contact</a>
+      </nav>
+    </header>
+    <main id="main"><slot /></main>
+    <footer><p>This is a fictional demonstration business. No orders or messages are delivered.</p><a href="/privacy/">Privacy example</a></footer>
+  </body>
+</html>

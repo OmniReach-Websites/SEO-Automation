@@ -1,0 +1,82 @@
+#!/bin/sh
+set -eu
+
+usage() {
+  printf '%s\n' 'Usage: bootstrap-secrets.sh [--secrets-dir ABSOLUTE_PATH]'
+}
+
+secrets_dir=/opt/servers/omnireach/shared/secrets
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --secrets-dir)
+      [ "$#" -ge 2 ] || { usage >&2; exit 64; }
+      secrets_dir=$2
+      shift 2
+      ;;
+    --help)
+      usage
+      exit 0
+      ;;
+    *)
+      usage >&2
+      exit 64
+      ;;
+  esac
+done
+
+case "$secrets_dir" in
+  /*) ;;
+  *) printf '%s\n' 'Secret directory must be an absolute path' >&2; exit 64 ;;
+esac
+[ "$secrets_dir" != / ] || { printf '%s\n' 'Refusing filesystem root' >&2; exit 64; }
+[ ! -L "$secrets_dir" ] || { printf '%s\n' 'Refusing a symlinked secret directory' >&2; exit 65; }
+command -v openssl >/dev/null 2>&1 || { printf '%s\n' 'openssl is required' >&2; exit 69; }
+
+umask 077
+install -d -m 0700 "$secrets_dir"
+
+generate_secret() {
+  name=$1
+  target=$secrets_dir/$name
+  if [ -e "$target" ]; then
+    [ -f "$target" ] && [ ! -L "$target" ] || {
+      printf 'Refusing non-regular secret target: %s\n' "$name" >&2
+      exit 65
+    }
+    if ! grep -Eq '^[a-f0-9]{64}$' "$target"; then
+      printf 'Existing secret has an invalid format: %s\n' "$name" >&2
+      exit 65
+    fi
+    chmod 0444 "$target"
+    printf 'kept %s\n' "$name"
+    return
+  fi
+
+  temporary=$(mktemp "$secrets_dir/.${name}.XXXXXX")
+  trap 'rm -f "$temporary"' EXIT HUP INT TERM
+  openssl rand -hex 32 > "$temporary"
+  grep -Eq '^[a-f0-9]{64}$' "$temporary" || {
+    printf 'Generated secret failed validation: %s\n' "$name" >&2
+    exit 70
+  }
+  chmod 0444 "$temporary"
+  mv "$temporary" "$target"
+  trap - EXIT HUP INT TERM
+  printf 'created %s\n' "$name"
+}
+
+for secret_name in \
+  postgres_admin_password \
+  postgres_app_password \
+  redis_app_password \
+  session_secret \
+  mfa_encryption_key \
+  preview_signing_key \
+  contact_encryption_key
+do
+  generate_secret "$secret_name"
+done
+
+chmod 0700 "$secrets_dir"
+printf '%s\n' 'Secret bootstrap complete; values were not printed.'
+

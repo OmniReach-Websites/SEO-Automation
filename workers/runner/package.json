@@ -1,0 +1,14 @@
+{
+  "name": "@omnireach/worker-runner",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "omnireach": {
+    "kind": "worker"
+  },
+  "dependencies": {
+    "@omnireach/queue": "0.0.0",
+    "@omnireach/shared": "0.0.0"
+  }
+}

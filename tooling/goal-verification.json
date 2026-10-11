@@ -1,0 +1,231 @@
+{
+  "G01": [
+    ["node", "tooling/check-docs.mjs"],
+    ["node", "tooling/scan-secrets.mjs", "--scope", "full"]
+  ],
+  "G02": [
+    ["npm", "run", "format:check"],
+    ["npm", "run", "lint"],
+    ["npm", "run", "typecheck"],
+    ["npm", "test"],
+    ["npm", "run", "test:integration"],
+    ["npm", "run", "test:e2e"],
+    ["npm", "run", "build"],
+    ["node", "tooling/check-workspaces.mjs"],
+    ["node", "tooling/scan-secrets.mjs", "--scope", "full"]
+  ],
+  "G03": [
+    ["node", "tooling/check-workflows.mjs"],
+    ["npm", "run", "format:check"],
+    ["npm", "run", "lint"],
+    ["npm", "run", "typecheck"],
+    ["npm", "test"],
+    ["npm", "run", "build"],
+    ["npm", "audit", "--omit=dev", "--audit-level=high"],
+    ["node", "tooling/scan-secrets.mjs", "--scope", "full"]
+  ],
+  "G04": [
+    ["node", "tooling/check-compose.mjs"],
+    ["npm", "run", "check:migrations"],
+    ["docker", "compose", "-f", "infrastructure/compose/dev.compose.yml", "config", "--quiet"],
+    ["npm", "run", "verify:local-stack"],
+    ["npm", "run", "test:integration"],
+    ["npm", "run", "typecheck"]
+  ],
+  "G05": [
+    [
+      "npm",
+      "test",
+      "--",
+      "auth.test.ts",
+      "auth-service.test.ts",
+      "redis-auth.test.ts",
+      "resend-auth-alert.test.ts"
+    ],
+    ["npm", "run", "test:integration", "--", "auth/routes.test.ts"],
+    ["npm", "run", "test:security"]
+  ],
+  "G06": [
+    ["npm", "run", "check:migrations"],
+    ["npm", "run", "test:security"],
+    ["npm", "run", "verify:local-stack"]
+  ],
+  "G07": [
+    ["npm", "test", "--", "orap-admin.test.ts"],
+    ["npm", "run", "test:integration", "--", "orap/routes.test.ts"],
+    ["npm", "run", "test:e2e", "--", "platform-flows.spec.ts", "admin-shells.spec.ts"]
+  ],
+  "G08": [
+    ["npm", "test", "--", "policy.test.ts", "plan-entitlements.test.ts"],
+    ["npm", "test", "--", "aio-worker.test.ts", "scheduler-alerts.test.ts"],
+    ["npm", "run", "test:integration", "--", "orap/routes.test.ts"],
+    ["npm", "run", "verify:plan-quota"],
+    ["npm", "run", "check:migrations"]
+  ],
+  "G09": [
+    ["npm", "run", "test:contracts"],
+    ["npm", "run", "validate:sites"]
+  ],
+  "G10": [
+    ["npm", "run", "build", "--workspace", "@omnireach/site-starter"],
+    ["npm", "run", "build", "--workspace", "@omnireach/site-restaurant-example"],
+    ["npm", "run", "build", "--workspace", "@omnireach/site-custom-portfolio-example"],
+    ["npm", "run", "check:site-builds"]
+  ],
+  "G11": [
+    ["npm", "test", "--", "content.test.ts"],
+    ["npm", "run", "check:migrations"]
+  ],
+  "G12": [
+    ["npm", "test", "--", "assets.test.ts"],
+    ["npm", "run", "test:integration", "--", "customer/routes.test.ts"],
+    ["npm", "run", "check:migrations"]
+  ],
+  "G13": [
+    [
+      "npm",
+      "test",
+      "--",
+      "publisher.test.ts",
+      "static-artifacts.test.ts",
+      "postgres-contact.test.ts",
+      "resend-contact.test.ts",
+      "cloudflare.test.ts",
+      "scheduler-alerts.test.ts"
+    ],
+    [
+      "npm",
+      "run",
+      "test:integration",
+      "--",
+      "contact/routes.test.ts",
+      "customer/routes.test.ts",
+      "orap/routes.test.ts"
+    ],
+    ["npm", "run", "test:security"],
+    ["npm", "run", "check:migrations"],
+    ["npm", "run", "build", "--workspace", "@omnireach/site-starter"],
+    ["npm", "run", "check:site-builds"]
+  ],
+  "G14": [
+    ["npm", "test", "--", "customer-admin.test.ts"],
+    ["npm", "run", "test:integration", "--", "customer/routes.test.ts"],
+    ["npm", "run", "test:security"],
+    ["npm", "run", "test:e2e", "--", "platform-flows.spec.ts", "admin-shells.spec.ts"]
+  ],
+  "G15": [
+    ["npm", "test", "--", "customer-admin.test.ts", "content.test.ts", "assets.test.ts"],
+    ["npm", "run", "test:integration", "--", "customer/routes.test.ts"],
+    ["npm", "run", "test:e2e", "--", "platform-flows.spec.ts"]
+  ],
+  "G16": [
+    [
+      "npm",
+      "test",
+      "--",
+      "publication.test.ts",
+      "static-artifacts.test.ts",
+      "customer-admin.test.ts"
+    ],
+    ["npm", "run", "test:integration"],
+    ["npm", "run", "check:migrations"],
+    ["npm", "run", "verify:publication-flow"],
+    ["npm", "run", "test:e2e", "--", "platform-flows.spec.ts"]
+  ],
+  "G17": [
+    ["npm", "test", "--", "cloudflare.test.ts", "orap-operations.test.ts"],
+    ["npm", "run", "check:migrations"]
+  ],
+  "G18": [
+    ["npm", "test", "--", "caddy.test.ts"],
+    ["npm", "run", "verify:caddy"]
+  ],
+  "G19": [
+    ["npm", "run", "check:workflows"],
+    ["npm", "run", "check:production-compose"],
+    ["npm", "run", "verify:production-compose"],
+    ["npm", "run", "verify:deploy-harness"],
+    ["npm", "run", "check:migrations"]
+  ],
+  "G20": [
+    ["npm", "test", "--", "queue.test.ts"],
+    ["npm", "run", "verify:queue-runtime"],
+    ["npm", "run", "check:migrations"],
+    ["npm", "run", "test:security"]
+  ],
+  "G21": [
+    ["npm", "test", "--", "ai-budget.test.ts", "postgres-ai-budget.test.ts"],
+    ["npm", "run", "test:integration", "--", "orap/routes.test.ts"],
+    ["npm", "run", "verify:ai-budget"],
+    ["npm", "run", "check:migrations"]
+  ],
+  "G22": [
+    [
+      "npm",
+      "test",
+      "--",
+      "scheduler-alerts.test.ts",
+      "orap-operations.test.ts",
+      "resend-auth-alert.test.ts",
+      "postgres-alerts.test.ts",
+      "postgres-orap.test.ts"
+    ],
+    ["npm", "run", "test:integration", "--", "orap/routes.test.ts"],
+    ["npm", "run", "verify:alert-lifecycle"],
+    ["npm", "run", "verify:scheduler-runtime"],
+    ["npm", "run", "verify:orap-operations"],
+    ["npm", "run", "check:migrations"]
+  ],
+  "G23": [
+    ["npm", "test", "--", "crawler.test.ts"],
+    ["npm", "run", "check:migrations"]
+  ],
+  "G24": [
+    ["npm", "test", "--", "seo-audit.test.ts"],
+    ["npm", "run", "check:migrations"]
+  ],
+  "G25": [
+    ["npm", "test", "--", "ai-provider.test.ts", "aio-worker.test.ts"],
+    ["npm", "run", "typecheck"],
+    ["npm", "run", "check:migrations"]
+  ],
+  "G26": [
+    ["npm", "test", "--", "ai-policy.test.ts", "aio-worker.test.ts"],
+    ["npm", "run", "verify:publication-flow"],
+    ["npm", "run", "check:migrations"]
+  ],
+  "G27": [
+    ["npm", "test", "--", "google-integration.test.ts"],
+    ["npm", "run", "test:integration", "--", "orap/integration-routes.test.ts"],
+    ["npm", "run", "check:migrations"]
+  ],
+  "G28": [
+    ["npm", "test", "--", "reporting.test.ts", "orap-operations.test.ts"],
+    ["npm", "run", "test:e2e", "--", "accessibility-reporting.spec.ts"]
+  ],
+  "G29": [
+    ["npm", "run", "verify:backup-harness"],
+    ["npm", "run", "check:migrations"],
+    ["npm", "run", "scan:secrets"]
+  ],
+  "G30": [
+    ["npm", "run", "format:check"],
+    ["npm", "run", "lint"],
+    ["npm", "run", "typecheck"],
+    ["npm", "test"],
+    ["npm", "run", "test:integration"],
+    ["npm", "run", "test:security"],
+    ["npm", "run", "test:contracts"],
+    ["npm", "run", "test:e2e"],
+    ["npm", "run", "test:load"],
+    ["npm", "run", "verify:scheduler-runtime"],
+    ["npm", "run", "verify:alert-lifecycle"],
+    ["npm", "run", "verify:orap-operations"],
+    ["npm", "run", "check:migrations"],
+    ["npm", "run", "verify:deploy-harness"],
+    ["npm", "run", "verify:backup-harness"],
+    ["npm", "run", "verify:caddy"],
+    ["npm", "run", "verify:g30-observer"],
+    ["npm", "run", "scan:secrets"]
+  ]
+}

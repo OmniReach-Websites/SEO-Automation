@@ -1,0 +1,24 @@
+title = "OmniReach public repository safeguards"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Policy/configuration files can contain secret-pattern definitions but no credential values"
+paths = [
+  '''^\.gitleaks\.toml$''',
+  '''^tooling/scan-secrets\.mjs$''',
+  '''^tests/unit/repository-policy\.test\.ts$'''
+]
+
+[[rules]]
+id = "omnireach-private-runtime-path"
+description = "References that look like committed private runtime payload paths"
+regex = '''(?i)(customer-data|production-data|runtime-data)[/\\][^\s]+'''
+keywords = ["customer-data", "production-data", "runtime-data"]
+
+[[rules]]
+id = "omnireach-database-dump"
+description = "Database backup or dump filename"
+regex = '''(?i)[A-Za-z0-9._-]+\.(sql|dump|sqlite3?|bak)'''
+keywords = [".sql", ".dump", ".sqlite", ".bak"]
