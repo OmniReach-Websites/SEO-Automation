@@ -48,11 +48,12 @@ tree from the same checkout, verifies that the supplied release ID is that check
 `HEAD`, and writes metadata into the checksummed release archive. Metadata from one
 checkout must never be copied to or generated on behalf of another commit.
 
-The current manifest declares crypto contract 1 because the committed source at its
-introduction has only the legacy single-key reader/writer. The generator detects the
-`VersionedSecretKeyring` implementation marker: adding keyring-capable source without
-bumping the manifest to crypto contract 2 fails packaging, as does claiming contract 2
-before that source exists.
+The current manifest declares Auth Contract 2, schema contract 2, and crypto read range
+1 through 2 with write contract 2. The source retains the version-1 reader only as the
+initial compatibility bridge while all new ciphertext uses the versioned keyring. The
+generator detects the `VersionedSecretKeyring` implementation marker: adding
+keyring-capable source without crypto contract 2 fails packaging, as does claiming
+contract 2 before that source exists.
 Branch CI runs the same source/manifest capability check even when deployment is disabled,
 so a keyring implementation cannot merge without the atomic manifest bump.
 

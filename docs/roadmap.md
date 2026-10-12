@@ -193,7 +193,7 @@ G06 + G22 ─→ G27
 G08 + G16 + G22 + G24 + G26 + G27 ─→ G28
 G12 + G19 + G22 ─→ G29
 G19 + G21 + G26 + G28 + G29 ─→ G30
-G16 + G18 + G19 + G29 + G30 ─→ G31 → G32
+G05 + G06 + G16 + G18 + G19 + G29 + G30 ─→ G31 → G32
 ```
 
 ### Goal completion protocol
@@ -218,6 +218,13 @@ npm run verify:all
 ```
 
 The detailed cases listed under each goal's **Validation tests** are the minimum behaviors its `verify:goal` entry must exercise. Commands that require Docker, a provider sandbox, staging, or production authorization must be separated into named subcommands and report `blocked` rather than silently skip. G01 is the only exception because it precedes the toolchain: its document checks may be run with read-only PowerShell/`rg`, and G02 must subsequently register them as `G01`.
+
+The registered G31 and G32 commands are repository-only preflight checks. A passing G31
+entry does not prove GitHub/VPS permissions, production backup/restore, Caddy/DNS
+activation, owner bootstrap, or live rollback. A passing G32 entry proves only that the
+fictional repository fixtures remain valid; it does not prove a production rehearsal or
+authorize a real pilot. Those goals retain their recorded status until every external,
+live, and human checkpoint in their definitions of done has separate evidence.
 
 ## 5. Development goals
 
@@ -438,9 +445,10 @@ The detailed cases listed under each goal's **Validation tests** are the minimum
 session, customer email-policy, exact-host session-management, and restricted customer
 recovery foundations are implemented and validated locally. Customer TOTP management,
 WebAuthn/FIDO2, strong owner step-up/break-glass, method-specific durable audit coverage,
-MFA encryption-key rotation, explicit Auth Contract v2 artifact metadata, and the
-reviewed first-transition bridge/forward-recovery runbook remain. The ordinary release
-path now refuses to cross the pre-v2-to-v2 boundary.
+and the production-equivalent MFA key-rotation drill remain. Source-bound Auth Contract
+v2 metadata and the reviewed bridge/rollback paths are implemented and validated
+locally; first live execution remains a G31 owner-controlled change. The ordinary
+release path refuses an unreviewed pre-v2-to-v2 boundary crossing.
 
 **Priority:** P0  
 **Dependencies:** G04  
@@ -552,15 +560,17 @@ adapter and does not wait for Resend activation.
     step-up, and revocation outcomes without logging secrets.
 12. Keep Resend authentication delivery disabled in every production example until
     R-008 activation is separately approved; provider unavailability fails closed.
-13. Introduce a versioned MFA encryption-key keyring and tested re-encryption/retirement
-    procedure. The current single `MFA_ENCRYPTION_KEY` cannot be rotated safely and is a
-    production-activation blocker, not an operator rotation procedure.
-14. Complete Auth Contract v2 compatibility handling. The ordinary release target now
-    performs a fail-closed readiness preflight and refuses the first pre-v2-to-v2
-    transition. Add explicit artifact compatibility metadata plus the reviewed bridge
-    and forward-recovery runbook. Once the v2 schema or any v2 authentication state
-    exists, activation and rollback may select only v2-compatible artifacts; use a
-    forward fix or compatible restore rather than a pre-v2 binary.
+13. Use the implemented versioned MFA encryption-key keyring and bounded
+    re-encryption/retirement command. Complete an isolated production-equivalent drill
+    covering old/new reads, active-version writes, forced reauthentication, queued
+    recovery delivery, missing/corrupt key failure, rollback, restore, and final old-key
+    retirement before production activation.
+14. Preserve the implemented Auth Contract v2 compatibility handling: source-bound
+    metadata, fail-closed target validation, reviewed two-artifact bridge, and separately
+    confirmed compatible rollback. Record first live bridge/rollback evidence during
+    G31 before production authentication activation. Once the v2 schema or any v2
+    authentication state exists, activation and rollback may select only v2-compatible
+    artifacts; use a forward fix or compatible restore rather than a pre-v2 binary.
 
 **Database impact**
 
@@ -1910,7 +1920,9 @@ functions. The in-memory ledger is limited to unit tests; it is not a production
 
 ### G31 — Authorized production release activation
 
-**Status:** `in progress`
+**Status:** `blocked` — repository preparation exists, but production activation cannot
+resume until G05 and G06 are complete and the applicable R-005, R-008, and R-010 live
+prerequisites have verified evidence.
 **Priority:** P0 production gate  
 **Dependencies:** G05, G06, G16, G18, G19, G29, G30
 
@@ -1923,10 +1935,10 @@ GitHub production environment, main-only policy, and encrypted deploy secret are
 configured. G31 cannot complete until the reopened G05 authentication revision passes.
 Resend authentication delivery remains inactive until R-008's sender/provider/credential
 checks and explicit activation; the platform must not bypass two-step verification while
-it is inactive. Production authentication also remains gated until versioned MFA
-encryption-key rotation, explicit Auth Contract v2 artifact metadata, and the reviewed
-first-transition bridge/forward-recovery procedure are implemented and tested. The
-ordinary target script already refuses to cross from a running pre-v2 release into v2.
+it is inactive. Production authentication also remains gated until the versioned MFA
+encryption-key rotation drill and first live execution of the locally validated
+source-bound Auth Contract v2 bridge/rollback controls are recorded. The ordinary target
+script already refuses an unreviewed transition from a running pre-v2 release into v2.
 Execution also requires the one-time owner bootstrap, live
 prechecks/rollback evidence, backup readiness, and validation of each DNS/Caddy mutation;
 paid provider activation and real-customer onboarding remain gated.
@@ -1966,10 +1978,10 @@ paid provider activation and real-customer onboarding remain gated.
    SSH host key, and least-privilege GitHub production environment without recording
    secrets in Git. Do not grant unrestricted sudo or Docker-daemon access.
 3. Bind the G19 reusable workflow to protected `main` pushes and a separately permissioned manual recovery action; do not permit branch or pull-request deployment.
-4. Preserve the implemented fail-closed readiness preflight that refuses the first
-   pre-v2-to-v2 transition. Add explicit release-manifest compatibility metadata, record
-   the cutoff, and implement the reviewed bridge/forward-recovery procedure so
-   activation and rollback reject every pre-v2 artifact after the cutoff.
+4. Preserve the implemented fail-closed readiness preflight, source-bound release
+   metadata, reviewed two-artifact bridge, and separately confirmed compatible rollback.
+   Record the cutoff and first live execution so activation and rollback reject every
+   pre-v2 artifact after the cutoff.
 5. Install isolated OmniReach production service definitions, private networks, persistent volumes, health checks, resource caps, and log limits without reusing existing project ownership.
 6. Complete the one-time owner bootstrap through the approved secret channel and exact
    ORAP host. Verify the selected mandatory second step without issuing a pre-verification
@@ -1977,9 +1989,10 @@ paid provider activation and real-customer onboarding remain gated.
    without exposing credentials. If email is selected, activate it only through the
    separate R-008 gate; otherwise use a verified TOTP/WebAuthn method. Never bypass the
    requirement because a provider or authenticator is unavailable.
-7. Prove the versioned MFA encryption-key rotation/reencryption/retirement procedure in
-   an isolated production-equivalent dataset. Do not activate with the current
-   single-key, non-rotatable design.
+7. Prove the implemented versioned MFA encryption-key
+   rotation/reencryption/retirement procedure in an isolated production-equivalent
+   dataset. Do not activate until old/new reads, active-version writes,
+   reauthentication, rollback, recovery, and irreversible retirement are evidenced.
 8. Verify encrypted backup/off-server copy readiness before applying forward-compatible production migrations.
 9. Stage the exact verified artifact, validate the generated Caddy fragment, activate services/routes atomically, and run API/admin/static/contact-form-disabled health checks.
 10. Confirm Christians Reunite and all preexisting Caddy routes before and after activation.
@@ -1997,6 +2010,11 @@ prior artifact. Never roll back a schema destructively; use a compatible forward
 the approved recovery plan and verified backup.
 
 **Validation tests**
+
+The `verify:goal -- G31` registry entry validates repository-controlled workflow,
+Compose, deployment-harness, backup-harness, Caddy, migration, test, and secret-scan
+artifacts only. It cannot satisfy the live production checks below or change this goal's
+blocked status.
 
 - Production workflow policy proves only protected `main` can use the production environment and SSH credentials.
 - Permission tests prove `omnireach-deploy` cannot obtain a root shell, unrestricted sudo,
@@ -2064,6 +2082,11 @@ the approved recovery plan and verified backup.
 
 **Validation tests**
 
+The `verify:goal -- G32` registry entry validates only fictional site contracts,
+browser flows, load fixtures, documentation, and secret safety. Passing it is not a
+pilot rehearsal, customer approval, production mutation authorization, or launch
+record.
+
 - Repeat acceptance scenarios A–L for the fictional rehearsal and applicable pilot scope.
 - Verify live TLS/host routing/session isolation, artifact metadata, budget cap, alert paths, backup completion, and rollback readiness.
 - Confirm Christians Reunite and shared Caddy health before and after each approved infrastructure step.
@@ -2100,40 +2123,40 @@ remain `complete`. It does suspend any production-readiness conclusion that depe
 the old G06 evidence. G31 therefore depends directly on the reopened G05 and G06 gates,
 and the affected integration/security checks must be rerun before activation.
 
-| Goal | Status      | Depends on                        | Notes                                                                                                                                                                                                                                                  |
-| ---- | ----------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| G01  | complete    | —                                 | Architecture/security/operations/contract baseline and 9 ADRs validated 2026-10-10                                                                                                                                                                     |
-| G02  | complete    | G01                               | Repository/toolchain baseline and validation registry complete; all checks pass                                                                                                                                                                        |
-| G03  | complete    | G02                               | Branch CI and supply-chain policy validated; remote protection remains owner action                                                                                                                                                                    |
-| G04  | complete    | G02                               | Loopback Docker stack, 10 idempotent migrations, seed, health, and API verified                                                                                                                                                                        |
-| G05  | in progress | G04                               | Core account policy/email/recovery/session controls pass locally; customer TOTP, WebAuthn, owner step-up/break-glass, durable method audits, MFA-key rotation, explicit v2 artifact metadata, and the first-transition runbook remain                  |
-| G06  | in progress | G04, G05                          | Prior RLS/context/host evidence remains; Auth Contract v2 role grants, ORAP-host reservation, session issuance races, and live disposable-Postgres isolation require revalidation                                                                      |
-| G07  | complete    | G06                               | Agency-operated site/user/invitation/audit APIs and served ORAP shell verified                                                                                                                                                                         |
-| G08  | complete    | G07                               | Exact plans/grace, seat/page/location locks, schedule admission, AI-cycle quotas, and readiness gates pass                                                                                                                                             |
-| G09  | complete    | G02, G06                          | Contract schema, hashes, compatibility rules, and three fixtures validate                                                                                                                                                                              |
-| G10  | complete    | G09                               | Starter plus distinct restaurant/custom sites build and pass static accessibility                                                                                                                                                                      |
-| G11  | complete    | G06, G09                          | Structured drafts/revisions/facts/proposals, CAS, restore, and protection verified                                                                                                                                                                     |
-| G12  | complete    | G06, G11                          | Site-isolated validated media storage, routes, and hostile fixtures verified                                                                                                                                                                           |
-| G13  | complete    | G10, G11, G12                     | Reusable centralized forms, contract fields, Turnstile, views, delivery, holds, retention, and artifacts pass                                                                                                                                          |
-| G14  | complete    | G06, G08, G13                     | Exact-host API isolation and real-browser customer/ORAP shell isolation pass                                                                                                                                                                           |
-| G15  | complete    | G12, G14                          | Bounded controls, optimistic drafts, media, preview, permissions, and E2E pass                                                                                                                                                                         |
-| G16  | complete    | G13, G15                          | Live DB publish/restore/failure rehearsal preserves immutable rollback trail                                                                                                                                                                           |
-| G17  | complete    | G08, G14                          | Mock DNS state machine, dry-run/idempotency, takeover/IDN checks, ORAP view pass                                                                                                                                                                       |
-| G18  | complete    | G13, G14, G17                     | R-001/R-003 evidence, isolated exact-host fragment, validation, and non-regression plan pass; activation is G31                                                                                                                                        |
-| G19  | complete    | G03, G13                          | Inert reusable workflow and isolated checksum/lock/rollback harness pass                                                                                                                                                                               |
-| G20  | complete    | G04, G06                          | Opaque BullMQ jobs, durable dispatch claims, effect keys, stalled recovery, drain/dead-letter, retention, and RLS pass                                                                                                                                 |
-| G21  | complete    | G08, G20                          | Atomic site/platform caps, cross-site concurrency, UTC reset, and audited owner/admin controls pass                                                                                                                                                    |
-| G22  | complete    | G20, G21                          | Durable timezone scheduler, alert/email history, and audited ORAP acknowledge/resolve/cancel/replay controls pass                                                                                                                                      |
-| G23  | complete    | G13, G20                          | Bounded crawler, robots/query/timeout limits, and redirect/DNS SSRF regressions pass                                                                                                                                                                   |
-| G24  | complete    | G10, G22, G23                     | Versioned deterministic SEO/AIO evidence rules and safe remediation classes pass                                                                                                                                                                       |
-| G25  | complete    | G11, G21, G24                     | Official Responses SDK adapter, typed schema, mocks, redaction, and budget flow pass                                                                                                                                                                   |
-| G26  | complete    | G16, G25                          | AUTO/SUGGEST/PROTECTED policy, fact corpus, review, and rollback path pass                                                                                                                                                                             |
-| G27  | complete    | G06, G22                          | OAuth/PKCE/replay/property/token/metric mock foundation passes; live access is R-007                                                                                                                                                                   |
-| G28  | complete    | G08, G16, G22, G24, G26, G27      | Source/window/freshness/caveat reporting and browser accessibility pass                                                                                                                                                                                |
-| G29  | complete    | G12, G19, G22                     | Encrypted nested-media/off-server copy, retention, corruption, and isolated restore pass                                                                                                                                                               |
-| G30  | complete    | G19, G21, G26, G28, G29           | Full local gate and isolated ten-site load pass; nine healthy pre-deployment samples recorded; representative live soak moves to G31                                                                                                                   |
-| G31  | in progress | G05, G06, G16, G18, G19, G29, G30 | Main-only workflow/environment and pinned restricted SSH identity configured; G05/G06 signoff, v2 metadata/bridge validation, MFA-key rotation, owner bootstrap, live release/rollback, backups, Caddy/DNS, and verified second-step activation remain |
-| G32  | not started | G31                               | Fictional rehearsal and pilot onboarding                                                                                                                                                                                                               |
+| Goal | Status      | Depends on                        | Notes                                                                                                                                                                                                                                                                             |
+| ---- | ----------- | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| G01  | complete    | —                                 | Architecture/security/operations/contract baseline and 9 ADRs validated 2026-10-10                                                                                                                                                                                                |
+| G02  | complete    | G01                               | Repository/toolchain baseline and validation registry complete; all checks pass                                                                                                                                                                                                   |
+| G03  | complete    | G02                               | Branch CI and supply-chain policy validated; remote protection remains owner action                                                                                                                                                                                               |
+| G04  | complete    | G02                               | Loopback Docker stack, 10 idempotent migrations, seed, health, and API verified                                                                                                                                                                                                   |
+| G05  | in progress | G04                               | Core account policy/email/recovery/session, keyring rotation controls, source-bound v2 metadata, and reviewed bridge/rollback paths pass locally; customer TOTP, WebAuthn, owner step-up/break-glass, durable method audits, and a production-equivalent rotation drill remain    |
+| G06  | in progress | G04, G05                          | Prior RLS/context/host evidence remains; Auth Contract v2 role grants, ORAP-host reservation, session issuance races, and live disposable-Postgres isolation require revalidation                                                                                                 |
+| G07  | complete    | G06                               | Agency-operated site/user/invitation/audit APIs and served ORAP shell verified                                                                                                                                                                                                    |
+| G08  | complete    | G07                               | Exact plans/grace, seat/page/location locks, schedule admission, AI-cycle quotas, and readiness gates pass                                                                                                                                                                        |
+| G09  | complete    | G02, G06                          | Contract schema, hashes, compatibility rules, and three fixtures validate                                                                                                                                                                                                         |
+| G10  | complete    | G09                               | Starter plus distinct restaurant/custom sites build and pass static accessibility                                                                                                                                                                                                 |
+| G11  | complete    | G06, G09                          | Structured drafts/revisions/facts/proposals, CAS, restore, and protection verified                                                                                                                                                                                                |
+| G12  | complete    | G06, G11                          | Site-isolated validated media storage, routes, and hostile fixtures verified                                                                                                                                                                                                      |
+| G13  | complete    | G10, G11, G12                     | Reusable centralized forms, contract fields, Turnstile, views, delivery, holds, retention, and artifacts pass                                                                                                                                                                     |
+| G14  | complete    | G06, G08, G13                     | Exact-host API isolation and real-browser customer/ORAP shell isolation pass                                                                                                                                                                                                      |
+| G15  | complete    | G12, G14                          | Bounded controls, optimistic drafts, media, preview, permissions, and E2E pass                                                                                                                                                                                                    |
+| G16  | complete    | G13, G15                          | Live DB publish/restore/failure rehearsal preserves immutable rollback trail                                                                                                                                                                                                      |
+| G17  | complete    | G08, G14                          | Mock DNS state machine, dry-run/idempotency, takeover/IDN checks, ORAP view pass                                                                                                                                                                                                  |
+| G18  | complete    | G13, G14, G17                     | R-001/R-003 evidence, isolated exact-host fragment, validation, and non-regression plan pass; activation is G31                                                                                                                                                                   |
+| G19  | complete    | G03, G13                          | Inert reusable workflow and isolated checksum/lock/rollback harness pass                                                                                                                                                                                                          |
+| G20  | complete    | G04, G06                          | Opaque BullMQ jobs, durable dispatch claims, effect keys, stalled recovery, drain/dead-letter, retention, and RLS pass                                                                                                                                                            |
+| G21  | complete    | G08, G20                          | Atomic site/platform caps, cross-site concurrency, UTC reset, and audited owner/admin controls pass                                                                                                                                                                               |
+| G22  | complete    | G20, G21                          | Durable timezone scheduler, alert/email history, and audited ORAP acknowledge/resolve/cancel/replay controls pass                                                                                                                                                                 |
+| G23  | complete    | G13, G20                          | Bounded crawler, robots/query/timeout limits, and redirect/DNS SSRF regressions pass                                                                                                                                                                                              |
+| G24  | complete    | G10, G22, G23                     | Versioned deterministic SEO/AIO evidence rules and safe remediation classes pass                                                                                                                                                                                                  |
+| G25  | complete    | G11, G21, G24                     | Official Responses SDK adapter, typed schema, mocks, redaction, and budget flow pass                                                                                                                                                                                              |
+| G26  | complete    | G16, G25                          | AUTO/SUGGEST/PROTECTED policy, fact corpus, review, and rollback path pass                                                                                                                                                                                                        |
+| G27  | complete    | G06, G22                          | OAuth/PKCE/replay/property/token/metric mock foundation passes; live access is R-007                                                                                                                                                                                              |
+| G28  | complete    | G08, G16, G22, G24, G26, G27      | Source/window/freshness/caveat reporting and browser accessibility pass                                                                                                                                                                                                           |
+| G29  | complete    | G12, G19, G22                     | Encrypted nested-media/off-server copy, retention, corruption, and isolated restore pass                                                                                                                                                                                          |
+| G30  | complete    | G19, G21, G26, G28, G29           | Full local gate and isolated ten-site load pass; nine healthy pre-deployment samples recorded; representative live soak moves to G31                                                                                                                                              |
+| G31  | blocked     | G05, G06, G16, G18, G19, G29, G30 | Repository v2 metadata/bridge/rollback controls pass locally, but G05/G06 signoff and R-005/R-008/R-010 evidence block activation; an MFA-key rotation drill, owner bootstrap, first live bridge/release/rollback, backups, Caddy/DNS, and verified second-step activation remain |
+| G32  | not started | G31                               | Fictional rehearsal and pilot onboarding                                                                                                                                                                                                                                          |
 
 ## 8. Definition of roadmap completion
 

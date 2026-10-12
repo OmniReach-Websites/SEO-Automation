@@ -241,10 +241,12 @@ Auth Contract v2 is a release compatibility boundary, not merely a schema versio
 Applying its schema or writing v2 authentication state establishes the cutoff. From that
 point, deployment and rollback may activate only artifacts that explicitly declare v2
 compatibility; missing or incompatible metadata fails closed. Production authentication
-also remains gated on a versioned keyring and tested rotation/retirement procedure for
-the current single `MFA_ENCRYPTION_KEY`. The ordinary release script already refuses to
-cross from a running pre-v2 release to a v2 artifact; the first bridge/forward-recovery
-runbook and explicit release metadata still require validation before activation.
+also remains gated on a successful production-equivalent drill of the implemented
+versioned keyring and rotation/retirement procedure. The ordinary release script already
+refuses an unreviewed transition from a running pre-v2 release to a v2 artifact.
+Source-bound metadata plus the reviewed two-artifact bridge and separately confirmed
+compatible rollback are implemented and validated locally. Their first live execution,
+recovery evidence, and the key-rotation drill remain required before activation.
 
 ## 10. Failure behavior
 

@@ -227,7 +227,11 @@ roadmap ideas are not customer promises.
 
 - GitHub Actions builds/tests the exact commit and emits a checksummed immutable artifact.
 - A reusable deployment workflow and restricted target scripts are tested only against an isolated SSH target.
-- The workflow is not bound to a production host or push trigger.
+- At G19 completion, that reusable workflow was not bound to a production host or push
+  trigger. The repository now also contains `deploy-production.yml`, a `main`-push
+  wrapper referencing the protected `production` environment, as partial G31
+  preparation. Its presence does not prove external environment protection, credentials,
+  target permissions, approval, deployment, or rollback evidence.
 
 ### 5.2 Production activation (G31)
 
@@ -236,7 +240,8 @@ and runtime contract. Its first-deployment, credential-rotation, datastore-backu
 isolated-recovery procedures are documented in
 [`production-compose.md`](production-compose.md). Local verification does not satisfy the
 G31 production mutation, real-backup, Caddy, DNS, or existing-service non-regression
-gates.
+gates. G31 is blocked while G05/G06 and the applicable R-005/R-008/R-010 evidence remain
+incomplete; running its repository-only goal verifier does not change that status.
 
 Preconditions:
 
@@ -255,9 +260,10 @@ Preconditions:
 - The candidate and rollback artifacts explicitly declare Auth Contract v2
   compatibility. The compatibility cutoff is recorded, and the preflight rejects a
   missing/older contract after the v2 schema or state exists.
-- A versioned MFA encryption-key keyring, re-encryption/retirement procedure, and
-  isolated rotation drill have passed. The current single-key implementation is not
-  rotatable and blocks production authentication activation.
+- The implemented versioned MFA encryption-key keyring and re-encryption/retirement
+  procedure have passed an isolated production-equivalent drill. Repository unit tests
+  alone are insufficient; activation stays blocked until the old/new login, forced
+  reauthentication, rollback, and restore evidence is attached to the change record.
 - `admin.omnireach.cloud` (or the configured canonical ORAP hostname) is reserved and
   absent from all customer-domain mappings.
 

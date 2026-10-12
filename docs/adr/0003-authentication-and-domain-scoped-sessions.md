@@ -121,20 +121,24 @@ verification satisfies a NIST Authentication Assurance Level. See the
   generic response but can leave a valid, undelivered token until expiry. Retrying is
   safe because it replaces/invalidates the earlier token. This availability limitation
   is not an authentication bypass and remains explicit G05 hardening work.
-- Persistent TOTP secrets and encrypted recovery-delivery payloads currently use one
-  version-1 `MFA_ENCRYPTION_KEY`. There is no keyring, re-encryption job, or safe key
-  retirement procedure yet. Replacing that secret would strand stored TOTP factors and
-  pending delivery payloads, so production authentication activation is blocked until
-  versioned rotation is implemented and tested.
+- Persistent TOTP secrets and encrypted recovery-delivery payloads use a versioned
+  keyring. New writes use the active version, reads select the stored version, bounded
+  re-encryption runs transactionally, and durable retirement fails while factor or
+  delivery references remain. A legacy version-1 key file is accepted only for the
+  initial compatibility bridge. Production authentication activation remains blocked
+  until the owner-controlled production-equivalent rotation, reauthentication,
+  rollback, and restore drill is completed and recorded.
 - Auth Contract v2 begins when its schema is applied or any v2 account-policy,
   assurance, factor, challenge, recovery, or session state is written. From that cutoff,
   release activation and rollback must fail closed unless the artifact explicitly
   declares v2 compatibility. A pre-v2 binary is not a valid rollback target because it
   can ignore the v2 policy/host contract. Use a v2-compatible prior artifact, forward
   fix, or compatible backup restore instead.
-  The ordinary release script now checks the running readiness contract and refuses the
-  first v1-to-v2 transition. The reviewed bridge/forward-recovery runbook and explicit
-  artifact compatibility metadata remain production prerequisites.
+  The ordinary release script checks the running readiness contract and refuses an
+  unreviewed first v1-to-v2 transition. Source-bound compatibility metadata, a protected
+  two-artifact bridge, and separately confirmed compatible rollback are implemented and
+  validated in the local harness. Their first live execution and recovery evidence
+  remain G31 production prerequisites.
 - Resend authentication delivery remains disabled until its sender domain, account,
   credentials, limits, and production activation receive the existing explicit
   approval. A disabled or unavailable provider never causes MFA bypass.

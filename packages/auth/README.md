@@ -4,9 +4,11 @@
 implemented and tested locally. G05 remains in progress because customer TOTP
 management, WebAuthn/passkeys, recent-strong-step authorization for sensitive owner
 changes, the audited privileged break-glass procedure, complete method-specific durable
-audit events, explicit Auth Contract v2 artifact metadata and first-transition runbook,
-and a production-equivalent MFA encryption-key rotation drill are not complete yet. G06
-is also reopened for Auth Contract v2 host/role/RLS/session-race revalidation.
+audit events, and a production-equivalent MFA encryption-key rotation drill are not
+complete yet. Source-bound Auth Contract v2 metadata and the reviewed bridge/rollback
+paths are implemented and validated locally; their first live execution remains a G31
+owner-controlled change. G06 is also reopened for Auth Contract v2
+host/role/RLS/session-race revalidation.
 
 The current package provides Argon2id password hashing, normalized identities, one-time
 token hashing, host-only secure cookie options, account-level authentication policy,
@@ -57,12 +59,13 @@ password-only ORAP session.
 Applying the v2 schema or writing v2 account-policy, assurance, factor, challenge,
 recovery, or session state establishes the compatibility cutoff. After that point,
 deployment and rollback must activate only artifacts that explicitly declare Auth
-Contract v2 compatibility. The repository does not yet implement that fail-closed
-release metadata contract. The ordinary target script does implement a fail-closed
-readiness preflight and refuses the first pre-v2-to-v2 transition; the reviewed bridge
-or forward-recovery runbook is still missing, so production authentication remains
-gated. A pre-v2 binary is not a valid rollback target; use a compatible prior artifact,
-forward fix, or compatible backup restore.
+Contract v2 compatibility. The source-bound release manifest, metadata generator,
+target validator, protected bridge workflow, and separately confirmed rollback workflow
+implement that fail-closed contract and pass the local deployment harness. The ordinary
+target script still refuses an unreviewed pre-v2-to-v2 transition. Production
+authentication remains gated until the owner-controlled bridge and rollback are proven
+against the protected environment and target. A pre-v2 binary is not a valid rollback
+target; use a compatible prior artifact, forward fix, or compatible backup restore.
 
 Persistent TOTP secrets and encrypted recovery-delivery payloads use a versioned keyring.
 The legacy `MFA_ENCRYPTION_KEY` is accepted only as a version-1 deployment bridge. New
