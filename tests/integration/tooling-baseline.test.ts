@@ -13,7 +13,7 @@ describe('repository baseline integration', () => {
   });
 
   it('keeps every declared workspace within its dependency boundary', () => {
-    expect(checkWorkspaces()).toMatchObject({ errors: [], ok: true, workspaceCount: 26 });
+    expect(checkWorkspaces()).toMatchObject({ errors: [], ok: true, workspaceCount: 27 });
   });
 
   it('contains no obvious working-tree secret or forbidden committed path', () => {
