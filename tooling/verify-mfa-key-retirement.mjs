@@ -301,6 +301,53 @@ async function verify(pool) {
       ),
     'A stale process queued recovery ciphertext under a retired key',
   );
+  await expectDatabaseError(
+    () =>
+      withAuthRole(pool, (client) =>
+        client.query(
+          `UPDATE password_recovery_delivery_outbox
+              SET status = 'queued', encrypted_token = decode('010203', 'hex')
+            WHERE recovery_token_id = $1`,
+          [fixture.recovery],
+        ),
+      ),
+    'A stale process restored recovery ciphertext without changing its retired version',
+  );
+  await withAuthRole(pool, (client) =>
+    client.query(
+      `UPDATE password_recovery_delivery_outbox
+          SET encrypted_token = NULL
+        WHERE recovery_token_id = $1`,
+      [fixture.recovery],
+    ),
+  );
+
+  const ciphertextTriggers = await pool.query(
+    `SELECT tgname, pg_get_triggerdef(oid) AS definition
+       FROM pg_trigger
+      WHERE tgname IN (
+        'mfa_factors_reject_retired_encryption_key',
+        'password_recovery_outbox_reject_retired_encryption_key'
+      )
+      ORDER BY tgname`,
+  );
+  assert(ciphertextTriggers.rows.length === 2, 'Ciphertext retirement triggers are missing');
+  assert(
+    ciphertextTriggers.rows.some(
+      (row) =>
+        row.tgname === 'mfa_factors_reject_retired_encryption_key' &&
+        row.definition.includes('encrypted_secret'),
+    ),
+    'MFA ciphertext-only updates are not guarded',
+  );
+  assert(
+    ciphertextTriggers.rows.some(
+      (row) =>
+        row.tgname === 'password_recovery_outbox_reject_retired_encryption_key' &&
+        row.definition.includes('encrypted_token'),
+    ),
+    'Recovery ciphertext-only updates are not guarded',
+  );
 
   const writer = await pool.connect();
   const retiree = await pool.connect();
