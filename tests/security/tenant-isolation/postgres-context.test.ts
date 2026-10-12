@@ -111,4 +111,16 @@ describe('PostgreSQL-backed request context', () => {
     expect(contextSql).toContain("s.last_seen_at > now() - interval '30 minutes'");
     expect(String(query.mock.calls[4]?.[0])).toContain('SET last_seen_at = now()');
   });
+
+  it('never resolves the canonical ORAP hostname as a public contact-form site', async () => {
+    const query = vi.fn(async () => ({ rows: [{ site_id: 'conflict', tenant_id: 'conflict' }] }));
+    const pool = {
+      connect: vi.fn(async () => ({ query, release: vi.fn() })),
+    } as ContextQueryPool;
+    const resolver = new PostgresRequestContextResolver(pool, 'ADMIN.OMNIREACH.TEST');
+
+    await expect(resolver.contact(request('admin.omnireach.test'))).resolves.toBeUndefined();
+    expect(pool.connect).not.toHaveBeenCalled();
+    expect(query).not.toHaveBeenCalled();
+  });
 });
