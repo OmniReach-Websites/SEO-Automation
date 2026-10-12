@@ -5,8 +5,8 @@ implemented and tested locally. G05 remains in progress because customer TOTP
 management, WebAuthn/passkeys, recent-strong-step authorization for sensitive owner
 changes, the audited privileged break-glass procedure, complete method-specific durable
 audit events, explicit Auth Contract v2 artifact metadata and first-transition runbook,
-and MFA encryption-key rotation are not implemented yet. G06 is also reopened for Auth
-Contract v2 host/role/RLS/session-race revalidation.
+and a production-equivalent MFA encryption-key rotation drill are not complete yet. G06
+is also reopened for Auth Contract v2 host/role/RLS/session-race revalidation.
 
 The current package provides Argon2id password hashing, normalized identities, one-time
 token hashing, host-only secure cookie options, account-level authentication policy,
@@ -64,11 +64,30 @@ or forward-recovery runbook is still missing, so production authentication remai
 gated. A pre-v2 binary is not a valid rollback target; use a compatible prior artifact,
 forward fix, or compatible backup restore.
 
-Persistent TOTP secrets and encrypted recovery-delivery payloads currently use a single
-version-1 `MFA_ENCRYPTION_KEY`. Key rotation is unsupported: there is no keyring,
-re-encryption job, or tested retirement/recovery procedure. Do not replace that key on an
-initialized environment. Production authentication remains gated until versioned
-rotation succeeds against records encrypted under old and new keys.
+Persistent TOTP secrets and encrypted recovery-delivery payloads use a versioned keyring.
+The legacy `MFA_ENCRYPTION_KEY` is accepted only as a version-1 deployment bridge. New
+records use the active key version, reads select the stored version, and the bounded
+`PostgresMfaKeyRotator` rewrites factors atomically. The operator command never accepts
+key material on its command line. Rotation batches require a change ID and produce
+non-secret audit evidence. Retirement rechecks factor and queued-delivery references
+under the same database advisory lock used by ciphertext writes, persists an immutable
+retirement record, and causes stale writes under that version to fail closed.
+Application startup uses `SESSION_SECRET` as the separate authentication pepper and
+rejects reusing it as any encryption key, so changing the active encryption key does not
+change newly issued email-code or challenge digests.
+
+Do not rotate a live key merely because the repository primitive exists. A rotation
+updates authentication state and therefore requires planned reauthentication, a
+deployment lock, a compatible rollback artifact and backup, a 10-minute drain for
+ephemeral owner-bootstrap state, an owner-approved change record, and a successful
+production-equivalent drill. G31 remains gated on that evidence.
+
+After any new-version write or rotation batch, abort and rollback must keep both keys
+readable; the old version may be selected for new writes, but neither version may be
+removed while ciphertext can reference it. Durable retirement is explicit and
+irreversible. The legacy single-key file is only an initial-rollout/runtime bridge and
+does not make a pre-keyring binary a valid rollback target after mixed-version writes or
+retirement.
 
 Durable audit coverage is also incomplete for some code issuance/resend,
 limiter-denial, delivery-failure/exhaustion, bootstrap, and method-change outcomes.

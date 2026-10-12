@@ -115,10 +115,11 @@ general sudo.
    session issuance.
 9. Continue to Caddy or DNS integration only under their separate explicit approvals.
 
-Do not activate production authentication with the current single
-`MFA_ENCRYPTION_KEY`. Versioned key selection, re-encryption, retirement, recovery, and
-rollback must first be implemented and proven in an isolated production-equivalent
-rotation drill. Local bootstrap generation of that file is not rotation support.
+The first keyring-capable release creates `mfa_encryption_keyring` from the existing
+version-1 `mfa_encryption_key` without changing the key. This is a compatibility bridge,
+not a rotation. Do not activate a new key until re-encryption, retirement, recovery, and
+rollback have passed an isolated production-equivalent drill and the owner has approved
+the maintenance change.
 
 The runtime entrypoint reads mounted files and constructs these values inside the API or
 worker process:
@@ -173,20 +174,64 @@ official image consumes bootstrap values only for an empty data directory.
    regenerates the ACL with only the current password, removing the prior credential.
 5. Verify unauthenticated, prior-password, and prohibited administrative commands fail.
 
-### MFA encryption key — rotation not yet supported
+### MFA encryption key
 
-The `mfa_encryption_key` secret backs persistent TOTP secrets and domain-separated
-encrypted password-recovery delivery payloads. Those records currently carry only the
-single version-1 key contract; there is no deployed keyring, bulk re-encryption process,
-or safe retirement procedure. Do not replace, delete, or regenerate this file on an
-initialized environment. Doing so can make existing TOTP factors and queued recovery
-deliveries unreadable.
+`mfa_encryption_keyring` is a compact host-only JSON document with `activeVersion` and a
+`keys` object. `mfa_encryption_key` remains the bridge key for the first compatible
+release and must not be changed during that deployment. Neither value may appear in an
+environment file, command argument, log, chat, or Git.
 
-Production authentication activation remains blocked until G05 provides versioned
-decrypt/read support, new-key writes, controlled re-encryption, old-key retirement,
-failure recovery, and tests covering records created under both keys. Rotation must then
-run under the deployment lock and an owner-approved maintenance record without printing
-key material.
+Run a rotation only under the deployment lock after a restorable backup and compatible
+rollback artifact are verified:
+
+1. Create a root-only candidate keyring containing the current and new random keys, set
+   the new version active, validate it offline, and atomically replace the mounted
+   keyring file. Never edit the active file in place.
+2. Recreate the authentication-capable OmniReach processes. New TOTP and recovery-outbox
+   records now use the active version; existing versions remain readable.
+3. From the verified release image, run
+   `npm run auth:rotate-mfa-key -- --apply --change-id CHANGE_ID`. The command works in
+   bounded transactions, prints counts and version state only, writes non-secret batch
+   audit evidence, and fails closed if an old key is absent or ciphertext cannot
+   authenticate. Factor rewrites advance account authentication state, so plan for
+   affected users to sign in again. Continue until `remaining` is zero.
+4. Finish or expire queued recovery delivery, then wait at least 10 minutes after the old
+   key stopped being active. This drains ephemeral owner-bootstrap state. Run
+   `npm run auth:rotate-mfa-key -- --check-retirement OLD_VERSION`; exit status 2 means
+   durable references remain and retirement must not proceed.
+5. After the check permits retirement and the post-rotation login/recovery drill passes,
+   run
+   `npm run auth:rotate-mfa-key -- --retire OLD_VERSION --change-id CHANGE_ID`. This
+   atomically rechecks durable references under the database write lock, records the
+   immutable retirement and non-secret audit event, and enables database guards that
+   reject every later factor or recovery-outbox write under the retired version,
+   including writes from a stale process.
+6. Only after step 5 succeeds, prepare protected candidate files that remove the retired
+   entry from the keyring and make the required legacy bridge file contain the active
+   key. Atomically replace each file under the deployment lock, recreate every
+   authentication-capable process, and repeat the retirement, login, and recovery
+   checks. Retain retired material only in approved encrypted recovery custody until the
+   owner-approved destruction point; never leave it in an active host keyring.
+7. If a check fails before durable retirement, keep both old and new keys readable. A
+   controlled abort may atomically make the old version active for new writes, but it
+   must not restore an old-only keyring once any new-version write or rotation batch has
+   occurred. Roll back only to a keyring-capable compatible artifact. After durable
+   retirement, never reactivate the version or roll back to an artifact whose release
+   metadata cannot read the active key/schema contract; use a compatible forward fix or
+   tested restore.
+
+The single-key `mfa_encryption_key` file is an initial-rollout and runtime compatibility
+bridge, not a rollback mechanism. Once a new-version write exists, a pre-keyring binary
+cannot safely read the mixed ciphertext set. After durable retirement, the database
+guard also rejects the retired-version writes such a stale binary can attempt. Therefore
+pre-keyring binaries are permanently incompatible with that database state even though
+the bridge file must continue to contain the active key for the current Compose runtime.
+
+Repository unit and disposable-PostgreSQL coverage proves old/new encryption, bounded
+rewriting, grants/RLS, authentication-state invalidation, immutable retirement,
+non-secret audit evidence, and serialization against concurrent or stale writes. A real
+production-equivalent rotation and recovery drill is still required before G31
+activation.
 
 ## Backups
 

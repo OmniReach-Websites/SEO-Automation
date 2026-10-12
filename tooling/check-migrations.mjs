@@ -109,6 +109,11 @@ for (const fragment of [
   'GRANT SELECT, INSERT, UPDATE ON password_recovery_delivery_outbox TO omnireach_auth',
   'GRANT SELECT, INSERT, UPDATE ON account_authentication_policies, account_recovery_codes',
   'GRANT INSERT ON audit_events TO omnireach_auth',
+  'CREATE TABLE mfa_encryption_key_retirements',
+  'mfa_encryption_key_retirements_are_immutable',
+  'guard_retired_mfa_encryption_key_write',
+  'CREATE OR REPLACE FUNCTION retire_mfa_encryption_key',
+  'GRANT EXECUTE ON FUNCTION retire_mfa_encryption_key(integer, integer, text) TO omnireach_auth',
   "OR pg_has_role(current_user, 'omnireach_auth', 'member')",
 ]) {
   if (!sql.includes(fragment)) errors.push(`required migration invariant missing: ${fragment}`);
@@ -116,6 +121,14 @@ for (const fragment of [
 
 if (/GRANT[^;]*credentials[^;]*TO omnireach_app/isu.test(sql)) {
   errors.push('omnireach_app must not receive credential-table grants');
+}
+
+if (
+  /GRANT[^;]*(?:INSERT|UPDATE|DELETE)[^;]*mfa_encryption_key_retirements[^;]*TO omnireach_auth/isu.test(
+    sql,
+  )
+) {
+  errors.push('omnireach_auth must retire keys only through the atomic retirement function');
 }
 
 if (
