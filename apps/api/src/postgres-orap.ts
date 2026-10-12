@@ -485,6 +485,108 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
     return { status: 'accepted' };
   }
 
+  listCustomerSessions(
+    actor: AdminActor,
+    input: { siteId: string; tenantId: string; userId: string },
+  ): Promise<unknown> {
+    assertCustomerSessionAdministrator(actor);
+    return this.transaction(actor, async (client) => {
+      await lockCustomerSessionScope(client, input);
+      const result = await query<{
+        created_at: Date;
+        expires_at: Date;
+        host: string;
+        id: string;
+        last_seen_at: Date;
+      }>(
+        client,
+        `SELECT id, host, created_at, last_seen_at, expires_at
+           FROM sessions
+          WHERE tenant_id = $1 AND site_id = $2 AND user_id = $3
+            AND revoked_at IS NULL AND expires_at > now()
+          ORDER BY last_seen_at DESC, id`,
+        [input.tenantId, input.siteId, input.userId],
+      );
+      return {
+        sessions: result.rows.map((row) => ({
+          createdAt: row.created_at,
+          expiresAt: row.expires_at,
+          host: row.host,
+          id: row.id,
+          lastSeenAt: row.last_seen_at,
+        })),
+      };
+    });
+  }
+
+  revokeCustomerSession(
+    actor: AdminActor,
+    input: {
+      reason: string;
+      sessionId: string;
+      siteId: string;
+      tenantId: string;
+      userId: string;
+    },
+  ): Promise<unknown> {
+    assertCustomerSessionAdministrator(actor);
+    assertBoundedAdministrativeReason(input.reason);
+    return this.transaction(actor, async (client) => {
+      await lockCustomerSessionScope(client, input);
+      const revoked = await query<{ id: string }>(
+        client,
+        `UPDATE sessions
+            SET revoked_at = now(), revoke_reason = 'orap-exact-site-revocation'
+          WHERE id = $1 AND tenant_id = $2 AND site_id = $3 AND user_id = $4
+            AND revoked_at IS NULL
+          RETURNING id`,
+        [input.sessionId, input.tenantId, input.siteId, input.userId],
+      );
+      await audit(client, actor, {
+        action: 'customer.session.revoked',
+        after: { revokedSessions: revoked.rows.length },
+        before: null,
+        reason: input.reason,
+        siteId: input.siteId,
+        targetId: input.sessionId,
+        targetType: 'session',
+        tenantId: input.tenantId,
+      });
+      return { revokedSessions: revoked.rows.length };
+    });
+  }
+
+  revokeAllCustomerSessions(
+    actor: AdminActor,
+    input: { reason: string; siteId: string; tenantId: string; userId: string },
+  ): Promise<unknown> {
+    assertCustomerSessionAdministrator(actor);
+    assertBoundedAdministrativeReason(input.reason);
+    return this.transaction(actor, async (client) => {
+      await lockCustomerSessionScope(client, input);
+      const revoked = await query<{ id: string }>(
+        client,
+        `UPDATE sessions
+            SET revoked_at = now(), revoke_reason = 'orap-exact-site-revoke-all'
+          WHERE tenant_id = $1 AND site_id = $2 AND user_id = $3
+            AND revoked_at IS NULL
+          RETURNING id`,
+        [input.tenantId, input.siteId, input.userId],
+      );
+      await audit(client, actor, {
+        action: 'customer.sessions.revoked',
+        after: { revokedSessions: revoked.rows.length },
+        before: null,
+        reason: input.reason,
+        siteId: input.siteId,
+        targetId: input.userId,
+        targetType: 'user',
+        tenantId: input.tenantId,
+      });
+      return { revokedSessions: revoked.rows.length };
+    });
+  }
+
   setFeatureOverride(
     actor: AdminActor,
     input: {
@@ -1264,6 +1366,21 @@ function assertBudgetAdministrator(actor: AdminActor): void {
   }
 }
 
+function assertCustomerSessionAdministrator(actor: AdminActor): void {
+  if (actor.role !== 'platform_owner' && actor.role !== 'platform_admin') {
+    throw new Error('Customer session administration requires a platform owner or platform admin');
+  }
+}
+
+function assertBoundedAdministrativeReason(reason: string): void {
+  const normalized = reason.trim();
+  if (normalized.length < 3 || normalized.length > 500) {
+    throw new Error(
+      'Administrative session revocation requires a reason between 3 and 500 characters',
+    );
+  }
+}
+
 async function assertSite(
   client: TenantTransactionClient,
   tenantId: string,
@@ -1275,6 +1392,28 @@ async function assertSite(
     [tenantId, siteId],
   );
   if (result.rows.length !== 1) throw new Error('Site was not found');
+}
+
+async function lockCustomerSessionScope(
+  client: TenantTransactionClient,
+  input: { siteId: string; tenantId: string; userId: string },
+): Promise<void> {
+  const result = await query<{ id: string }>(
+    client,
+    `SELECT m.id
+       FROM memberships m
+       JOIN users u ON u.id = m.user_id AND u.status = 'active'
+       JOIN tenants t ON t.id = m.tenant_id AND t.status = 'active'
+       JOIN sites s ON s.tenant_id = m.tenant_id AND s.id = m.site_id
+         AND s.status = 'active'
+      WHERE m.tenant_id = $1 AND m.site_id = $2 AND m.user_id = $3
+        AND m.active
+        AND m.role IN ('customer_owner', 'customer_editor', 'customer_viewer')
+      LIMIT 2
+      FOR SHARE OF m, u, t, s`,
+    [input.tenantId, input.siteId, input.userId],
+  );
+  if (result.rows.length !== 1) throw new Error('Active customer site membership was not found');
 }
 
 async function membership(

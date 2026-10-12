@@ -7,6 +7,10 @@ const actor = {
   role: 'staff' as const,
   traceId: 'trace-orap-1',
 };
+const sessionAdministrator = {
+  ...actor,
+  role: 'platform_admin' as const,
+};
 
 describe('PostgreSQL ORAP service', () => {
   it('acknowledges an alert under the platform role and records the audited transition', async () => {
@@ -338,5 +342,204 @@ describe('PostgreSQL ORAP service', () => {
       expect.arrayContaining(['site.ai_budget_changed', 'Approved test increase', actor.id]),
     );
     expect(query.mock.calls.some(([text]) => text.includes('UPDATE ai_budget_periods'))).toBe(true);
+  });
+
+  it('lists only safe metadata for an exact tenant, site, and customer user', async () => {
+    const tenantId = '10000000-0000-4000-8000-000000000001';
+    const siteId = '20000000-0000-4000-8000-000000000001';
+    const userId = '30000000-0000-4000-8000-000000000001';
+    const sessionId = '50000000-0000-4000-8000-000000000001';
+    const query = vi.fn(async (text: string, values?: unknown[]) => {
+      void values;
+      if (text.includes('FROM memberships m')) return { rows: [{ id: 'membership-a' }] };
+      if (text.includes('SELECT id, host, created_at, last_seen_at, expires_at')) {
+        return {
+          rows: [
+            {
+              authentication_method: 'totp',
+              created_at: new Date('2026-10-11T01:00:00.000Z'),
+              expires_at: new Date('2026-10-12T01:00:00.000Z'),
+              host: 'admin.customer.test',
+              id: sessionId,
+              last_seen_at: new Date('2026-10-11T02:00:00.000Z'),
+              token_hash: 'must-not-leave-the-repository',
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+    const service = new PostgresOrapService(
+      { connect: vi.fn(async () => ({ query, release: vi.fn() })) },
+      { send: vi.fn() },
+      vi.fn(),
+    );
+
+    await expect(
+      service.listCustomerSessions(sessionAdministrator, { siteId, tenantId, userId }),
+    ).resolves.toEqual({
+      sessions: [
+        {
+          createdAt: new Date('2026-10-11T01:00:00.000Z'),
+          expiresAt: new Date('2026-10-12T01:00:00.000Z'),
+          host: 'admin.customer.test',
+          id: sessionId,
+          lastSeenAt: new Date('2026-10-11T02:00:00.000Z'),
+        },
+      ],
+    });
+    const scope = query.mock.calls.find(([text]) => text.includes('FROM memberships m'));
+    expect(scope?.[1]).toEqual([tenantId, siteId, userId]);
+    const listing = query.mock.calls.find(([text]) =>
+      text.includes('SELECT id, host, created_at, last_seen_at, expires_at'),
+    );
+    expect(listing?.[0]).not.toMatch(/token_hash|authentication_method|factor|credential/iu);
+    expect(listing?.[1]).toEqual([tenantId, siteId, userId]);
+  });
+
+  it('revokes one or all sessions only after locking the exact customer site scope', async () => {
+    const tenantId = '10000000-0000-4000-8000-000000000001';
+    const siteId = '20000000-0000-4000-8000-000000000001';
+    const userId = '30000000-0000-4000-8000-000000000001';
+    const sessionId = '50000000-0000-4000-8000-000000000001';
+    const query = vi.fn(async (text: string, values?: unknown[]) => {
+      void values;
+      if (text.includes('FROM memberships m')) return { rows: [{ id: 'membership-a' }] };
+      if (text.includes("revoke_reason = 'orap-exact-site-revocation'")) {
+        return { rows: [{ id: sessionId }] };
+      }
+      if (text.includes("revoke_reason = 'orap-exact-site-revoke-all'")) {
+        return { rows: [{ id: sessionId }, { id: '50000000-0000-4000-8000-000000000002' }] };
+      }
+      return { rows: [] };
+    });
+    const service = new PostgresOrapService(
+      { connect: vi.fn(async () => ({ query, release: vi.fn() })) },
+      { send: vi.fn() },
+      vi.fn(),
+    );
+
+    await expect(
+      service.revokeCustomerSession(sessionAdministrator, {
+        reason: 'Revoke a reported browser session',
+        sessionId,
+        siteId,
+        tenantId,
+        userId,
+      }),
+    ).resolves.toEqual({ revokedSessions: 1 });
+    await expect(
+      service.revokeAllCustomerSessions(sessionAdministrator, {
+        reason: 'Customer requested a complete sign-out',
+        siteId,
+        tenantId,
+        userId,
+      }),
+    ).resolves.toEqual({ revokedSessions: 2 });
+
+    const updates = query.mock.calls.filter(([text]) => text.includes('UPDATE sessions'));
+    expect(updates[0]?.[1]).toEqual([sessionId, tenantId, siteId, userId]);
+    expect(updates[1]?.[1]).toEqual([tenantId, siteId, userId]);
+    const audits = query.mock.calls.filter(([text]) => text.includes('INSERT INTO audit_events'));
+    expect(audits).toHaveLength(2);
+    expect(audits[0]?.[1]).toEqual(
+      expect.arrayContaining([
+        tenantId,
+        siteId,
+        sessionAdministrator.id,
+        'customer.session.revoked',
+        'Revoke a reported browser session',
+        sessionId,
+        expect.stringContaining('"revokedSessions":1'),
+      ]),
+    );
+    expect(audits[1]?.[1]).toEqual(
+      expect.arrayContaining([
+        'customer.sessions.revoked',
+        'Customer requested a complete sign-out',
+        userId,
+        expect.stringContaining('"revokedSessions":2'),
+      ]),
+    );
+  });
+
+  it('fails closed for hostile cross-site scope and denies staff before opening a transaction', async () => {
+    const connect = vi.fn(async () => ({
+      query: vi.fn(async (text: string) => {
+        if (text.includes('FROM memberships m')) return { rows: [] };
+        return { rows: [] };
+      }),
+      release: vi.fn(),
+    }));
+    const service = new PostgresOrapService({ connect }, { send: vi.fn() }, vi.fn());
+    const hostileInput = {
+      reason: 'Attempt to revoke a session through the wrong site',
+      sessionId: '50000000-0000-4000-8000-000000000001',
+      siteId: '20000000-0000-4000-8000-000000000099',
+      tenantId: '10000000-0000-4000-8000-000000000001',
+      userId: '30000000-0000-4000-8000-000000000001',
+    };
+
+    await expect(service.revokeCustomerSession(sessionAdministrator, hostileInput)).rejects.toThrow(
+      'Active customer site membership was not found',
+    );
+    const client = await connect.mock.results[0]?.value;
+    expect(
+      client?.query.mock.calls.some((call) => String(call[0]).includes('UPDATE sessions')),
+    ).toBe(false);
+    expect(
+      client?.query.mock.calls.some((call) => String(call[0]).includes('INSERT INTO audit_events')),
+    ).toBe(false);
+
+    const callsBeforeStaff = connect.mock.calls.length;
+    expect(() =>
+      service.revokeAllCustomerSessions(actor, {
+        reason: 'Staff lacks an explicit session administration grant',
+        siteId: hostileInput.siteId,
+        tenantId: hostileInput.tenantId,
+        userId: hostileInput.userId,
+      }),
+    ).toThrow('platform owner or platform admin');
+    expect(connect).toHaveBeenCalledTimes(callsBeforeStaff);
+  });
+
+  it('cannot revoke a different site session through an otherwise valid customer scope', async () => {
+    const tenantId = '10000000-0000-4000-8000-000000000001';
+    const siteId = '20000000-0000-4000-8000-000000000001';
+    const userId = '30000000-0000-4000-8000-000000000001';
+    const crossSiteSessionId = '50000000-0000-4000-8000-000000000099';
+    const query = vi.fn(async (text: string, values?: unknown[]) => {
+      void values;
+      if (text.includes('FROM memberships m')) return { rows: [{ id: 'membership-a' }] };
+      return { rows: [] };
+    });
+    const service = new PostgresOrapService(
+      { connect: vi.fn(async () => ({ query, release: vi.fn() })) },
+      { send: vi.fn() },
+      vi.fn(),
+    );
+
+    await expect(
+      service.revokeCustomerSession(sessionAdministrator, {
+        reason: 'Reject a session identifier copied from another site',
+        sessionId: crossSiteSessionId,
+        siteId,
+        tenantId,
+        userId,
+      }),
+    ).resolves.toEqual({ revokedSessions: 0 });
+    const update = query.mock.calls.find(([text]) => text.includes('UPDATE sessions'));
+    expect(update?.[0]).toContain('id = $1 AND tenant_id = $2 AND site_id = $3 AND user_id = $4');
+    expect(update?.[1]).toEqual([crossSiteSessionId, tenantId, siteId, userId]);
+    const audit = query.mock.calls.find(([text]) => text.includes('INSERT INTO audit_events'));
+    expect(audit?.[1]).toEqual(
+      expect.arrayContaining([
+        tenantId,
+        siteId,
+        'customer.session.revoked',
+        crossSiteSessionId,
+        expect.stringContaining('"revokedSessions":0'),
+      ]),
+    );
   });
 });

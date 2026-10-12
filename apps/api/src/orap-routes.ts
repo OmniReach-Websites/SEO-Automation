@@ -63,11 +63,29 @@ export interface OrapAdministrationEndpointService {
       tenantId: string;
     },
   ): Promise<unknown>;
+  listCustomerSessions?(
+    actor: AdminActor,
+    input: { siteId: string; tenantId: string; userId: string },
+  ): Promise<unknown>;
   listSites(actor: AdminActor): Promise<unknown>;
   listOperations?(actor: AdminActor): Promise<unknown>;
   requestCustomerReset(
     actor: AdminActor,
     input: { networkIdentifier: string; reason: string; siteId: string; userId: string },
+  ): Promise<unknown>;
+  revokeAllCustomerSessions?(
+    actor: AdminActor,
+    input: { reason: string; siteId: string; tenantId: string; userId: string },
+  ): Promise<unknown>;
+  revokeCustomerSession?(
+    actor: AdminActor,
+    input: {
+      reason: string;
+      sessionId: string;
+      siteId: string;
+      tenantId: string;
+      userId: string;
+    },
   ): Promise<unknown>;
   replayJob?(actor: AdminActor, input: { jobId: string; reason: string }): Promise<unknown>;
   resolveAlert?(actor: AdminActor, input: { alertId: string; reason: string }): Promise<unknown>;
@@ -375,6 +393,77 @@ export function registerOrapRoutes(
     },
   );
 
+  server.get(
+    '/v1/orap/tenants/:tenantId/sites/:siteId/users/:userId/sessions',
+    async (request, reply) => {
+      const actor = await authorizedCustomerSessionAdministrator(request, reply, resolveActor);
+      if (!actor) return;
+      if (!service.listCustomerSessions) {
+        return reply.code(501).send({ error: 'not_available' });
+      }
+      const params = parse(
+        z.object({
+          siteId: z.string().uuid(),
+          tenantId: z.string().uuid(),
+          userId: z.string().uuid(),
+        }),
+        request.params,
+        reply,
+      );
+      if (!params) return;
+      return service.listCustomerSessions(actor, params);
+    },
+  );
+
+  server.post(
+    '/v1/orap/tenants/:tenantId/sites/:siteId/users/:userId/sessions/:sessionId/revoke',
+    { preHandler: requireSameOrigin },
+    async (request, reply) => {
+      const actor = await authorizedCustomerSessionAdministrator(request, reply, resolveActor);
+      if (!actor) return;
+      if (!service.revokeCustomerSession) {
+        return reply.code(501).send({ error: 'not_available' });
+      }
+      const params = parse(
+        z.object({
+          sessionId: z.string().uuid(),
+          siteId: z.string().uuid(),
+          tenantId: z.string().uuid(),
+          userId: z.string().uuid(),
+        }),
+        request.params,
+        reply,
+      );
+      const body = parse(z.object({ reason }), request.body, reply);
+      if (!params || !body) return;
+      return service.revokeCustomerSession(actor, { ...params, ...body });
+    },
+  );
+
+  server.post(
+    '/v1/orap/tenants/:tenantId/sites/:siteId/users/:userId/sessions/revoke-all',
+    { preHandler: requireSameOrigin },
+    async (request, reply) => {
+      const actor = await authorizedCustomerSessionAdministrator(request, reply, resolveActor);
+      if (!actor) return;
+      if (!service.revokeAllCustomerSessions) {
+        return reply.code(501).send({ error: 'not_available' });
+      }
+      const params = parse(
+        z.object({
+          siteId: z.string().uuid(),
+          tenantId: z.string().uuid(),
+          userId: z.string().uuid(),
+        }),
+        request.params,
+        reply,
+      );
+      const body = parse(z.object({ reason }), request.body, reply);
+      if (!params || !body) return;
+      return service.revokeAllCustomerSessions(actor, { ...params, ...body });
+    },
+  );
+
   server.put(
     '/v1/orap/sites/:siteId/plan',
     { preHandler: requireSameOrigin },
@@ -608,6 +697,19 @@ async function authorizedActor(
 ): Promise<AdminActor | undefined> {
   const actor = await resolveActor(request);
   if (!actor || !['platform_owner', 'platform_admin', 'staff'].includes(actor.role)) {
+    await reply.code(403).send({ error: 'forbidden' });
+    return undefined;
+  }
+  return actor;
+}
+
+async function authorizedCustomerSessionAdministrator(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  resolveActor: ResolvePlatformActor,
+): Promise<AdminActor | undefined> {
+  const actor = await resolveActor(request);
+  if (!actor || (actor.role !== 'platform_owner' && actor.role !== 'platform_admin')) {
     await reply.code(403).send({ error: 'forbidden' });
     return undefined;
   }
