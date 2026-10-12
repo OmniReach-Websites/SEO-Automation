@@ -10,6 +10,19 @@ export interface OrapRoutePolicy {
 export const orapRoutePolicyRegistry = [
   route('GET', '/v1/orap/operations', 'dashboard.view'),
   { capabilities: [], method: 'GET', ownerIdentityOnly: true, path: '/v1/orap/staff' },
+  { capabilities: [], method: 'GET', ownerIdentityOnly: true, path: '/v1/orap/staff/roles' },
+  {
+    capabilities: [],
+    method: 'POST',
+    ownerIdentityOnly: true,
+    path: '/v1/orap/staff/invitations',
+  },
+  {
+    capabilities: [],
+    method: 'POST',
+    ownerIdentityOnly: true,
+    path: '/v1/orap/staff/:userId/role',
+  },
   {
     capabilities: [],
     method: 'POST',

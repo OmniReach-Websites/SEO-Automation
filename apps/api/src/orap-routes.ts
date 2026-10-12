@@ -62,6 +62,21 @@ export interface OrapAdministrationEndpointService {
     input: { membershipId: string; reason: string; siteId: string },
   ): Promise<unknown>;
   disableStaff?(actor: AdminActor, input: { reason: string; userId: string }): Promise<unknown>;
+  changeStaffRole?(
+    actor: AdminActor,
+    input: { reason: string; roleSlug: string; userId: string },
+  ): Promise<unknown>;
+  inviteStaff?(
+    actor: AdminActor,
+    input: {
+      displayName: string;
+      email: string;
+      host: string;
+      jobTitle?: string;
+      reason: string;
+      roleSlug: string;
+    },
+  ): Promise<unknown>;
   inviteCustomer(
     actor: AdminActor,
     input: {
@@ -79,6 +94,7 @@ export interface OrapAdministrationEndpointService {
   listSites(actor: AdminActor): Promise<unknown>;
   listOperations?(actor: AdminActor): Promise<unknown>;
   listStaff?(actor: AdminActor): Promise<unknown>;
+  listStaffRoles?(actor: AdminActor): Promise<unknown>;
   requestCustomerReset(
     actor: AdminActor,
     input: { networkIdentifier: string; reason: string; siteId: string; userId: string },
@@ -221,6 +237,66 @@ export function registerOrapRoutes(
     if (!service.listStaff) return reply.code(501).send({ error: 'not_available' });
     return service.listStaff(actor);
   });
+
+  server.get('/v1/orap/staff/roles', async (request, reply) => {
+    const actor = await authorizedActor(request, reply, resolveActor);
+    if (!actor) return;
+    if (!authorizedOwner(actor, reply)) return;
+    if (!service.listStaffRoles) return reply.code(501).send({ error: 'not_available' });
+    return service.listStaffRoles(actor);
+  });
+
+  server.post(
+    '/v1/orap/staff/invitations',
+    { preHandler: requireSameOrigin },
+    async (request, reply) => {
+      const actor = await authorizedActor(request, reply, resolveActor);
+      if (!actor) return;
+      if (!authorizedOwner(actor, reply)) return;
+      if (!service.inviteStaff) return reply.code(501).send({ error: 'not_available' });
+      const body = parse(
+        z.object({
+          displayName: z.string().trim().min(1).max(160),
+          email: z.string().trim().email().max(320),
+          jobTitle: z.string().trim().max(160).optional(),
+          reason,
+          roleSlug: z.string().regex(/^[a-z0-9-]{1,100}$/u),
+        }),
+        request.body,
+        reply,
+      );
+      if (!body) return;
+      return reply.code(201).send(
+        await service.inviteStaff(actor, {
+          displayName: body.displayName,
+          email: body.email,
+          host: request.hostname,
+          ...(body.jobTitle ? { jobTitle: body.jobTitle } : {}),
+          reason: body.reason,
+          roleSlug: body.roleSlug,
+        }),
+      );
+    },
+  );
+
+  server.post(
+    '/v1/orap/staff/:userId/role',
+    { preHandler: requireSameOrigin },
+    async (request, reply) => {
+      const actor = await authorizedActor(request, reply, resolveActor);
+      if (!actor) return;
+      if (!authorizedOwner(actor, reply)) return;
+      if (!service.changeStaffRole) return reply.code(501).send({ error: 'not_available' });
+      const params = parse(z.object({ userId: z.string().uuid() }), request.params, reply);
+      const body = parse(
+        z.object({ reason, roleSlug: z.string().regex(/^[a-z0-9-]{1,100}$/u) }),
+        request.body,
+        reply,
+      );
+      if (!params || !body) return;
+      return service.changeStaffRole(actor, { ...body, ...params });
+    },
+  );
 
   server.post(
     '/v1/orap/staff/:userId/disable',

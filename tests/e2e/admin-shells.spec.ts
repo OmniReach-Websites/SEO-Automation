@@ -172,11 +172,29 @@ test('served ORAP and customer shells remain accessible and host isolated', asyn
           lastLoginAt: '2026-10-12T00:10:00.000Z',
           membershipId: '90000000-0000-4000-8000-000000000002',
           normalizedEmail: 'employee@example.test',
+          roleName: 'Operations Manager',
+          roleSlug: 'operations-manager',
           status: 'active',
           strongFactorEnrolled: false,
           userId: '40000000-0000-4000-8000-000000000012',
         },
       ],
+      listStaffRoles: async () => [
+        {
+          description: 'Broad operational access.',
+          name: 'Operations Manager',
+          permissionCount: 12,
+          slug: 'operations-manager',
+        },
+        {
+          description: 'Read-only access.',
+          name: 'Analyst',
+          permissionCount: 5,
+          slug: 'analyst',
+        },
+      ],
+      inviteStaff: async () => ({}),
+      changeStaffRole: async () => ({}),
       requestCustomerReset: async () => ({}),
       requestStaffReset: async () => ({}),
       replayJob: async () => ({}),
@@ -293,10 +311,17 @@ test('served ORAP and customer shells remain accessible and host isolated', asyn
 
     await staffPage.getByRole('link', { name: 'Team & access' }).click();
     await expect(staffPage.getByRole('heading', { level: 1 })).toHaveText('Team & access');
+    await expect(staffPage.getByText('You are signed in as a Platform Owner.')).toBeVisible();
+    await staffPage.getByRole('link', { name: 'Invite staff' }).click();
+    await expect(staffPage.getByRole('heading', { level: 1 })).toHaveText('Invite staff');
+    await expect(staffPage.getByRole('button', { name: 'Send invitation' })).toBeVisible();
+    await staffPage.getByRole('link', { name: 'Back to team' }).click();
     await expect(staffPage.getByRole('table')).toContainText('Fictional Owner');
     const employeeRow = staffPage.getByRole('row').filter({ hasText: 'Fictional Employee' });
     await employeeRow.getByRole('link', { name: 'Open' }).click();
     await expect(staffPage.getByRole('heading', { level: 1 })).toHaveText('Fictional Employee');
+    await expect(staffPage.getByLabel('Staff role')).toHaveValue('operations-manager');
+    await expect(staffPage.getByRole('button', { name: 'Update authority' })).toBeVisible();
 
     const resetStaff = staffPage.locator(
       'form[action="/orap/security/staff/40000000-0000-4000-8000-000000000012/reset"]',

@@ -10,12 +10,14 @@ import {
   renderOrapSiteForm,
   renderOrapStaffDirectory,
   renderOrapStaffDetails,
+  renderOrapStaffInviteForm,
   type AlertRow,
   type BudgetView,
   type JobRow,
   type OrapNavigationItem,
   type OrapSiteSummary,
   type OrapStaffSummary,
+  type OrapStaffRoleOption,
 } from '@omnireach/ui';
 import { canOrap, isPlatformOwnerIdentity } from '@omnireach/auth';
 import type { AdminActor } from '@omnireach/tenant';
@@ -181,19 +183,90 @@ export function registerUiRoutes(
         );
     });
 
-    server.get('/orap/security/staff', async (request, reply) => {
+    server.get<{ Querystring: { notice?: string } }>(
+      '/orap/security/staff',
+      async (request, reply) => {
+        const actor = await options.resolvePlatformActor?.(request);
+        if (!actor || !isPlatformOwnerIdentity(actor)) {
+          return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
+        }
+        if (!options.orapService?.listStaff) {
+          return reply.code(404).type('text/html; charset=utf-8').send(renderOrapNotFound());
+        }
+        const staff = parseStaffSummaries(await options.orapService.listStaff(actor));
+        return reply
+          .type('text/html; charset=utf-8')
+          .send(
+            renderOrapStaffDirectory(
+              staff,
+              orapNavigation(actor),
+              staffNotice(request.query.notice),
+            ),
+          );
+      },
+    );
+
+    server.get('/orap/security/staff/invite', async (request, reply) => {
       const actor = await options.resolvePlatformActor?.(request);
       if (!actor || !isPlatformOwnerIdentity(actor)) {
         return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
       }
-      if (!options.orapService?.listStaff) {
+      if (!options.orapService?.listStaffRoles) {
         return reply.code(404).type('text/html; charset=utf-8').send(renderOrapNotFound());
       }
-      const staff = parseStaffSummaries(await options.orapService.listStaff(actor));
+      const roles = parseStaffRoles(await options.orapService.listStaffRoles(actor));
       return reply
         .type('text/html; charset=utf-8')
-        .send(renderOrapStaffDirectory(staff, orapNavigation(actor)));
+        .send(renderOrapStaffInviteForm(roles, undefined, orapNavigation(actor)));
     });
+
+    server.post<{ Body: unknown }>(
+      '/orap/security/staff/invite',
+      { preHandler: requireSameOrigin },
+      async (request, reply) => {
+        const actor = await options.resolvePlatformActor?.(request);
+        if (!actor || !isPlatformOwnerIdentity(actor)) {
+          return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
+        }
+        const roles = parseStaffRoles((await options.orapService?.listStaffRoles?.(actor)) ?? []);
+        const body = staffInvitationInput.safeParse(request.body);
+        if (!body.success || !options.orapService?.inviteStaff) {
+          return reply
+            .code(400)
+            .type('text/html; charset=utf-8')
+            .send(
+              renderOrapStaffInviteForm(
+                roles,
+                'Check every field and provide an audit reason.',
+                orapNavigation(actor),
+              ),
+            );
+        }
+        try {
+          await options.orapService.inviteStaff(actor, {
+            displayName: body.data.displayName,
+            email: body.data.email,
+            host: request.hostname,
+            ...(body.data.jobTitle ? { jobTitle: body.data.jobTitle } : {}),
+            reason: body.data.reason,
+            roleSlug: body.data.roleSlug,
+          });
+          return reply.code(303).redirect('/orap/security/staff?notice=invited');
+        } catch (error) {
+          request.log.error({ error }, 'ORAP staff invitation failed');
+          return reply
+            .code(400)
+            .type('text/html; charset=utf-8')
+            .send(
+              renderOrapStaffInviteForm(
+                roles,
+                'The invitation could not be sent. Confirm the address and role, then try again.',
+                orapNavigation(actor),
+              ),
+            );
+        }
+      },
+    );
 
     server.get<{
       Params: { userId: string };
@@ -207,6 +280,7 @@ export function registerUiRoutes(
         return reply.code(404).type('text/html; charset=utf-8').send(renderOrapNotFound());
       }
       const staff = parseStaffSummaries(await options.orapService.listStaff(actor));
+      const roles = parseStaffRoles((await options.orapService.listStaffRoles?.(actor)) ?? []);
       const member = staff.find(({ userId }) => userId === request.params.userId);
       if (!member) {
         return reply
@@ -220,6 +294,7 @@ export function registerUiRoutes(
           member,
           {
             currentUserId: actor.id,
+            roles,
             ...(notice ? { notice } : {}),
           },
           orapNavigation(actor),
@@ -473,8 +548,8 @@ function renderRestrictedRecovery(): string {
 function renderInvitation(token: string): string {
   return renderAuthPage({
     content: `<form method="post" action="/auth/invitations/accept"><input name="token" type="hidden" value="${escapeHtml(token)}"><div class="field"><label for="displayName">Your name</label><input id="displayName" name="displayName" maxlength="160" autocomplete="name" required autofocus></div><div class="field"><label for="password">Create a password</label><input id="password" name="password" type="password" minlength="12" autocomplete="new-password" required><p class="help">Use at least 12 characters and a unique password.</p></div><button type="submit">Accept invitation</button></form>`,
-    description: 'Create the secure credentials used to manage your website.',
-    eyebrow: 'Customer invitation',
+    description: 'Create the secure credentials used for your OmniReach account.',
+    eyebrow: 'Account invitation',
     heading: 'Accept your invitation',
     title: 'Accept invitation',
   });
@@ -555,6 +630,8 @@ function parseStaffSummaries(value: unknown): OrapStaffSummary[] {
     const userId = stringValue(entry.userId);
     const jobTitle = stringValue(entry.jobTitle);
     const lastLoginAt = stringValue(entry.lastLoginAt);
+    const roleName = stringValue(entry.roleName);
+    const roleSlug = stringValue(entry.roleSlug);
     if (
       typeof activeSessions !== 'number' ||
       !createdAt ||
@@ -580,11 +657,25 @@ function parseStaffSummaries(value: unknown): OrapStaffSummary[] {
         ...(lastLoginAt ? { lastLoginAt } : {}),
         membershipId,
         normalizedEmail,
+        ...(roleName ? { roleName } : {}),
+        ...(roleSlug ? { roleSlug } : {}),
         status: status as OrapStaffSummary['status'],
         strongFactorEnrolled: entry.strongFactorEnrolled,
         userId,
       },
     ];
+  });
+}
+
+function parseStaffRoles(value: unknown): OrapStaffRoleOption[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry): OrapStaffRoleOption[] => {
+    if (!isRecord(entry)) return [];
+    const description = stringValue(entry.description);
+    const name = stringValue(entry.name);
+    const slug = stringValue(entry.slug);
+    if (!description || !name || !slug || typeof entry.permissionCount !== 'number') return [];
+    return [{ description, name, permissionCount: entry.permissionCount, slug }];
   });
 }
 
@@ -682,6 +773,13 @@ const siteCreationInput = z.object({
 });
 
 const operationReason = z.object({ reason: z.string().trim().min(3).max(500) });
+const staffInvitationInput = z.object({
+  displayName: z.string().trim().min(1).max(160),
+  email: z.string().trim().email().max(320),
+  jobTitle: z.string().trim().max(160).optional(),
+  reason: z.string().trim().min(3).max(500),
+  roleSlug: z.string().regex(/^[a-z0-9-]{1,100}$/u),
+});
 
 function parseSiteSummaries(value: unknown): OrapSiteSummary[] {
   return Array.isArray(value)
@@ -727,6 +825,10 @@ function staffNotice(
   if (value === 'sessions') return { message: 'All active ORAP sessions were revoked.' };
   if (value === 'reset') return { message: 'Password reset instructions were requested.' };
   if (value === 'disabled') return { message: 'Staff access was disabled.' };
+  if (value === 'invited') return { message: 'The secure staff invitation was sent.' };
+  if (value === 'role') {
+    return { message: 'Staff authority was updated and active sessions were revoked.' };
+  }
   if (value === 'failed') {
     return {
       kind: 'error',
@@ -804,6 +906,41 @@ function registerOrapStaffForms(
   );
   register('/orap/security/staff/:userId/disable', 'disabled', (actor, userId, reason) =>
     options.orapService?.disableStaff?.(actor, { reason, userId }),
+  );
+  server.post<{ Body: unknown; Params: { userId: string } }>(
+    '/orap/security/staff/:userId/role',
+    { preHandler: requireSameOrigin },
+    async (request, reply) => {
+      const actor = await options.resolvePlatformActor?.(request);
+      if (!actor || !isPlatformOwnerIdentity(actor)) {
+        return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
+      }
+      const body = z
+        .object({
+          reason: z.string().trim().min(3).max(500),
+          roleSlug: z.string().regex(/^[a-z0-9-]{1,100}$/u),
+        })
+        .safeParse(request.body);
+      if (!body.success || !options.orapService?.changeStaffRole) {
+        return reply
+          .code(303)
+          .redirect(`/orap/security/staff/${request.params.userId}?notice=failed`);
+      }
+      try {
+        await options.orapService.changeStaffRole(actor, {
+          ...body.data,
+          userId: request.params.userId,
+        });
+        return reply
+          .code(303)
+          .redirect(`/orap/security/staff/${request.params.userId}?notice=role`);
+      } catch (error) {
+        request.log.error({ error }, 'ORAP staff role change failed');
+        return reply
+          .code(303)
+          .redirect(`/orap/security/staff/${request.params.userId}?notice=failed`);
+      }
+    },
   );
 }
 

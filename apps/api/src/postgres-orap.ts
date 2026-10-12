@@ -149,6 +149,8 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
         last_login_at: Date | null;
         membership_id: string;
         normalized_email: string;
+        role_name: string | null;
+        role_slug: string | null;
         status: string;
         strong_factor_enrolled: boolean;
         user_id: string;
@@ -163,6 +165,8 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
                 membership.created_at,
                 user_account.normalized_email,
                 user_account.display_name,
+                assigned_role.name AS role_name,
+                assigned_role.slug AS role_slug,
                 authentication.email_code_enabled,
                 authentication.strong_factor_enrolled,
                 (SELECT max(session.created_at) FROM sessions session
@@ -178,6 +182,15 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
            JOIN users user_account ON user_account.id = membership.user_id
            JOIN orap_staff_directory_auth_status authentication
              ON authentication.user_id = membership.user_id
+           LEFT JOIN LATERAL (
+             SELECT role.name, role.slug
+               FROM staff_role_assignments assignment
+               JOIN staff_roles role ON role.id = assignment.role_id
+              WHERE assignment.staff_membership_id = membership.id
+                AND assignment.active AND assignment.primary_role
+              ORDER BY assignment.assigned_at DESC
+              LIMIT 1
+           ) assigned_role ON true
           WHERE membership.status <> 'archived'
           ORDER BY CASE membership.identity_kind
                      WHEN 'platform_owner' THEN 0
@@ -198,10 +211,255 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
         ...(row.last_login_at ? { lastLoginAt: row.last_login_at.toISOString() } : {}),
         membershipId: row.membership_id,
         normalizedEmail: row.normalized_email,
+        ...(row.role_name ? { roleName: row.role_name } : {}),
+        ...(row.role_slug ? { roleSlug: row.role_slug } : {}),
         status: row.status,
         strongFactorEnrolled: row.strong_factor_enrolled,
         userId: row.user_id,
       }));
+    });
+  }
+
+  listStaffRoles(actor: AdminActor): Promise<unknown> {
+    assertPlatformOwnerIdentity(actor);
+    return this.transaction(actor, async (client) => {
+      const result = await query<{
+        description: string;
+        name: string;
+        permission_count: number;
+        slug: string;
+      }>(
+        client,
+        `SELECT role.slug, role.name, role.description, version.permission_count
+           FROM staff_roles role
+           JOIN staff_role_versions version
+             ON version.role_id = role.id AND version.version = role.current_version
+          WHERE role.active AND NOT role.owner_identity_only
+          ORDER BY role.display_order, role.name`,
+        [],
+      );
+      return result.rows.map((row) => ({
+        description: row.description,
+        name: row.name,
+        permissionCount: row.permission_count,
+        slug: row.slug,
+      }));
+    });
+  }
+
+  async inviteStaff(
+    actor: AdminActor,
+    input: {
+      displayName: string;
+      email: string;
+      host: string;
+      jobTitle?: string;
+      reason: string;
+      roleSlug: string;
+    },
+  ): Promise<unknown> {
+    assertStaffAuthorityMutation(actor, input.reason);
+    const normalizedEmail = normalizeEmail(input.email);
+    const oneTimeToken = createOneTimeToken();
+    const invitation = await this.transaction(actor, async (client) => {
+      await client.query(
+        `UPDATE staff_invitations
+            SET state = 'expired'
+          WHERE normalized_email = $1 AND state = 'pending' AND expires_at <= now()`,
+        [normalizedEmail],
+      );
+      const existing = await query<{ id: string }>(
+        client,
+        `SELECT membership.id
+           FROM users user_account
+           JOIN platform_memberships membership
+             ON membership.user_id = user_account.id AND membership.active
+          WHERE user_account.normalized_email = $1
+          LIMIT 1`,
+        [normalizedEmail],
+      );
+      if (existing.rows.length) throw new Error('That email already has active ORAP access');
+      const role = required(
+        (
+          await query<{ id: string; name: string; role_version_id: string; slug: string }>(
+            client,
+            `SELECT role.id, role.slug, role.name, version.id AS role_version_id
+               FROM staff_roles role
+               JOIN staff_role_versions version
+                 ON version.role_id = role.id AND version.version = role.current_version
+              WHERE role.slug = $1 AND role.active AND NOT role.owner_identity_only
+              FOR SHARE OF role, version`,
+            [input.roleSlug],
+          )
+        ).rows[0],
+        'Assignable staff role was not found',
+      );
+      const created = required(
+        (
+          await query<{ id: string; expires_at: Date }>(
+            client,
+            `INSERT INTO staff_invitations
+               (normalized_email, display_name, token_hash, exact_host, role_id,
+                role_version_id, scope_plan, created_by, expires_at, last_sent_at)
+             VALUES ($1, $2, $3, $4, $5, $6,
+                     jsonb_build_array(
+                       jsonb_build_object('scopeType', 'platform'),
+                       jsonb_build_object('jobTitle', $8::text)
+                     ),
+                     $7, now() + interval '7 days', now())
+             RETURNING id, expires_at`,
+            [
+              normalizedEmail,
+              input.displayName.trim(),
+              oneTimeToken.digest,
+              input.host.toLowerCase(),
+              role.id,
+              role.role_version_id,
+              actor.id,
+              input.jobTitle?.trim() ?? '',
+            ],
+          )
+        ).rows[0],
+        'Staff invitation creation failed',
+      );
+      await staffAccessAudit(client, actor, {
+        action: 'staff.invited',
+        after: { invitationId: created.id, normalizedEmail, roleSlug: role.slug },
+        before: null,
+        reason: input.reason,
+        targetUserId: null,
+      });
+      return { ...created, roleName: role.name };
+    });
+    try {
+      await this.invitations.send({
+        host: input.host,
+        normalizedEmail,
+        token: oneTimeToken.token,
+      });
+    } catch (error) {
+      await this.transaction(actor, async (client) => {
+        await client.query(
+          `UPDATE staff_invitations
+              SET state = 'revoked', revoked_at = now(), revoked_by = $2
+            WHERE id = $1 AND state = 'pending'`,
+          [invitation.id, actor.id],
+        );
+      });
+      throw error;
+    }
+    return {
+      expiresAt: invitation.expires_at.toISOString(),
+      invitationId: invitation.id,
+      roleName: invitation.roleName,
+      status: 'pending',
+    };
+  }
+
+  changeStaffRole(
+    actor: AdminActor,
+    input: { reason: string; roleSlug: string; userId: string },
+  ): Promise<unknown> {
+    assertStaffAuthorityMutation(actor, input.reason);
+    if (input.userId === actor.id)
+      throw new Error('The current owner identity cannot be reassigned');
+    return this.transaction(actor, async (client) => {
+      const target = required(
+        (
+          await query<{ identity_kind: string; membership_id: string }>(
+            client,
+            `SELECT id AS membership_id, identity_kind
+               FROM orap_staff_memberships
+              WHERE user_id = $1 AND status = 'active'
+              FOR UPDATE`,
+            [input.userId],
+          )
+        ).rows[0],
+        'Active staff account was not found',
+      );
+      if (target.identity_kind === 'platform_owner') {
+        throw new Error('Platform Owner authority uses the separate owner procedure');
+      }
+      const role = required(
+        (
+          await query<{ id: string; name: string; role_version_id: string; slug: string }>(
+            client,
+            `SELECT role.id, role.slug, role.name, version.id AS role_version_id
+               FROM staff_roles role
+               JOIN staff_role_versions version
+                 ON version.role_id = role.id AND version.version = role.current_version
+              WHERE role.slug = $1 AND role.active AND NOT role.owner_identity_only
+              FOR SHARE OF role, version`,
+            [input.roleSlug],
+          )
+        ).rows[0],
+        'Assignable staff role was not found',
+      );
+      const before = await query<Record<string, unknown>>(
+        client,
+        `SELECT assignment.id, role.slug, role.name
+           FROM staff_role_assignments assignment
+           JOIN staff_roles role ON role.id = assignment.role_id
+          WHERE assignment.staff_membership_id = $1 AND assignment.active
+          FOR UPDATE OF assignment`,
+        [target.membership_id],
+      );
+      await client.query(
+        `UPDATE staff_role_assignments
+            SET active = false, revoked_by = $2, revoked_at = now()
+          WHERE staff_membership_id = $1 AND active`,
+        [target.membership_id, actor.id],
+      );
+      const assignment = required(
+        (
+          await query<{ id: string }>(
+            client,
+            `INSERT INTO staff_role_assignments
+               (staff_membership_id, role_id, role_version_id, primary_role,
+                assigned_by, reason)
+             VALUES ($1, $2, $3, true, $4, $5)
+             RETURNING id`,
+            [target.membership_id, role.id, role.role_version_id, actor.id, input.reason.trim()],
+          )
+        ).rows[0],
+        'Staff role assignment failed',
+      );
+      await client.query(
+        `INSERT INTO staff_resource_scopes
+           (assignment_id, scope_type, created_by)
+         VALUES ($1, 'platform', $2)`,
+        [assignment.id, actor.id],
+      );
+      const identityKind = role.slug === 'platform-admin' ? 'platform_admin' : 'staff';
+      await client.query(
+        `UPDATE orap_staff_memberships
+            SET identity_kind = $2, authorization_version = authorization_version + 1,
+                updated_at = now()
+          WHERE id = $1`,
+        [target.membership_id, identityKind],
+      );
+      await client.query(
+        `UPDATE platform_memberships SET role = $2, updated_at = now()
+          WHERE user_id = $1 AND active`,
+        [input.userId, identityKind],
+      );
+      const revoked = await query<{ id: string }>(
+        client,
+        `UPDATE sessions
+            SET revoked_at = now(), revoke_reason = 'orap_staff_role_changed'
+          WHERE user_id = $1 AND tenant_id IS NULL AND site_id IS NULL
+            AND revoked_at IS NULL
+          RETURNING id`,
+        [input.userId],
+      );
+      await staffAccessAudit(client, actor, {
+        action: 'staff.role_changed',
+        after: { identityKind, roleSlug: role.slug, revokedSessions: revoked.rows.length },
+        before: before.rows,
+        reason: input.reason,
+        targetUserId: input.userId,
+      });
+      return { identityKind, roleName: role.name, revokedSessions: revoked.rows.length };
     });
   }
 
@@ -1713,7 +1971,7 @@ async function staffAccessAudit(
     after: unknown;
     before: unknown;
     reason: string;
-    targetUserId: string;
+    targetUserId: string | null;
   },
 ): Promise<void> {
   await client.query(

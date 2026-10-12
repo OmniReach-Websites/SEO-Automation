@@ -17,6 +17,7 @@ function service() {
     assignPlan: vi.fn(async () => ({ status: 'assigned' })),
     cancelJob: vi.fn(async () => ({ state: 'cancelled' })),
     changeCustomerRole: vi.fn(),
+    changeStaffRole: vi.fn(async () => ({ status: 'updated' })),
     createTenantAndSite: vi.fn(async () => ({
       site: { id: 'site-a' },
       tenant: { id: 'tenant-a' },
@@ -25,6 +26,7 @@ function service() {
     disableCustomer: vi.fn(),
     disableStaff: vi.fn(async () => ({ status: 'disabled' })),
     inviteCustomer: vi.fn(async () => ({ invitationId: 'invitation-a', status: 'pending' })),
+    inviteStaff: vi.fn(async () => ({ invitationId: 'staff-invitation-a', status: 'pending' })),
     listCustomerSessions: vi.fn(async () => ({
       sessions: [
         {
@@ -48,6 +50,14 @@ function service() {
       jobs: [],
     })),
     listStaff: vi.fn(async () => []),
+    listStaffRoles: vi.fn(async () => [
+      {
+        description: 'Operations',
+        name: 'Operations Manager',
+        permissionCount: 12,
+        slug: 'operations-manager',
+      },
+    ]),
     requestCustomerReset: vi.fn(async () => ({ status: 'accepted' })),
     requestStaffReset: vi.fn(async () => ({ status: 'accepted' })),
     revokeAllCustomerSessions: vi.fn(async () => ({ revokedSessions: 2 })),
@@ -130,6 +140,61 @@ describe('ORAP administration routes', () => {
     expect(administration.revokeStaffSessions).toHaveBeenCalledTimes(1);
     expect(administration.revokeStaffSessions).toHaveBeenCalledWith(actor, {
       reason: 'Approved fictional staff security action',
+      userId,
+    });
+  });
+
+  it('lets only a current owner invite staff and change staff authority', async () => {
+    const administration = service();
+    const ownerServer = buildApiServer({
+      logLevel: 'silent',
+      orapService: administration,
+      resolvePlatformActor: async () => actor,
+    });
+    const staffServer = buildApiServer({
+      logLevel: 'silent',
+      orapService: administration,
+      resolvePlatformActor: async () => deniedStaff,
+    });
+    servers.push(ownerServer, staffServer);
+    const headers = {
+      host: 'admin.omnireach.test',
+      origin: 'https://admin.omnireach.test',
+    };
+    const invitation = {
+      headers,
+      method: 'POST' as const,
+      payload: {
+        displayName: 'Fictional Employee',
+        email: 'employee@example.test',
+        reason: 'Approved fictional hire',
+        roleSlug: 'operations-manager',
+      },
+      url: '/v1/orap/staff/invitations',
+    };
+    const allowedInvite = await ownerServer.inject(invitation);
+    const deniedInvite = await staffServer.inject(invitation);
+    const userId = '40000000-0000-4000-8000-000000000099';
+    const allowedRole = await ownerServer.inject({
+      headers,
+      method: 'POST',
+      payload: { reason: 'Approved fictional reassignment', roleSlug: 'operations-manager' },
+      url: `/v1/orap/staff/${userId}/role`,
+    });
+
+    expect(allowedInvite.statusCode).toBe(201);
+    expect(deniedInvite.statusCode).toBe(403);
+    expect(allowedRole.statusCode).toBe(200);
+    expect(administration.inviteStaff).toHaveBeenCalledWith(actor, {
+      displayName: 'Fictional Employee',
+      email: 'employee@example.test',
+      host: 'admin.omnireach.test',
+      reason: 'Approved fictional hire',
+      roleSlug: 'operations-manager',
+    });
+    expect(administration.changeStaffRole).toHaveBeenCalledWith(actor, {
+      reason: 'Approved fictional reassignment',
+      roleSlug: 'operations-manager',
       userId,
     });
   });
