@@ -253,7 +253,8 @@ describe('PostgreSQL WebAuthn scope repository', () => {
       (statement) => statement.includes('FROM sessions') && statement.includes('FOR UPDATE'),
     );
     const authorizationLock = statements.findIndex(
-      (statement) => statement.includes('SELECT membership.role') && statement.includes('FOR UPDATE'),
+      (statement) =>
+        statement.includes('SELECT membership.role') && statement.includes('FOR UPDATE'),
     );
     const policyLock = statements.findIndex(
       (statement) =>
