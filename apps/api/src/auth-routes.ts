@@ -346,7 +346,10 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
     { preHandler: requireSameOrigin },
     async (request: FastifyRequest, reply) => {
       await service.logout(sessionToken(request), request.hostname, String(request.id));
-      return reply.clearCookie('__Host-omnireach_session', sessionCookieOptions()).code(204).send();
+      reply.clearCookie('__Host-omnireach_session', sessionCookieOptions());
+      return isFormSubmission(request)
+        ? reply.code(303).redirect('/login')
+        : reply.code(204).send();
     },
   );
 

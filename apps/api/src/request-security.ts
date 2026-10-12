@@ -4,9 +4,11 @@ export async function requireSameOrigin(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  const expectedOrigin = `https://${request.hostname}`;
+  const authority = request.headers.host ?? request.hostname;
+  const expectedOrigin = `${request.protocol}://${authority}`;
+  const acceptedOrigins = new Set([expectedOrigin, `https://${authority}`]);
   const origin = request.headers.origin;
-  if (origin === expectedOrigin) return;
+  if (origin !== undefined && acceptedOrigins.has(origin)) return;
 
   // An explicit Origin always wins. Never let a matching Referer or Fetch
   // Metadata header override a cross-origin Origin value.
@@ -24,7 +26,7 @@ export async function requireSameOrigin(
   const referer = request.headers.referer;
   if (referer !== undefined) {
     try {
-      if (new URL(referer).origin === expectedOrigin) return;
+      if (acceptedOrigins.has(new URL(referer).origin)) return;
     } catch {
       // Malformed Referer values are rejected below.
     }
