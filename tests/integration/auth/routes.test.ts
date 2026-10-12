@@ -156,6 +156,7 @@ describe('authentication route safety', () => {
     expect(cookie).toContain('Secure');
     expect(cookie).toContain('SameSite=Strict');
     expect(cookie).not.toContain('Domain=');
+    expect(response.headers['referrer-policy']).toBe('same-origin');
   });
 
   it('rejects cross-origin login and keeps recovery responses non-enumerating', async () => {
