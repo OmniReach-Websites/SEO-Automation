@@ -221,7 +221,6 @@ export function registerUiRoutes(
           {
             currentUserId: actor.id,
             ...(notice ? { notice } : {}),
-            recentStrongStepUp: hasRecentStrongStepUp(actor),
           },
           orapNavigation(actor),
         ),
@@ -728,12 +727,6 @@ function staffNotice(
   if (value === 'sessions') return { message: 'All active ORAP sessions were revoked.' };
   if (value === 'reset') return { message: 'Password reset instructions were requested.' };
   if (value === 'disabled') return { message: 'Staff access was disabled.' };
-  if (value === 'stepup') {
-    return {
-      kind: 'error',
-      message: 'Recent authenticator or passkey verification is required for this action.',
-    };
-  }
   if (value === 'failed') {
     return {
       kind: 'error',
@@ -741,15 +734,6 @@ function staffNotice(
     };
   }
   return undefined;
-}
-
-function hasRecentStrongStepUp(actor: AdminActor): boolean {
-  return (
-    actor.authenticationAssurance === 'strong' &&
-    actor.verifiedAt instanceof Date &&
-    Date.now() - actor.verifiedAt.getTime() >= 0 &&
-    Date.now() - actor.verifiedAt.getTime() <= 10 * 60_000
-  );
 }
 
 function registerOrapStaffForms(
@@ -782,11 +766,6 @@ function registerOrapStaffForms(
           return reply
             .code(303)
             .redirect(`/orap/security/staff/${request.params.userId}?notice=failed`);
-        }
-        if (!hasRecentStrongStepUp(actor)) {
-          return reply
-            .code(303)
-            .redirect(`/orap/security/staff/${request.params.userId}?notice=stepup`);
         }
         try {
           const pending = operation(actor, request.params.userId, body.data.reason, request);

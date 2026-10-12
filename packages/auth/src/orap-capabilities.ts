@@ -69,7 +69,7 @@ const mutate = (
     risk,
     scope,
   });
-const owner = (key: string, module: string, label: string) =>
+const owner = (key: string, module: string, label: string, requiresStrongStepUp = true) =>
   capability({
     description: `${label} is reserved to a current verified Platform Owner identity.`,
     key,
@@ -77,7 +77,7 @@ const owner = (key: string, module: string, label: string) =>
     module,
     ownerOnly: true,
     requiresReason: true,
-    requiresStrongStepUp: true,
+    requiresStrongStepUp,
     risk: 'critical',
     scope: 'platform',
   });
@@ -202,15 +202,15 @@ export const orapCapabilityCatalog = [
   ),
   view('settings.auth_policy.view', 'settings', 'Authentication policy', 'platform'),
   owner('settings.auth_policy.edit', 'settings', 'Change platform authentication policy'),
-  owner('staff.invite', 'staff', 'Invite internal staff'),
-  owner('staff.create', 'staff', 'Create internal staff'),
-  owner('staff.activate', 'staff', 'Activate internal staff'),
-  owner('staff.disable', 'staff', 'Disable internal staff'),
-  owner('staff.credentials.reset', 'staff', 'Reset internal staff credentials'),
-  owner('staff.roles.manage', 'staff', 'Manage staff roles'),
-  owner('staff.permissions.manage', 'staff', 'Manage staff permissions'),
-  owner('staff.assign_roles', 'staff', 'Assign staff roles and scopes'),
-  owner('owners.manage', 'staff', 'Manage Platform Owners'),
+  owner('staff.invite', 'staff', 'Invite internal staff', false),
+  owner('staff.create', 'staff', 'Create internal staff', false),
+  owner('staff.activate', 'staff', 'Activate internal staff', false),
+  owner('staff.disable', 'staff', 'Disable internal staff', false),
+  owner('staff.credentials.reset', 'staff', 'Reset internal staff credentials', false),
+  owner('staff.roles.manage', 'staff', 'Manage staff roles', false),
+  owner('staff.permissions.manage', 'staff', 'Manage staff permissions', false),
+  owner('staff.assign_roles', 'staff', 'Assign staff roles and scopes', false),
+  owner('owners.manage', 'staff', 'Manage Platform Owners', false),
   owner('break_glass.approve', 'security', 'Approve break-glass recovery'),
   owner('security.platform_policy.change', 'security', 'Change platform security policy'),
   owner('backups.delete.approve', 'backups', 'Approve manual backup deletion'),

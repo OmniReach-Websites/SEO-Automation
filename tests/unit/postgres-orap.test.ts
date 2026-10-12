@@ -12,14 +12,9 @@ const deniedStaff = {
   role: 'staff' as const,
 };
 const sessionAdministrator = actor;
-const strongOwner = {
-  ...actor,
-  authenticationAssurance: 'strong',
-  verifiedAt: new Date(),
-};
 
 describe('PostgreSQL ORAP service', () => {
-  it('protects the last owner and requires strong verification for staff disablement', async () => {
+  it('protects the last owner without requiring a separate strong-factor step-up', async () => {
     const targetOwnerId = '40000000-0000-4000-8000-000000000099';
     const query = vi.fn(async (text: string, values?: unknown[]) => {
       void values;
@@ -46,14 +41,8 @@ describe('PostgreSQL ORAP service', () => {
       vi.fn(),
     );
 
-    expect(() =>
-      service.disableStaff(actor, {
-        reason: 'Baseline session is insufficient',
-        userId: targetOwnerId,
-      }),
-    ).toThrow('Recent authenticator or passkey verification');
     await expect(
-      service.disableStaff(strongOwner, {
+      service.disableStaff(actor, {
         reason: 'Fictional owner departure',
         userId: targetOwnerId,
       }),
@@ -82,7 +71,7 @@ describe('PostgreSQL ORAP service', () => {
     );
 
     await expect(
-      service.revokeStaffSessions(strongOwner, {
+      service.revokeStaffSessions(actor, {
         reason: 'Owner-approved fictional session revocation',
         userId: targetUserId,
       }),
@@ -90,7 +79,7 @@ describe('PostgreSQL ORAP service', () => {
     const audit = query.mock.calls.find(([text]) => text.includes('staff_access_audits'));
     expect(audit?.[1]).toEqual(
       expect.arrayContaining([
-        strongOwner.id,
+        actor.id,
         targetUserId,
         'staff.sessions_revoked',
         'Owner-approved fictional session revocation',

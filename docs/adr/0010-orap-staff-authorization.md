@@ -74,8 +74,11 @@ to become unavailable by default rather than inheriting an accidental broad staf
 - Role/scope mutations are intentionally disruptive to sessions so removed authority is
   not retained until cookie expiry.
 - Catalog additions require seed synchronization, documentation, and default-deny tests.
-- Production staff lifecycle activation depends on the strong step-up/recovery controls
-  already tracked in G05 and does not authorize creating any real employee.
+- Production staff lifecycle actions require a current Platform Owner session that
+  completed mandatory ORAP two-step authentication. Per the owner-approved 2026-10-12
+  policy change, staff-authority actions do not require an additional
+  authenticator/passkey step-up; audited reasons, session invalidation, and last-owner
+  protection remain mandatory. A future SMS step-up requires a separate policy change.
 - The ORAP UI must hide unavailable modules for usability, but the backend remains the
   authoritative enforcement boundary.
 

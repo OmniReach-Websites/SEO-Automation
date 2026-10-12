@@ -1,6 +1,5 @@
 import {
   assertPlatformOwnerIdentity,
-  assertRecentStrongOrapStepUp,
   canOrap,
   type OrapCapabilityKey,
   type OrapResourceTarget,
@@ -232,7 +231,7 @@ export function registerOrapRoutes(
       const params = parse(z.object({ userId: z.string().uuid() }), request.params, reply);
       const body = parse(z.object({ reason }), request.body, reply);
       if (!params || !body) return;
-      if (!authorizedOwnerStepUp(actor, reply)) return;
+      if (!authorizedOwner(actor, reply)) return;
       if (!service.disableStaff) return reply.code(501).send({ error: 'not_available' });
       return service.disableStaff(actor, { ...body, ...params });
     },
@@ -247,7 +246,7 @@ export function registerOrapRoutes(
       const params = parse(z.object({ userId: z.string().uuid() }), request.params, reply);
       const body = parse(z.object({ reason }), request.body, reply);
       if (!params || !body) return;
-      if (!authorizedOwnerStepUp(actor, reply)) return;
+      if (!authorizedOwner(actor, reply)) return;
       if (!service.revokeStaffSessions) return reply.code(501).send({ error: 'not_available' });
       return service.revokeStaffSessions(actor, { ...body, ...params });
     },
@@ -262,7 +261,7 @@ export function registerOrapRoutes(
       const params = parse(z.object({ userId: z.string().uuid() }), request.params, reply);
       const body = parse(z.object({ reason }), request.body, reply);
       if (!params || !body) return;
-      if (!authorizedOwnerStepUp(actor, reply)) return;
+      if (!authorizedOwner(actor, reply)) return;
       if (!service.requestStaffReset) return reply.code(501).send({ error: 'not_available' });
       return reply.code(202).send(
         await service.requestStaffReset(actor, {
@@ -850,10 +849,9 @@ function authorizedCapability(
   return false;
 }
 
-function authorizedOwnerStepUp(actor: AdminActor, reply: FastifyReply): boolean {
+function authorizedOwner(actor: AdminActor, reply: FastifyReply): boolean {
   try {
     assertPlatformOwnerIdentity(actor);
-    assertRecentStrongOrapStepUp(actor);
     return true;
   } catch (error) {
     const code =
