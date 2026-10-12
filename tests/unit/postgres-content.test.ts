@@ -119,6 +119,12 @@ describe('PostgreSQL content repository', () => {
     ).toBeLessThan(
       query.mock.calls.findIndex(([text]) => text.includes('INSERT INTO publication_requests')),
     );
+    const publicationInsert = query.mock.calls.find(([text]) =>
+      text.includes('INSERT INTO publication_requests'),
+    );
+    expect(publicationInsert?.[0]).toContain('trace_id');
+    expect(publicationInsert?.[1]?.[7]).toBe(context.traceId);
+    expect(query.mock.calls.some(([text]) => text.includes('INSERT INTO jobs'))).toBe(false);
     query.mockClear();
     await expect(content.prepareDraftPublication(context, input)).resolves.toEqual({
       contentRevision: 3,
@@ -629,7 +635,8 @@ describe('PostgreSQL content repository', () => {
   });
 
   it('queues a restore from the authoritative seed baseline', async () => {
-    const query = vi.fn(async (text: string) => {
+    const query = vi.fn(async (text: string, values?: unknown[]) => {
+      void values;
       if (text.includes('WITH latest_feature')) return { rows: [allowedPolicy()] };
       if (text.includes('SELECT EXISTS')) return { rows: [{ stale: false }] };
       if (text.includes('idempotency_key = $3')) return { rows: [] };
@@ -661,6 +668,12 @@ describe('PostgreSQL content repository', () => {
         revision: 1,
       }),
     ).resolves.toEqual({ contentRevision: 4, status: 'queued' });
+    const publicationInsert = query.mock.calls.find(([text]) =>
+      text.includes('INSERT INTO publication_requests'),
+    );
+    expect(publicationInsert?.[0]).toContain('trace_id');
+    expect(publicationInsert?.[1]?.[7]).toBe(context.traceId);
+    expect(query.mock.calls.some(([text]) => text.includes('INSERT INTO jobs'))).toBe(false);
     expect(
       query.mock.calls.some(
         ([text]) =>

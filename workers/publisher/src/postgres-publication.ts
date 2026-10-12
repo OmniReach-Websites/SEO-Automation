@@ -80,11 +80,12 @@ export class PostgresPublicationState implements PublicationStateDependencies {
         client,
         `INSERT INTO publication_requests
            (tenant_id, site_id, idempotency_key, requested_by, origin, reason,
-            content_revision, status, previous_artifact_id)
+            content_revision, status, previous_artifact_id, trace_id)
          VALUES (
            $1, $2, $3, $4, $5, $6, $7, 'building',
            (SELECT id FROM build_artifacts
-             WHERE tenant_id = $1 AND site_id = $2 AND artifact_hash = $8)
+             WHERE tenant_id = $1 AND site_id = $2 AND artifact_hash = $8),
+           $9
          )
          ON CONFLICT (tenant_id, site_id, idempotency_key) DO NOTHING
          RETURNING id`,
@@ -97,6 +98,7 @@ export class PostgresPublicationState implements PublicationStateDependencies {
           request.reason,
           request.contentRevision,
           previousArtifact ?? null,
+          request.traceId,
         ],
       );
       if (inserted.rows[0]) return undefined;

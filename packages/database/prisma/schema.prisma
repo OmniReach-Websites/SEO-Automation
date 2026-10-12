@@ -806,7 +806,11 @@ model PublicationRequest {
   id                 String    @id @default(uuid()) @db.Uuid
   tenantId           String    @map("tenant_id") @db.Uuid
   siteId             String    @map("site_id") @db.Uuid
+  jobId              String?   @unique(map: "publication_requests_job_id_key") @map("job_id") @db.Uuid
+  jobCategory        String    @default("publish") @map("job_category") @db.VarChar(40)
+  publicationJob     Job?      @relation("PublicationJob", fields: [jobId, tenantId, siteId, jobCategory, id, idempotencyKey, traceId], references: [id, tenantId, siteId, category, recordId, dedupeKey, traceId], onDelete: Restrict)
   idempotencyKey     String    @map("idempotency_key") @db.VarChar(160)
+  traceId            String    @default(dbgenerated("replace(gen_random_uuid()::text, '-', '')")) @map("trace_id") @db.VarChar(128)
   requestedBy        String    @map("requested_by") @db.Uuid
   origin             String    @db.VarChar(30)
   reason             String    @db.VarChar(500)
@@ -821,6 +825,7 @@ model PublicationRequest {
   completedAt        DateTime? @map("completed_at") @db.Timestamptz(3)
 
   @@unique([tenantId, siteId, idempotencyKey])
+  @@unique([jobId, tenantId, siteId, jobCategory, id, idempotencyKey, traceId], map: "publication_requests_job_relation_key")
   @@map("publication_requests")
 }
 
@@ -842,30 +847,32 @@ model DeploymentEvent {
 }
 
 model Job {
-  id                String          @id @default(uuid()) @db.Uuid
-  tenantId          String          @map("tenant_id") @db.Uuid
-  siteId            String          @map("site_id") @db.Uuid
-  category          String          @db.VarChar(40)
-  schemaVersion     Int             @map("schema_version")
-  recordId          String          @map("record_id") @db.Uuid
-  dedupeKey         String          @map("dedupe_key") @db.VarChar(160)
-  traceId           String          @map("trace_id") @db.VarChar(128)
-  state             String          @db.VarChar(30)
-  policyVersion     Int             @map("policy_version")
-  attemptLimit      Int             @map("attempt_limit")
-  expiresAt         DateTime        @map("expires_at") @db.Timestamptz(3)
-  hold              Boolean         @default(false)
-  emailEscalation   Int             @default(1) @map("email_escalation")
-  deliveries        AlertDelivery[]
-  auditReferenced   Boolean         @default(false) @map("audit_referenced")
-  createdAt         DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt         DateTime        @default(now()) @map("updated_at") @db.Timestamptz(3)
-  completedAt       DateTime?       @map("completed_at") @db.Timestamptz(3)
-  queueClaimOwner   String?         @map("queue_claim_owner") @db.Char(64)
-  queueClaimedUntil DateTime?       @map("queue_claimed_until") @db.Timestamptz(3)
-  queueDispatchedAt DateTime?       @map("queue_dispatched_at") @db.Timestamptz(3)
+  id                 String              @id @default(uuid()) @db.Uuid
+  tenantId           String              @map("tenant_id") @db.Uuid
+  siteId             String              @map("site_id") @db.Uuid
+  category           String              @db.VarChar(40)
+  schemaVersion      Int                 @map("schema_version")
+  recordId           String              @map("record_id") @db.Uuid
+  dedupeKey          String              @map("dedupe_key") @db.VarChar(160)
+  traceId            String              @map("trace_id") @db.VarChar(128)
+  state              String              @db.VarChar(30)
+  policyVersion      Int                 @map("policy_version")
+  attemptLimit       Int                 @map("attempt_limit")
+  expiresAt          DateTime            @map("expires_at") @db.Timestamptz(3)
+  hold               Boolean             @default(false)
+  emailEscalation    Int                 @default(1) @map("email_escalation")
+  deliveries         AlertDelivery[]
+  auditReferenced    Boolean             @default(false) @map("audit_referenced")
+  createdAt          DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime            @default(now()) @map("updated_at") @db.Timestamptz(3)
+  completedAt        DateTime?           @map("completed_at") @db.Timestamptz(3)
+  queueClaimOwner    String?             @map("queue_claim_owner") @db.Char(64)
+  queueClaimedUntil  DateTime?           @map("queue_claimed_until") @db.Timestamptz(3)
+  queueDispatchedAt  DateTime?           @map("queue_dispatched_at") @db.Timestamptz(3)
+  publicationRequest PublicationRequest? @relation("PublicationJob")
 
   @@unique([tenantId, siteId, category, dedupeKey])
+  @@unique([id, tenantId, siteId, category, recordId, dedupeKey, traceId], map: "jobs_publication_identity_key")
   @@index([tenantId, siteId, state, createdAt])
   @@map("jobs")
 }

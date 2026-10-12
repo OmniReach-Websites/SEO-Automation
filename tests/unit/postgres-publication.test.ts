@@ -79,6 +79,27 @@ describe('PostgreSQL publication state', () => {
     ]);
   });
 
+  it('preserves the publication trace when the compatibility path admits a request', async () => {
+    const query = vi.fn(async (text: string, values?: unknown[]) => {
+      void values;
+      if (text.includes('INSERT INTO publication_requests'))
+        return { rows: [{ id: 'request-id' }] };
+      return { rows: [] };
+    });
+    const state = new PostgresPublicationState(
+      { connect: vi.fn(async () => ({ query, release: vi.fn() })) },
+      {} as never,
+    );
+
+    await expect(state.begin(request, undefined)).resolves.toBeUndefined();
+    const publicationInsert = query.mock.calls.find(([text]) =>
+      text.includes('INSERT INTO publication_requests'),
+    );
+    expect(publicationInsert?.[0]).toContain('trace_id');
+    expect(publicationInsert?.[1]?.[8]).toBe(request.traceId);
+    expect(query.mock.calls.some(([text]) => text.includes('INSERT INTO jobs'))).toBe(false);
+  });
+
   it('revalidates the actor role and editor grant at execution time', async () => {
     const query = vi.fn(async (text: string) => {
       if (text.includes('WITH latest_feature')) {

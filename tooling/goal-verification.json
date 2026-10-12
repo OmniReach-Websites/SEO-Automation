@@ -146,6 +146,7 @@
     ],
     ["npm", "run", "test:integration"],
     ["npm", "run", "check:migrations"],
+    ["npm", "run", "verify:publication-job-admission"],
     ["npm", "run", "verify:publication-flow"],
     ["npm", "run", "test:e2e", "--", "platform-flows.spec.ts"]
   ],
@@ -167,6 +168,7 @@
   "G20": [
     ["npm", "test", "--", "queue.test.ts"],
     ["npm", "run", "verify:queue-runtime"],
+    ["npm", "run", "verify:publication-job-admission"],
     ["npm", "run", "check:migrations"],
     ["npm", "run", "test:security"]
   ],
