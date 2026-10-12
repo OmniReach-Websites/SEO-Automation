@@ -59,7 +59,9 @@ export class PostgresAuthenticationRepository implements AuthenticationRepositor
     traceId: string;
   }): Promise<LoginTarget | undefined> {
     const host = normalizeHost(input.host);
-    if (host === this.#orapHostname) return undefined;
+    if (host === this.#orapHostname) {
+      return this.acceptStaffInvitation({ ...input, host });
+    }
     return withAuthTransaction(this.pool, async (client) => {
       const invitation = await query<{
         id: string;
@@ -233,6 +235,188 @@ export class PostgresAuthenticationRepository implements AuthenticationRepositor
         tenantId: invited.tenant_id,
         userId: user.id,
         verificationRequired: policy.second_step_requirement === 'required',
+      };
+    });
+  }
+
+  private async acceptStaffInvitation(input: {
+    displayName: string;
+    host: string;
+    now: Date;
+    passwordHash: string;
+    verifyExistingPassword(passwordHash: string): Promise<boolean>;
+    tokenHash: string;
+    traceId: string;
+  }): Promise<LoginTarget | undefined> {
+    return withAuthTransaction(this.pool, async (client) => {
+      const invitation = await query<{
+        created_by: string;
+        display_name: string;
+        id: string;
+        job_title: string;
+        normalized_email: string;
+        role_id: string;
+        role_slug: string;
+        role_version_id: string;
+      }>(
+        client,
+        `SELECT invitation.id, invitation.normalized_email, invitation.display_name,
+                invitation.created_by, invitation.role_id, invitation.role_version_id,
+                role.slug AS role_slug,
+                COALESCE(invitation.scope_plan->1->>'jobTitle', '') AS job_title
+           FROM staff_invitations invitation
+           JOIN staff_roles role
+             ON role.id = invitation.role_id AND role.active AND NOT role.owner_identity_only
+           JOIN staff_role_versions version
+             ON version.role_id = invitation.role_id
+            AND version.id = invitation.role_version_id
+          WHERE invitation.token_hash = $1 AND invitation.state = 'pending'
+            AND invitation.expires_at > $2 AND invitation.exact_host = $3
+          FOR UPDATE OF invitation`,
+        [input.tokenHash, input.now, input.host],
+      );
+      if (invitation.rows.length !== 1 || !invitation.rows[0]) return undefined;
+      const invited = invitation.rows[0];
+      const identityKind: Role =
+        invited.role_slug === 'platform-admin' ? 'platform_admin' : 'staff';
+      const existing = await query<{ id: string; password_hash: string; status: string }>(
+        client,
+        `SELECT user_account.id, user_account.status, credential.password_hash
+           FROM users user_account
+           JOIN credentials credential ON credential.user_id = user_account.id
+          WHERE user_account.normalized_email = $1
+          LIMIT 2`,
+        [invited.normalized_email],
+      );
+      if (existing.rows.length > 1) return undefined;
+      const existingUser = existing.rows[0];
+      if (existingUser) {
+        const platform = await query<{ id: string }>(
+          client,
+          `SELECT id FROM platform_memberships WHERE user_id = $1 AND active LIMIT 1`,
+          [existingUser.id],
+        );
+        if (
+          existingUser.status !== 'active' ||
+          platform.rows.length > 0 ||
+          !(await input.verifyExistingPassword(existingUser.password_hash))
+        ) {
+          return undefined;
+        }
+      }
+      let user: { id: string };
+      let sessionPasswordHash = input.passwordHash;
+      if (existingUser) {
+        user = existingUser;
+        sessionPasswordHash = existingUser.password_hash;
+      } else {
+        user = requiredRow(
+          await query<{ id: string }>(
+            client,
+            `INSERT INTO users (normalized_email, display_name)
+             VALUES ($1, $2) RETURNING id`,
+            [invited.normalized_email, invited.display_name || input.displayName],
+          ),
+          'Invited staff user creation failed',
+        );
+        await client.query(
+          `INSERT INTO credentials (user_id, password_hash, password_changed_at)
+           VALUES ($1, $2, $3)`,
+          [user.id, input.passwordHash, input.now],
+        );
+      }
+      await client.query(
+        `INSERT INTO account_authentication_policies
+           (user_id, second_step_requirement, email_code_enabled, preferred_method)
+         VALUES ($1, 'required', true, 'email_code')
+         ON CONFLICT (user_id) DO UPDATE
+           SET second_step_requirement = 'required', email_code_enabled = true,
+               preferred_method = COALESCE(account_authentication_policies.preferred_method,
+                                           'email_code'), updated_at = now()`,
+        [user.id],
+      );
+      await client.query(
+        `INSERT INTO platform_memberships (user_id, role, active)
+         VALUES ($1, $2, true)
+         ON CONFLICT (user_id) DO UPDATE
+           SET role = EXCLUDED.role, active = true, updated_at = now()`,
+        [user.id, identityKind],
+      );
+      const membership = requiredRow(
+        await query<{ id: string }>(
+          client,
+          `INSERT INTO orap_staff_memberships
+             (user_id, identity_kind, status, job_title, created_by)
+           VALUES ($1, $2, 'active', NULLIF($3, ''), $4)
+           RETURNING id`,
+          [user.id, identityKind, invited.job_title, invited.created_by],
+        ),
+        'ORAP staff membership creation failed',
+      );
+      const assignment = requiredRow(
+        await query<{ id: string }>(
+          client,
+          `INSERT INTO staff_role_assignments
+             (staff_membership_id, role_id, role_version_id, primary_role,
+              assigned_by, reason)
+           VALUES ($1, $2, $3, true, $4, 'Accepted owner-issued staff invitation')
+           RETURNING id`,
+          [membership.id, invited.role_id, invited.role_version_id, invited.created_by],
+        ),
+        'Invited staff role assignment failed',
+      );
+      await client.query(
+        `INSERT INTO staff_resource_scopes (assignment_id, scope_type, created_by)
+         VALUES ($1, 'platform', $2)`,
+        [assignment.id, invited.created_by],
+      );
+      await client.query(
+        `UPDATE staff_invitations
+            SET state = 'accepted', accepted_at = $2, accepted_user_id = $3
+          WHERE id = $1`,
+        [invited.id, input.now, user.id],
+      );
+      await insertAudit(client, {
+        action: 'staff.invitation.accepted',
+        actorId: user.id,
+        metadata: {
+          existingAccount: Boolean(existingUser),
+          host: input.host,
+          invitationId: invited.id,
+          role: identityKind,
+          roleSlug: invited.role_slug,
+        },
+        targetId: invited.id,
+        targetType: 'staff_invitation',
+        traceId: input.traceId,
+      });
+      const policy = requiredRow(
+        await query<{
+          auth_state_version: string;
+          email_code_enabled: boolean;
+          preferred_method: string | null;
+        }>(
+          client,
+          `SELECT auth_state_version::text, email_code_enabled, preferred_method
+             FROM account_authentication_policies WHERE user_id = $1`,
+          [user.id],
+        ),
+        'Staff authentication policy was not found',
+      );
+      return {
+        authStateVersion: policy.auth_state_version,
+        emailCodeEnabled: policy.email_code_enabled,
+        hasRecoveryCodes: false,
+        host: input.host,
+        normalizedEmail: invited.normalized_email,
+        passwordHash: sessionPasswordHash,
+        ...(isVerificationMethod(policy.preferred_method)
+          ? { preferredMethod: policy.preferred_method }
+          : {}),
+        privilegedRecoveryRequired: true,
+        role: identityKind,
+        userId: user.id,
+        verificationRequired: true,
       };
     });
   }

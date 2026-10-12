@@ -64,12 +64,12 @@ creation, or production-data mutation.
 No new owner decision blocks repository-only work. The following inputs block only the
 named live or commercial actions and must not be guessed:
 
-- Owner-level staff security changes require a working recent TOTP/WebAuthn step-up or
-  the separately approved audited break-glass procedure from G05. Until that exists,
-  local services may be fully tested with a strong-assurance fixture, but the live
-  owner-only action remains disabled.
-- Real staff invitations require the verified Resend sender, credentials, delivery
-  limits, and explicit activation already tracked as R-008. Local/CI use a sink adapter.
+- Owner-level staff lifecycle changes use the current mandatory ORAP two-step session;
+  the owner-approved 2026-10-12 policy does not require an additional TOTP/passkey
+  step-up. Future SMS verification remains a separate change.
+- Staff invitations use a hashed, single-use seven-day token, the configured
+  authentication email sender, mandatory email-code verification on acceptance, and a
+  non-owner role selected by the Platform Owner. Local/CI continue to use a sink adapter.
 - Legal text, deletion/incident policy, final commercial prices, provider permissions,
   and production credentials remain the existing R-series gates. ORAP displays their
   readiness honestly and does not manufacture them.

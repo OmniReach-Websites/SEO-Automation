@@ -33,6 +33,13 @@ const staffOwnerSessionPolicyMigration = readFileSync(
   ),
   'utf8',
 );
+const staffInvitationAcceptanceMigration = readFileSync(
+  resolve(
+    root,
+    'packages/database/prisma/migrations/20261012100000_staff_invitation_acceptance/migration.sql',
+  ),
+  'utf8',
+);
 const schema = readFileSync(resolve(root, 'packages/database/prisma/schema.prisma'), 'utf8');
 
 describe('ORAP authorization schema foundation', () => {
@@ -112,6 +119,19 @@ describe('ORAP authorization schema foundation', () => {
     ]) {
       expect(resolutionMigration).toContain(policy);
     }
+  });
+
+  it('limits staff invitation acceptance to pending non-owner identities', () => {
+    expect(staffInvitationAcceptanceMigration).toContain('staff_invitations_auth_accept_policy');
+    expect(staffInvitationAcceptanceMigration).toContain("state = 'pending'");
+    expect(staffInvitationAcceptanceMigration).toContain("state = 'accepted'");
+    expect(staffInvitationAcceptanceMigration).toContain(
+      "identity_kind IN ('platform_admin', 'staff')",
+    );
+    expect(staffInvitationAcceptanceMigration).not.toMatch(
+      /GRANT\s+(?:INSERT|UPDATE|DELETE)[^;]+staff_roles/isu,
+    );
+    expect(staffInvitationAcceptanceMigration).toContain('NOT role.owner_identity_only');
   });
 
   it('exposes only non-secret authentication posture to the owner staff directory', () => {

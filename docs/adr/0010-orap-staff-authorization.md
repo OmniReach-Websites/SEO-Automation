@@ -47,9 +47,10 @@ to become unavailable by default rather than inheriting an accidental broad staf
 - Staff authority changes increment the account authentication-state version, revoke
   active platform sessions, invalidate authorization caches, and append non-secret
   before/after audit evidence transactionally.
-- High-risk Owner actions require recent strong TOTP/WebAuthn verification or the
-  separately approved one-use audited break-glass path. Email-only assurance is
-  insufficient where ADR 0003 requires strong assurance.
+- High-risk Owner actions outside staff authority require recent strong TOTP/WebAuthn
+  verification or the separately approved one-use audited break-glass path where ADR
+  0003 requires it. The owner-approved staff lifecycle exception accepts the current
+  mandatory ORAP two-step session, including email-code verification.
 - Customer-user administration remains separate and may be delegated through scoped
   customer-management capabilities. A Customer Owner is never an ORAP Owner.
 
@@ -85,6 +86,7 @@ to become unavailable by default rather than inheriting an accidental broad staf
 ## Validation
 
 O01 proves migration/catalog integrity and default deny. O02 proves route/query/action
-scope enforcement and immediate invalidation. O03 proves Owner-only lifecycle and
-last-owner safeguards. O04 proves role versioning, scopes, and impact previews. O10 runs
-the full adversarial cross-role/site/browser matrix.
+scope enforcement and immediate invalidation. O03 proves Owner-only lifecycle,
+single-use invitation acceptance, mandatory staff verification, session revocation,
+and last-owner safeguards. O04 proves role versioning, scopes, and impact previews. O10
+runs the full adversarial cross-role/site/browser matrix.

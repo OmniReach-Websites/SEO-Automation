@@ -23,9 +23,18 @@ export interface OrapStaffSummary {
   lastLoginAt?: string;
   membershipId: string;
   normalizedEmail: string;
+  roleName?: string;
+  roleSlug?: string;
   status: 'active' | 'disabled' | 'pending';
   strongFactorEnrolled: boolean;
   userId: string;
+}
+
+export interface OrapStaffRoleOption {
+  description: string;
+  name: string;
+  permissionCount: number;
+  slug: string;
 }
 
 export type OrapNavigationItem = 'operations' | 'overview' | 'security' | 'sites' | 'staff';
@@ -92,6 +101,7 @@ export function renderOrapShell(input: {
 export function renderOrapStaffDirectory(
   staff: readonly OrapStaffSummary[],
   navigation?: readonly OrapNavigationItem[],
+  notice?: { kind?: 'error' | 'success'; message: string },
 ): string {
   const rows = staff
     .map(
@@ -104,11 +114,13 @@ export function renderOrapStaffDirectory(
     ({ identityKind, status }) => identityKind === 'platform_owner' && status === 'active',
   ).length;
   return renderOrapShell({
-    content: `<p class="page-subtitle">Owner-only directory of internal ORAP identities. Customer accounts are managed separately inside their website scope.</p><dl class="stats"><div class="stat"><dt>Active staff</dt><dd>${active}</dd><small>Including owners</small></div><div class="stat"><dt>Platform owners</dt><dd>${owners}</dd><small>Protected identity</small></div><div class="stat"><dt>Pending</dt><dd>${staff.filter(({ status }) => status === 'pending').length}</dd><small>Awaiting activation</small></div><div class="stat"><dt>Active sessions</dt><dd>${staff.reduce((total, member) => total + member.activeSessions, 0)}</dd><small>Privileged sessions</small></div></dl><section class="surface-note">Only a currently authenticated Platform Owner can manage internal staff authority. Every change requires an audit reason and preserves last-owner and session-revocation safeguards.</section><section class="panel flush"><div class="panel-header"><div><h2>Internal staff</h2><p class="help">Authentication posture is shown without exposing factors, recovery codes, or session tokens.</p></div></div><table><caption>Internal ORAP staff accounts</caption><thead><tr><th>Staff member</th><th>Identity</th><th>Status</th><th>Verification</th><th>Sessions</th><th>Last login</th><th>Action</th></tr></thead><tbody>${rows || '<tr><td colspan="7"><div class="empty"><strong>No staff records</strong>No internal identities are available.</div></td></tr>'}</tbody></table></section>`,
+    actions: '<a class="button" href="/orap/security/staff/invite">Invite staff</a>',
+    content: `<p class="page-subtitle">Owner-only directory of internal ORAP identities. Customer accounts are managed separately inside their website scope.</p><dl class="stats"><div class="stat"><dt>Active staff</dt><dd>${active}</dd><small>Including owners</small></div><div class="stat"><dt>Platform owners</dt><dd>${owners}</dd><small>Protected identity</small></div><div class="stat"><dt>Active sessions</dt><dd>${staff.reduce((total, member) => total + member.activeSessions, 0)}</dd><small>Privileged sessions</small></div></dl><section class="surface-note"><strong>You are signed in as a Platform Owner.</strong> You can invite staff and manage another staff member's authority. Audit reasons, last-owner protection, and session revocation remain enforced.</section><section class="panel flush"><div class="panel-header"><div><h2>Internal staff</h2><p class="help">Authentication posture is shown without exposing factors, recovery codes, or session tokens.</p></div></div><table><caption>Internal ORAP staff accounts</caption><thead><tr><th>Staff member</th><th>Identity</th><th>Status</th><th>Verification</th><th>Sessions</th><th>Last login</th><th>Action</th></tr></thead><tbody>${rows || '<tr><td colspan="7"><div class="empty"><strong>No staff records</strong>No internal identities are available.</div></td></tr>'}</tbody></table></section>`,
     current: 'staff',
     eyebrow: 'Owner controls',
     heading: 'Team & access',
     ...(navigation ? { navigation } : {}),
+    ...(notice ? { notice } : {}),
     title: 'Team & access',
   });
 }
@@ -118,22 +130,51 @@ export function renderOrapStaffDetails(
   input: {
     currentUserId: string;
     notice?: { kind?: 'error' | 'success'; message: string };
+    roles?: readonly OrapStaffRoleOption[];
   },
   navigation?: readonly OrapNavigationItem[],
 ): string {
   const mayMutate = member.status === 'active' && member.userId !== input.currentUserId;
+  const roleOptions = (input.roles ?? [])
+    .map(
+      (role) =>
+        `<option value="${escapeHtml(role.slug)}"${member.roleSlug === role.slug ? ' selected' : ''}>${escapeHtml(role.name)}</option>`,
+    )
+    .join('');
   const actionContent = mayMutate
-    ? `<div class="section-grid"><section class="panel"><h2>Revoke sessions</h2><p class="help">Signs this staff member out of every active ORAP session.</p><form method="post" action="/orap/security/staff/${encodeURIComponent(member.userId)}/sessions/revoke-all"><div class="field"><label for="revokeReason">Audit reason</label><textarea id="revokeReason" name="reason" minlength="3" maxlength="500" required></textarea></div><button type="submit">Revoke all sessions</button></form></section><section class="panel"><h2>Send password reset</h2><p class="help">Creates a time-limited recovery message. Required privileged verification still applies.</p><form method="post" action="/orap/security/staff/${encodeURIComponent(member.userId)}/reset"><div class="field"><label for="resetReason">Audit reason</label><textarea id="resetReason" name="reason" minlength="3" maxlength="500" required></textarea></div><button type="submit">Send reset instructions</button></form></section></div><section class="panel"><h2>Disable staff access</h2><p class="help">Revokes privileged sessions and removes ORAP access. Public customer websites remain online.</p><form method="post" action="/orap/security/staff/${encodeURIComponent(member.userId)}/disable"><div class="field"><label for="disableReason">Audit reason</label><textarea id="disableReason" name="reason" minlength="3" maxlength="500" required></textarea></div><button class="danger" type="submit">Disable staff access</button></form></section>`
-    : `<section class="surface-note">${member.userId === input.currentUserId ? 'Use your personal security settings for your own account.' : 'This staff account is not active.'}</section>`;
+    ? `<section class="panel"><h2>Authority</h2><p class="help">Changing the role takes effect immediately and signs this staff member out.</p><form method="post" action="/orap/security/staff/${encodeURIComponent(member.userId)}/role"><div class="field"><label for="roleSlug">Staff role</label><select id="roleSlug" name="roleSlug" required>${roleOptions}</select></div><div class="field"><label for="roleReason">Audit reason</label><textarea id="roleReason" name="reason" minlength="3" maxlength="500" required></textarea></div><button type="submit">Update authority</button></form></section><div class="section-grid"><section class="panel"><h2>Revoke sessions</h2><p class="help">Signs this staff member out of every active ORAP session.</p><form method="post" action="/orap/security/staff/${encodeURIComponent(member.userId)}/sessions/revoke-all"><div class="field"><label for="revokeReason">Audit reason</label><textarea id="revokeReason" name="reason" minlength="3" maxlength="500" required></textarea></div><button type="submit">Revoke all sessions</button></form></section><section class="panel"><h2>Send password reset</h2><p class="help">Creates a time-limited recovery message. Required privileged verification still applies.</p><form method="post" action="/orap/security/staff/${encodeURIComponent(member.userId)}/reset"><div class="field"><label for="resetReason">Audit reason</label><textarea id="resetReason" name="reason" minlength="3" maxlength="500" required></textarea></div><button type="submit">Send reset instructions</button></form></section></div><section class="panel"><h2>Disable staff access</h2><p class="help">Revokes privileged sessions and removes ORAP access. Public customer websites remain online.</p><form method="post" action="/orap/security/staff/${encodeURIComponent(member.userId)}/disable"><div class="field"><label for="disableReason">Audit reason</label><textarea id="disableReason" name="reason" minlength="3" maxlength="500" required></textarea></div><button class="danger" type="submit">Disable staff access</button></form></section>`
+    : `<section class="surface-note">${member.userId === input.currentUserId ? 'This is your owner account. Self-disable and self-demotion are blocked so the platform cannot lose its final owner. Use Security settings to manage your own sign-in methods.' : 'This staff account is not active.'}</section>`;
   return renderOrapShell({
     actions: '<a class="button secondary" href="/orap/security/staff">Back to team</a>',
-    content: `<section class="panel"><h2>Staff identity</h2><dl class="detail-list"><dt>Name</dt><dd>${escapeHtml(member.displayName)}</dd><dt>Email</dt><dd>${escapeHtml(member.normalizedEmail)}</dd><dt>Identity</dt><dd>${escapeHtml(formatIdentityKind(member.identityKind))}</dd><dt>Status</dt><dd><span class="badge${member.status === 'active' ? '' : ' disabled'}">${escapeHtml(member.status)}</span></dd><dt>Email codes</dt><dd>${member.emailCodeEnabled ? 'Enabled' : 'Not enabled'}</dd><dt>Strong factor</dt><dd>${member.strongFactorEnrolled ? 'Enrolled' : 'Not enrolled'}</dd><dt>Active sessions</dt><dd>${member.activeSessions}</dd><dt>Last login</dt><dd>${escapeHtml(member.lastLoginAt ?? 'Never')}</dd><dt>User ID</dt><dd><code>${escapeHtml(member.userId)}</code></dd></dl></section>${actionContent}`,
+    content: `<section class="panel"><h2>Staff identity</h2><dl class="detail-list"><dt>Name</dt><dd>${escapeHtml(member.displayName)}</dd><dt>Email</dt><dd>${escapeHtml(member.normalizedEmail)}</dd><dt>Identity</dt><dd>${escapeHtml(formatIdentityKind(member.identityKind))}</dd><dt>Assigned role</dt><dd>${escapeHtml(member.roleName ?? formatIdentityKind(member.identityKind))}</dd><dt>Status</dt><dd><span class="badge${member.status === 'active' ? '' : ' disabled'}">${escapeHtml(member.status)}</span></dd><dt>Email codes</dt><dd>${member.emailCodeEnabled ? 'Enabled' : 'Not enabled'}</dd><dt>Strong factor</dt><dd>${member.strongFactorEnrolled ? 'Enrolled' : 'Not enrolled'}</dd><dt>Active sessions</dt><dd>${member.activeSessions}</dd><dt>Last login</dt><dd>${escapeHtml(member.lastLoginAt ?? 'Never')}</dd><dt>User ID</dt><dd><code>${escapeHtml(member.userId)}</code></dd></dl></section>${actionContent}`,
     current: 'staff',
     eyebrow: 'Owner controls',
     heading: member.displayName,
     ...(navigation ? { navigation } : {}),
     ...(input.notice ? { notice: input.notice } : {}),
     title: member.displayName,
+  });
+}
+
+export function renderOrapStaffInviteForm(
+  roles: readonly OrapStaffRoleOption[],
+  error?: string,
+  navigation?: readonly OrapNavigationItem[],
+): string {
+  const roleOptions = roles
+    .map(
+      (role) =>
+        `<option value="${escapeHtml(role.slug)}">${escapeHtml(role.name)} — ${role.permissionCount} permissions</option>`,
+    )
+    .join('');
+  return renderOrapShell({
+    actions: '<a class="button secondary" href="/orap/security/staff">Back to team</a>',
+    content: `${error ? `<div class="notice error" role="alert">${escapeHtml(error)}</div>` : ''}<section class="panel"><h2>Send a secure invitation</h2><p class="help">The recipient creates their own password and completes mandatory email verification. Invitation links expire after seven days and can be used once.</p><form method="post" action="/orap/security/staff/invite"><div class="field"><label for="displayName">Name</label><input id="displayName" name="displayName" maxlength="160" required autofocus></div><div class="field"><label for="email">Work email</label><input id="email" name="email" type="email" maxlength="320" required></div><div class="field"><label for="jobTitle">Job title</label><input id="jobTitle" name="jobTitle" maxlength="160"></div><div class="field"><label for="roleSlug">Staff role</label><select id="roleSlug" name="roleSlug" required>${roleOptions}</select></div><div class="field"><label for="reason">Audit reason</label><textarea id="reason" name="reason" minlength="3" maxlength="500" required></textarea></div><button type="submit">Send invitation</button></form></section>`,
+    current: 'staff',
+    eyebrow: 'Owner controls',
+    heading: 'Invite staff',
+    ...(navigation ? { navigation } : {}),
+    title: 'Invite staff',
   });
 }
 

@@ -9,11 +9,13 @@ export {
   renderOrapSiteForm,
   renderOrapStaffDirectory,
   renderOrapStaffDetails,
+  renderOrapStaffInviteForm,
   type DashboardModel,
   type OrapNavigationItem,
   type OrapOverviewModel,
   type OrapSiteSummary,
   type OrapStaffSummary,
+  type OrapStaffRoleOption,
 } from './admin.ts';
 export {
   renderReportingDashboard,

@@ -185,6 +185,88 @@ describe('PostgreSQL authentication repository', () => {
     expect(calls.some((sql) => sql.includes('ON CONFLICT'))).toBe(true);
   });
 
+  it('accepts an owner-issued staff invitation with mandatory email verification', async () => {
+    const calls: string[] = [];
+    const { pool } = poolFor(async (sql) => {
+      calls.push(sql);
+      if (sql.includes('FROM staff_invitations invitation')) {
+        return {
+          rows: [
+            {
+              created_by: '40000000-0000-4000-8000-000000000001',
+              display_name: 'Fictional Employee',
+              id: '70000000-0000-4000-8000-000000000010',
+              job_title: 'Operations Specialist',
+              normalized_email: 'employee@example.test',
+              role_id: '80000000-0000-4000-8000-000000000001',
+              role_slug: 'operations-manager',
+              role_version_id: '81000000-0000-4000-8000-000000000001',
+            },
+          ],
+        };
+      }
+      if (sql.includes('FROM users user_account')) return { rows: [] };
+      if (sql.includes('INSERT INTO users')) {
+        return { rows: [{ id: '40000000-0000-4000-8000-000000000010' }] };
+      }
+      if (sql.includes('INSERT INTO orap_staff_memberships')) {
+        return { rows: [{ id: '90000000-0000-4000-8000-000000000010' }] };
+      }
+      if (sql.includes('INSERT INTO staff_role_assignments')) {
+        return { rows: [{ id: '91000000-0000-4000-8000-000000000010' }] };
+      }
+      if (
+        sql.includes('SELECT auth_state_version::text') &&
+        sql.includes('FROM account_authentication_policies')
+      ) {
+        return {
+          rows: [
+            {
+              auth_state_version: '1',
+              email_code_enabled: true,
+              preferred_method: 'email_code',
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const result = await new PostgresAuthenticationRepository(
+      pool,
+      'admin.omnireach.test',
+    ).acceptInvitation({
+      displayName: 'Fictional Employee',
+      host: 'admin.omnireach.test',
+      now: new Date('2026-10-12T12:00:00.000Z'),
+      passwordHash: '$argon2id$staff-fixture',
+      tokenHash: 'd'.repeat(64),
+      traceId: 'trace-staff-invitation',
+      verifyExistingPassword: vi.fn(async () => false),
+    });
+
+    expect(result).toMatchObject({
+      emailCodeEnabled: true,
+      host: 'admin.omnireach.test',
+      preferredMethod: 'email_code',
+      privilegedRecoveryRequired: true,
+      role: 'staff',
+      userId: '40000000-0000-4000-8000-000000000010',
+      verificationRequired: true,
+    });
+    const policyInsert = calls.findIndex((sql) =>
+      sql.includes('INSERT INTO account_authentication_policies'),
+    );
+    const membershipInsert = calls.findIndex((sql) =>
+      sql.includes('INSERT INTO platform_memberships'),
+    );
+    expect(policyInsert).toBeGreaterThan(-1);
+    expect(membershipInsert).toBeGreaterThan(policyInsert);
+    expect(calls.some((sql) => sql.includes("SET state = 'accepted'"))).toBe(true);
+    expect(calls.some((sql) => sql.includes('INSERT INTO staff_resource_scopes'))).toBe(true);
+    expect(calls.at(-1)).toBe('COMMIT');
+  });
+
   it('rechecks the plan seat limit under a site admission lock before accepting', async () => {
     const calls: string[] = [];
     const { pool } = poolFor(async (sql) => {

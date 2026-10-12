@@ -35,9 +35,9 @@ export class ResendAuthenticationNotifier {
     const response = await this.fetchImplementation('https://api.resend.com/emails', {
       body: JSON.stringify({
         from: this.options.from,
-        subject: invitation ? 'Your OmniReach website invitation' : 'Reset your OmniReach password',
+        subject: invitation ? 'Your OmniReach account invitation' : 'Reset your OmniReach password',
         text: invitation
-          ? `Use this one-time link to accept your OmniReach website invitation:\n\n${url}\n\nThis link expires in 7 days.`
+          ? `Use this one-time link to accept your OmniReach account invitation:\n\n${url}\n\nThis link expires in 7 days.`
           : `Use this one-time link to reset your OmniReach password:\n\n${url}\n\nThis link expires in 30 minutes. If you did not request this, ignore this message.`,
         to: [input.normalizedEmail],
       }),
