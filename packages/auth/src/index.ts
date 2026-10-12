@@ -16,6 +16,34 @@ export {
   type Role,
 } from './roles.ts';
 export {
+  getOrapCapability,
+  isAssignableOrapCapability,
+  isRegisteredOrapCapability,
+  orapCapabilityCatalog,
+  orapRoleTemplates,
+  type OrapCapabilityDefinition,
+  type OrapCapabilityKey,
+  type OrapCapabilityRisk,
+  type OrapCapabilityScope,
+  type OrapRoleTemplateDefinition,
+} from './orap-capabilities.ts';
+export {
+  assertOrapCapability,
+  assertPlatformOwnerIdentity,
+  assertRecentStrongOrapStepUp,
+  canOrap,
+  isPlatformOwnerIdentity,
+  OrapAuthorizationDeniedError,
+  OrapOwnerIdentityRequiredError,
+  OrapStrongStepUpRequiredError,
+  orapVisibleScope,
+  type OrapAssignmentGrant,
+  type OrapAuthorizationActor,
+  type OrapAuthorizationState,
+  type OrapResourceTarget,
+  type OrapVisibleScope,
+} from './orap-authorization.ts';
+export {
   createOneTimeToken,
   digestToken,
   sessionCookieOptions,

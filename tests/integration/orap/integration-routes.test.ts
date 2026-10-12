@@ -3,6 +3,19 @@ import type { AdminActor } from '@omnireach/tenant';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const actor: AdminActor = {
+  authorization: {
+    grants: [
+      {
+        assignmentId: 'assignment-integrations',
+        permissionKeys: ['integrations.google.view', 'integrations.google.manage'],
+        portfolio: false,
+        siteIds: ['20000000-0000-4000-8000-000000000001'],
+        tenantIds: [],
+      },
+    ],
+    membershipId: '60000000-0000-4000-8000-000000000001',
+    version: 1,
+  },
   id: '00000000-0000-4000-8000-000000000001',
   role: 'staff',
   traceId: 'trace-000000000001',

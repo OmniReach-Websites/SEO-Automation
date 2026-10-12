@@ -4,15 +4,197 @@ import { describe, expect, it, vi } from 'vitest';
 
 const actor = {
   id: '40000000-0000-4000-8000-000000000001',
-  role: 'staff' as const,
+  role: 'platform_owner' as const,
   traceId: 'trace-orap-1',
 };
-const sessionAdministrator = {
+const deniedStaff = {
   ...actor,
-  role: 'platform_admin' as const,
+  role: 'staff' as const,
+};
+const sessionAdministrator = actor;
+const strongOwner = {
+  ...actor,
+  authenticationAssurance: 'strong',
+  verifiedAt: new Date(),
 };
 
 describe('PostgreSQL ORAP service', () => {
+  it('protects the last owner and requires strong verification for staff disablement', async () => {
+    const targetOwnerId = '40000000-0000-4000-8000-000000000099';
+    const query = vi.fn(async (text: string, values?: unknown[]) => {
+      void values;
+      if (text.includes('FROM orap_staff_memberships membership')) {
+        return {
+          rows: [
+            {
+              identity_kind: 'platform_owner',
+              membership_id: '60000000-0000-4000-8000-000000000099',
+              status: 'active',
+              user_id: targetOwnerId,
+            },
+          ],
+        };
+      }
+      if (text.includes("identity_kind = 'platform_owner'")) {
+        return { rows: [{ id: '60000000-0000-4000-8000-000000000099' }] };
+      }
+      return { rows: [] };
+    });
+    const service = new PostgresOrapService(
+      { connect: vi.fn(async () => ({ query, release: vi.fn() })) },
+      { send: vi.fn() },
+      vi.fn(),
+    );
+
+    expect(() =>
+      service.disableStaff(actor, {
+        reason: 'Baseline session is insufficient',
+        userId: targetOwnerId,
+      }),
+    ).toThrow('Recent authenticator or passkey verification');
+    await expect(
+      service.disableStaff(strongOwner, {
+        reason: 'Fictional owner departure',
+        userId: targetOwnerId,
+      }),
+    ).rejects.toThrow('last active Platform Owner');
+    expect(query.mock.calls.some(([text]) => text.includes('UPDATE platform_memberships'))).toBe(
+      false,
+    );
+  });
+
+  it('revokes privileged staff sessions and records an immutable access audit', async () => {
+    const targetUserId = '40000000-0000-4000-8000-000000000099';
+    const query = vi.fn(async (text: string, values?: unknown[]) => {
+      void values;
+      if (text.includes('SELECT user_id FROM orap_staff_memberships')) {
+        return { rows: [{ user_id: targetUserId }] };
+      }
+      if (text.includes('UPDATE sessions')) {
+        return { rows: [{ id: 'session-a' }, { id: 'session-b' }] };
+      }
+      return { rows: [] };
+    });
+    const service = new PostgresOrapService(
+      { connect: vi.fn(async () => ({ query, release: vi.fn() })) },
+      { send: vi.fn() },
+      vi.fn(),
+    );
+
+    await expect(
+      service.revokeStaffSessions(strongOwner, {
+        reason: 'Owner-approved fictional session revocation',
+        userId: targetUserId,
+      }),
+    ).resolves.toEqual({ revokedSessions: 2 });
+    const audit = query.mock.calls.find(([text]) => text.includes('staff_access_audits'));
+    expect(audit?.[1]).toEqual(
+      expect.arrayContaining([
+        strongOwner.id,
+        targetUserId,
+        'staff.sessions_revoked',
+        'Owner-approved fictional session revocation',
+      ]),
+    );
+  });
+
+  it('filters website reads to the grant scope and rechecks the authorization version', async () => {
+    const scopedActor = {
+      authorization: {
+        grants: [
+          {
+            assignmentId: 'assignment-a',
+            permissionKeys: ['websites.list'],
+            portfolio: false,
+            siteIds: ['20000000-0000-4000-8000-000000000001'],
+            tenantIds: ['10000000-0000-4000-8000-000000000001'],
+          },
+        ],
+        membershipId: '60000000-0000-4000-8000-000000000001',
+        version: 7,
+      },
+      ...deniedStaff,
+    };
+    const query = vi.fn(async (text: string, values?: unknown[]) => {
+      if (text.includes('FROM orap_staff_memberships membership')) {
+        return { rows: [{ id: scopedActor.authorization.membershipId }] };
+      }
+      if (text.includes('FROM sites s JOIN tenants')) {
+        expect(values).toEqual([
+          false,
+          ['10000000-0000-4000-8000-000000000001'],
+          ['20000000-0000-4000-8000-000000000001'],
+        ]);
+        return {
+          rows: [
+            {
+              id: '20000000-0000-4000-8000-000000000001',
+              name: 'Scoped site',
+              status: 'active',
+              tenant_id: '10000000-0000-4000-8000-000000000001',
+              tenant_name: 'Scoped customer',
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+    const service = new PostgresOrapService(
+      { connect: vi.fn(async () => ({ query, release: vi.fn() })) },
+      { send: vi.fn() },
+      vi.fn(),
+    );
+
+    await expect(service.listSites(scopedActor)).resolves.toEqual([
+      {
+        id: '20000000-0000-4000-8000-000000000001',
+        name: 'Scoped site',
+        status: 'active',
+        tenantId: '10000000-0000-4000-8000-000000000001',
+        tenantName: 'Scoped customer',
+      },
+    ]);
+    expect(
+      String(query.mock.calls.find(([text]) => text.includes('FROM orap_staff'))?.[0]),
+    ).toContain('authorization_version = $4');
+  });
+
+  it('rejects a stale authorization version before reading protected records', async () => {
+    const query = vi.fn(async (text: string, values?: unknown[]) => {
+      void text;
+      void values;
+      return { rows: [] };
+    });
+    const service = new PostgresOrapService(
+      { connect: vi.fn(async () => ({ query, release: vi.fn() })) },
+      { send: vi.fn() },
+      vi.fn(),
+    );
+    const staleActor = {
+      authorization: {
+        grants: [
+          {
+            assignmentId: 'assignment-a',
+            permissionKeys: ['websites.list'],
+            portfolio: true,
+            siteIds: [],
+            tenantIds: [],
+          },
+        ],
+        membershipId: '60000000-0000-4000-8000-000000000001',
+        version: 2,
+      },
+      ...deniedStaff,
+    };
+
+    await expect(service.listSites(staleActor)).rejects.toMatchObject({
+      code: 'orap_authorization_denied',
+    });
+    expect(query.mock.calls.some(([text]) => text.includes('FROM sites s JOIN tenants'))).toBe(
+      false,
+    );
+  });
+
   it('acknowledges an alert under the platform role and records the audited transition', async () => {
     const alertId = '80000000-0000-4000-8000-000000000001';
     const query = vi.fn(async (text: string, values?: unknown[]) => {
@@ -333,10 +515,10 @@ describe('PostgreSQL ORAP service', () => {
       tenantId: 'tenant-a',
     };
 
-    expect(() => service.setSiteAiBudget(actor, input)).toThrow(/platform owner/u);
-    await expect(
-      service.setSiteAiBudget({ ...actor, role: 'platform_owner' }, input),
-    ).resolves.toMatchObject({ cap_usd_micros: '7000000' });
+    expect(() => service.setSiteAiBudget(deniedStaff, input)).toThrow(/not authorized/u);
+    await expect(service.setSiteAiBudget(actor, input)).resolves.toMatchObject({
+      cap_usd_micros: '7000000',
+    });
     const audit = query.mock.calls.find(([text]) => text.includes('INSERT INTO audit_events'));
     expect(audit?.[1]).toEqual(
       expect.arrayContaining(['site.ai_budget_changed', 'Approved test increase', actor.id]),
@@ -506,13 +688,13 @@ describe('PostgreSQL ORAP service', () => {
 
     const callsBeforeStaff = connect.mock.calls.length;
     expect(() =>
-      service.revokeAllCustomerSessions(actor, {
+      service.revokeAllCustomerSessions(deniedStaff, {
         reason: 'Staff lacks an explicit session administration grant',
         siteId: hostileInput.siteId,
         tenantId: hostileInput.tenantId,
         userId: hostileInput.userId,
       }),
-    ).toThrow('platform owner or platform admin');
+    ).toThrow('not authorized');
     expect(connect).toHaveBeenCalledTimes(callsBeforeStaff);
   });
 

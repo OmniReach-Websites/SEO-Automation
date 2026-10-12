@@ -183,6 +183,21 @@ describe('authentication route safety', () => {
     expect(rejected.statusCode).toBe(403);
     expect(service.login).not.toHaveBeenCalled();
 
+    const rejectedForm = await server.inject({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        host: 'admin.fictional.test',
+        origin: 'https://attacker.test',
+      },
+      method: 'POST',
+      payload: 'email=owner%40example.test&password=fictional-password',
+      url: '/auth/login',
+    });
+    expect(rejectedForm.statusCode).toBe(403);
+    expect(rejectedForm.headers['content-type']).toContain('text/html');
+    expect(rejectedForm.body).toContain('Request blocked');
+    expect(rejectedForm.body).not.toContain('origin_rejected');
+
     const recovery = await server.inject({
       headers: { host: 'admin.fictional.test', origin: 'https://admin.fictional.test' },
       method: 'POST',
@@ -225,6 +240,27 @@ describe('authentication route safety', () => {
     });
     expect(missingOrigin.statusCode).toBe(403);
     expect(service.login).not.toHaveBeenCalled();
+
+    const invalidForm = await server.inject({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        host: 'admin.fictional.test',
+        origin: 'https://admin.fictional.test',
+      },
+      method: 'POST',
+      payload: 'email=owner%40example.test&password=incorrect-password',
+      url: '/auth/login',
+    });
+    expect(invalidForm.statusCode).toBe(303);
+    expect(invalidForm.headers.location).toBe('/login?error=credentials');
+
+    const invalidPage = await server.inject({
+      headers: { host: 'admin.fictional.test' },
+      method: 'GET',
+      url: '/login?error=credentials',
+    });
+    expect(invalidPage.statusCode).toBe(200);
+    expect(invalidPage.body).toContain('email address or password was not accepted');
   });
 
   it('completes MFA before issuing a session and supports scoped session revocation', async () => {
@@ -541,7 +577,7 @@ describe('authentication route safety', () => {
     });
 
     expect(page.statusCode).toBe(200);
-    expect(page.body).toContain('href="/assets/admin.css"');
+    expect(page.body).toContain('href="/assets/admin.css?v=orap-2"');
     expect(page.body).toContain('href="/orap/operations"');
     expect(page.body).toContain('href="/security" aria-current="page"');
     expect(page.body).toContain('Two-step verification is <strong>required</strong>');

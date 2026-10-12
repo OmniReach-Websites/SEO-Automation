@@ -1,7 +1,9 @@
+import { canOrap, type OrapCapabilityKey, type OrapResourceTarget } from '@omnireach/auth';
 import type { AdminActor } from '@omnireach/tenant';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { ResolvePlatformActor } from './orap-routes.ts';
+import { assertOrapRoutePolicyRegistry } from './orap-route-policy.ts';
 import { requireSameOrigin } from './request-security.ts';
 
 export interface IntegrationEndpointService {
@@ -29,11 +31,13 @@ export function registerIntegrationRoutes(
   service: IntegrationEndpointService,
   resolveActor: ResolvePlatformActor,
 ): void {
+  assertOrapRoutePolicyRegistry();
   server.get('/v1/orap/sites/:siteId/integrations', async (request, reply) => {
     const actor = await authorize(request, reply, resolveActor);
     if (!actor) return;
     const params = parse(z.object({ siteId: z.string().uuid() }), request.params, reply);
     if (!params) return;
+    if (!authorizeCapability(actor, 'integrations.google.view', params, reply)) return;
     return service.list(actor, params.siteId);
   });
   server.post(
@@ -52,6 +56,7 @@ export function registerIntegrationRoutes(
         reply,
       );
       if (!params || !body) return;
+      if (!authorizeCapability(actor, 'integrations.google.manage', params, reply)) return;
       return reply
         .code(201)
         .send(await service.startGoogle(actor, { ...body, siteId: params.siteId }));
@@ -70,6 +75,7 @@ export function registerIntegrationRoutes(
       reply,
     );
     if (!query) return;
+    if (!authorizeCapability(actor, 'integrations.google.manage', query, reply)) return;
     return service.finishGoogle(actor, query);
   });
   server.delete(
@@ -85,6 +91,7 @@ export function registerIntegrationRoutes(
         reply,
       );
       if (!params || !body) return;
+      if (!authorizeCapability(actor, 'integrations.google.manage', {}, reply)) return;
       return service.disconnect(actor, { ...body, connectionId: params.connectionId });
     },
   );
@@ -101,6 +108,17 @@ async function authorize(
     return undefined;
   }
   return actor;
+}
+
+function authorizeCapability(
+  actor: AdminActor,
+  capabilityKey: OrapCapabilityKey,
+  target: OrapResourceTarget,
+  reply: FastifyReply,
+): boolean {
+  if (canOrap(actor, capabilityKey, target)) return true;
+  void reply.code(403).send({ error: 'orap_authorization_denied' });
+  return false;
 }
 function parse<T>(schema: z.ZodType<T>, value: unknown, reply: FastifyReply): T | undefined {
   const result = schema.safeParse(value);

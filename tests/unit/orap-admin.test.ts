@@ -7,6 +7,31 @@ import {
 } from '@omnireach/tenant';
 import { describe, expect, it, vi } from 'vitest';
 
+const authorizedStaff = {
+  authorization: {
+    grants: [
+      {
+        assignmentId: 'assignment-a',
+        permissionKeys: [
+          'customers.create',
+          'websites.create',
+          'websites.disable',
+          'customers.users.manage',
+          'security.customer_access.manage',
+        ],
+        portfolio: true,
+        siteIds: [],
+        tenantIds: [],
+      },
+    ],
+    membershipId: 'membership-a',
+    version: 1,
+  },
+  id: 'staff-a',
+  role: 'staff' as const,
+  traceId: 'trace-staff-a',
+};
+
 describe('ORAP administration slice', () => {
   it('creates tenant and site with the audit event in one transaction', async () => {
     const audit: AdminAuditEvent[] = [];
@@ -29,7 +54,7 @@ describe('ORAP administration slice', () => {
         }),
     });
     await service.createTenantAndSite(
-      { id: 'staff-a', role: 'staff', traceId: 'trace-000000000001' },
+      { ...authorizedStaff, traceId: 'trace-000000000001' },
       {
         reason: 'Onboard fictional fixture',
         siteName: 'Copper Spoon',
@@ -54,9 +79,9 @@ describe('ORAP administration slice', () => {
         'site-a',
         'Request',
       ),
-    ).rejects.toThrow('Platform staff');
+    ).rejects.toThrow('not authorized');
     await expect(
-      service.disableSite({ id: 'staff', role: 'staff', traceId: 'trace' }, 'site-a', ' '),
+      service.disableSite({ ...authorizedStaff, traceId: 'trace' }, 'site-a', ' '),
     ).rejects.toThrow('reason');
   });
 
@@ -97,7 +122,7 @@ describe('ORAP administration slice', () => {
     });
 
     const result = await service.disable(
-      { id: 'staff-a', role: 'staff', traceId: 'trace-000000000002' },
+      { ...authorizedStaff, traceId: 'trace-000000000002' },
       { membershipId: 'membership-a', reason: 'Customer departure', siteId: 'site-a' },
     );
 
@@ -137,7 +162,7 @@ describe('ORAP administration slice', () => {
 
     await expect(
       service.changeRole(
-        { id: 'staff-a', role: 'staff', traceId: 'trace-role-change' },
+        { ...authorizedStaff, traceId: 'trace-role-change' },
         {
           membershipId: before.id,
           reason: 'Approved access adjustment',
@@ -177,7 +202,7 @@ describe('ORAP administration slice', () => {
         }),
     });
     await service.invite(
-      { id: 'admin', role: 'platform_admin', traceId: 'trace-000000000003' },
+      { ...authorizedStaff, id: 'admin', role: 'platform_admin', traceId: 'trace-000000000003' },
       {
         email: ' Customer@Example.Test ',
         reason: 'Approved access',
@@ -191,7 +216,7 @@ describe('ORAP administration slice', () => {
     );
     await expect(
       service.changeRole(
-        { id: 'admin', role: 'platform_admin', traceId: 'trace-000000000004' },
+        { ...authorizedStaff, id: 'admin', role: 'platform_admin', traceId: 'trace-000000000004' },
         {
           membershipId: 'membership-a',
           reason: 'Promote user',

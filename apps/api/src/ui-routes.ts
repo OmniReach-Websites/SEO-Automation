@@ -4,18 +4,26 @@ import {
   renderOperationsCenter,
   renderOrapDashboard,
   renderOrapNotFound,
+  renderOrapOverview,
   renderOrapShell,
   renderOrapSiteDetails,
   renderOrapSiteForm,
+  renderOrapStaffDirectory,
+  renderOrapStaffDetails,
   type AlertRow,
   type BudgetView,
   type JobRow,
+  type OrapNavigationItem,
   type OrapSiteSummary,
+  type OrapStaffSummary,
 } from '@omnireach/ui';
+import { canOrap, isPlatformOwnerIdentity } from '@omnireach/auth';
+import type { AdminActor } from '@omnireach/tenant';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
 import type { AuthEndpointService } from './auth-routes.ts';
+import { clientNetworkIdentifier } from './client-network.ts';
 import type { CustomerEndpointService, ResolveCustomerPrincipal } from './customer-routes.ts';
 import type { OrapAdministrationEndpointService, ResolvePlatformActor } from './orap-routes.ts';
 import { registerCustomerUiRoutes } from './customer-ui-routes.ts';
@@ -39,8 +47,10 @@ export function registerUiRoutes(
       .header('Cache-Control', 'public, max-age=300')
       .send(adminStylesheet),
   );
-  server.get('/login', async (request, reply) =>
-    reply.type('text/html; charset=utf-8').send(renderLogin(request.hostname)),
+  server.get<{ Querystring: { error?: string } }>('/login', async (request, reply) =>
+    reply
+      .type('text/html; charset=utf-8')
+      .send(renderLogin(request.hostname, request.query?.error)),
   );
   server.get<{ Querystring: { email?: string } }>('/mfa', async (request, reply) =>
     reply
@@ -86,9 +96,7 @@ export function registerUiRoutes(
       );
       if (!settings) return reply.code(303).redirect('/login');
       const platformActor = await options.resolvePlatformActor?.(request);
-      const platformView =
-        platformActor !== undefined &&
-        ['platform_owner', 'platform_admin', 'staff'].includes(platformActor.role);
+      const platformView = platformActor !== undefined;
       if (settings.webauthnEnrollmentAvailable) {
         reply.header(
           'Content-Security-Policy',
@@ -97,7 +105,13 @@ export function registerUiRoutes(
       }
       return reply
         .type('text/html; charset=utf-8')
-        .send(renderSecuritySettings(settings, platformView));
+        .send(
+          renderSecuritySettings(
+            settings,
+            platformView,
+            platformActor ? orapNavigation(platformActor) : undefined,
+          ),
+        );
     });
     server.get<{ Querystring: { action?: string } }>('/security/email', async (request, reply) => {
       const settings = await options.authService?.securitySettings?.(
@@ -127,23 +141,103 @@ export function registerUiRoutes(
   }
 
   if (options.orapService && options.resolvePlatformActor) {
+    server.get('/orap', async (request, reply) => {
+      const actor = await options.resolvePlatformActor?.(request);
+      if (!actor || !canOrap(actor, 'dashboard.view')) {
+        return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
+      }
+      const sites = canOrap(actor, 'websites.list')
+        ? parseSiteSummaries(await options.orapService?.listSites(actor))
+        : [];
+      const operations = options.orapService?.listOperations
+        ? parseOperationsModel(await options.orapService.listOperations(actor))
+        : { alerts: [], budget: null, jobs: [] };
+      return reply
+        .type('text/html; charset=utf-8')
+        .send(
+          renderOrapOverview(
+            { ...operations, sites },
+            canOrap(actor, 'customers.create') && canOrap(actor, 'websites.create'),
+            orapNavigation(actor),
+          ),
+        );
+    });
+
     server.get<{ Querystring: { notice?: string } }>('/orap/sites', async (request, reply) => {
       const actor = await options.resolvePlatformActor?.(request);
-      if (!actor || !['platform_owner', 'platform_admin', 'staff'].includes(actor.role)) {
+      if (!actor || !canOrap(actor, 'websites.list')) {
         return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
       }
       const sites = parseSiteSummaries(await options.orapService?.listSites(actor));
       return reply
         .type('text/html; charset=utf-8')
-        .send(renderOrapDashboard(sites, siteNotice(request.query.notice)));
+        .send(
+          renderOrapDashboard(
+            sites,
+            siteNotice(request.query.notice),
+            canOrap(actor, 'customers.create') && canOrap(actor, 'websites.create'),
+            orapNavigation(actor),
+          ),
+        );
     });
+
+    server.get('/orap/security/staff', async (request, reply) => {
+      const actor = await options.resolvePlatformActor?.(request);
+      if (!actor || !isPlatformOwnerIdentity(actor)) {
+        return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
+      }
+      if (!options.orapService?.listStaff) {
+        return reply.code(404).type('text/html; charset=utf-8').send(renderOrapNotFound());
+      }
+      const staff = parseStaffSummaries(await options.orapService.listStaff(actor));
+      return reply
+        .type('text/html; charset=utf-8')
+        .send(renderOrapStaffDirectory(staff, orapNavigation(actor)));
+    });
+
+    server.get<{
+      Params: { userId: string };
+      Querystring: { notice?: string };
+    }>('/orap/security/staff/:userId', async (request, reply) => {
+      const actor = await options.resolvePlatformActor?.(request);
+      if (!actor || !isPlatformOwnerIdentity(actor)) {
+        return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
+      }
+      if (!options.orapService?.listStaff) {
+        return reply.code(404).type('text/html; charset=utf-8').send(renderOrapNotFound());
+      }
+      const staff = parseStaffSummaries(await options.orapService.listStaff(actor));
+      const member = staff.find(({ userId }) => userId === request.params.userId);
+      if (!member) {
+        return reply
+          .code(404)
+          .type('text/html; charset=utf-8')
+          .send(renderOrapNotFound(orapNavigation(actor)));
+      }
+      const notice = staffNotice(request.query.notice);
+      return reply.type('text/html; charset=utf-8').send(
+        renderOrapStaffDetails(
+          member,
+          {
+            currentUserId: actor.id,
+            ...(notice ? { notice } : {}),
+            recentStrongStepUp: hasRecentStrongStepUp(actor),
+          },
+          orapNavigation(actor),
+        ),
+      );
+    });
+
+    registerOrapStaffForms(server, options);
 
     server.get('/orap/sites/new', async (request, reply) => {
       const actor = await options.resolvePlatformActor?.(request);
-      if (!actor || !['platform_owner', 'platform_admin', 'staff'].includes(actor.role)) {
+      if (!actor || !canOrap(actor, 'customers.create') || !canOrap(actor, 'websites.create')) {
         return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
       }
-      return reply.type('text/html; charset=utf-8').send(renderOrapSiteForm());
+      return reply
+        .type('text/html; charset=utf-8')
+        .send(renderOrapSiteForm(undefined, orapNavigation(actor)));
     });
 
     server.post<{ Body: unknown }>(
@@ -151,7 +245,7 @@ export function registerUiRoutes(
       { preHandler: requireSameOrigin },
       async (request, reply) => {
         const actor = await options.resolvePlatformActor?.(request);
-        if (!actor || !['platform_owner', 'platform_admin', 'staff'].includes(actor.role)) {
+        if (!actor || !canOrap(actor, 'customers.create') || !canOrap(actor, 'websites.create')) {
           return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
         }
         const parsed = siteCreationInput.safeParse(request.body);
@@ -162,6 +256,7 @@ export function registerUiRoutes(
             .send(
               renderOrapSiteForm(
                 'Check every field and use a repository path such as sites/customer-name.',
+                orapNavigation(actor),
               ),
             );
         }
@@ -176,6 +271,7 @@ export function registerUiRoutes(
             .send(
               renderOrapSiteForm(
                 'The site record could not be created. No DNS or deployment changes were made.',
+                orapNavigation(actor),
               ),
             );
         }
@@ -186,7 +282,7 @@ export function registerUiRoutes(
       '/orap/sites/:siteIdentifier',
       async (request, reply) => {
         const actor = await options.resolvePlatformActor?.(request);
-        if (!actor || !['platform_owner', 'platform_admin', 'staff'].includes(actor.role)) {
+        if (!actor || !canOrap(actor, 'websites.list')) {
           return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
         }
         const sites = parseSiteSummaries(await options.orapService?.listSites(actor));
@@ -195,15 +291,24 @@ export function registerUiRoutes(
             entry.id === request.params.siteIdentifier ||
             entry.name === request.params.siteIdentifier,
         );
-        return site
-          ? reply.type('text/html; charset=utf-8').send(renderOrapSiteDetails(site))
-          : reply.code(404).type('text/html; charset=utf-8').send(renderOrapNotFound());
+        return site &&
+          canOrap(actor, 'websites.view', {
+            ...(site.id ? { siteId: site.id } : {}),
+            ...(site.tenantId ? { tenantId: site.tenantId } : {}),
+          })
+          ? reply
+              .type('text/html; charset=utf-8')
+              .send(renderOrapSiteDetails(site, orapNavigation(actor)))
+          : reply
+              .code(404)
+              .type('text/html; charset=utf-8')
+              .send(renderOrapNotFound(orapNavigation(actor)));
       },
     );
 
     server.get<{ Querystring: { notice?: string } }>('/orap/operations', async (request, reply) => {
       const actor = await options.resolvePlatformActor?.(request);
-      if (!actor || !['platform_owner', 'platform_admin', 'staff'].includes(actor.role)) {
+      if (!actor || !canOrap(actor, 'dashboard.view')) {
         return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
       }
       if (!options.orapService?.listOperations) return reply.code(404).send();
@@ -211,10 +316,17 @@ export function registerUiRoutes(
       const notice = operationNotice(request.query.notice);
       return reply.type('text/html; charset=utf-8').send(
         renderOrapShell({
-          content: renderOperationsCenter(model),
+          content: renderOperationsCenter({
+            ...model,
+            canAcknowledgeAlerts: canOrap(actor, 'alerts.acknowledge'),
+            canCancelJobs: canOrap(actor, 'automation.jobs.cancel'),
+            canReplayJobs: canOrap(actor, 'automation.jobs.replay'),
+            canResolveAlerts: canOrap(actor, 'alerts.resolve'),
+          }),
           current: 'operations',
           eyebrow: 'Platform health',
           heading: 'Operations',
+          navigation: orapNavigation(actor),
           ...(notice ? { notice } : {}),
           title: 'Operations',
         }),
@@ -226,60 +338,82 @@ export function registerUiRoutes(
 
   if (options.customerService && options.resolveCustomerPrincipal) {
     registerCustomerUiRoutes(server, options.customerService, options.resolveCustomerPrincipal);
-    server.get('/', async (request, reply) => {
-      const principal = await options.resolveCustomerPrincipal?.(request);
-      if (!principal) return reply.redirect('/login');
-      const raw = await options.customerService?.dashboard(principal);
-      if (!isRecord(raw) || !isRecord(raw.site)) throw new Error('Dashboard model is unavailable');
-      const controls = isRecord(raw.controls) ? raw.controls : {};
-      const publication = isRecord(raw.publication) ? raw.publication : {};
-      const integration = isRecord(raw.integrations) ? raw.integrations : {};
-      const artifact = stringValue(publication.artifactHash);
-      return reply.type('text/html; charset=utf-8').send(
-        renderCustomerDashboard({
-          features: [
-            {
-              enabled: controls.editingFrozen !== true,
-              label: 'Content editing',
-              reason:
-                controls.editingFrozen === true ? 'Temporarily frozen' : 'Available by policy',
-            },
-            {
-              enabled: controls.automationStopped !== true,
-              label: 'Automation',
-              reason:
-                controls.automationStopped === true ? 'Temporarily stopped' : 'Available by policy',
-            },
-          ],
-          integrations: [
-            {
-              label: 'Analytics',
-              status: integration.status === 'connected' ? 'connected' : 'not-connected',
-            },
-          ],
-          publication:
-            publication.status === 'active'
-              ? {
-                  ...(artifact ? { artifact } : {}),
-                  status: 'healthy',
-                }
-              : { status: 'never-published' },
-          siteName: stringValue(raw.site.name) ?? 'Customer site',
-        }),
-      );
-    });
   }
+
+  server.get('/', async (request, reply) => {
+    const platformActor = await options.resolvePlatformActor?.(request);
+    if (platformActor) {
+      return reply.code(303).redirect(orapLandingPage(platformActor));
+    }
+
+    const principal = await options.resolveCustomerPrincipal?.(request);
+    if (!principal || !options.customerService) return reply.code(303).redirect('/login');
+    const raw = await options.customerService.dashboard(principal);
+    if (!isRecord(raw) || !isRecord(raw.site)) throw new Error('Dashboard model is unavailable');
+    const controls = isRecord(raw.controls) ? raw.controls : {};
+    const publication = isRecord(raw.publication) ? raw.publication : {};
+    const integration = isRecord(raw.integrations) ? raw.integrations : {};
+    const artifact = stringValue(publication.artifactHash);
+    return reply.type('text/html; charset=utf-8').send(
+      renderCustomerDashboard({
+        features: [
+          {
+            enabled: controls.editingFrozen !== true,
+            label: 'Content editing',
+            reason: controls.editingFrozen === true ? 'Temporarily frozen' : 'Available by policy',
+          },
+          {
+            enabled: controls.automationStopped !== true,
+            label: 'Automation',
+            reason:
+              controls.automationStopped === true ? 'Temporarily stopped' : 'Available by policy',
+          },
+        ],
+        integrations: [
+          {
+            label: 'Analytics',
+            status: integration.status === 'connected' ? 'connected' : 'not-connected',
+          },
+        ],
+        publication:
+          publication.status === 'active'
+            ? {
+                ...(artifact ? { artifact } : {}),
+                status: 'healthy',
+              }
+            : { status: 'never-published' },
+        siteName: stringValue(raw.site.name) ?? 'Customer site',
+      }),
+    );
+  });
 }
 
-function renderLogin(hostname: string): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><title>Sign in | OmniReach</title></head><body><a href="#main">Skip to content</a><main id="main"><h1>Sign in</h1><p>Continue to the administration site for <strong>${escapeHtml(hostname)}</strong>.</p><form method="post" action="/auth/login"><label for="email">Email</label><input id="email" name="email" type="email" autocomplete="username" required><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required><button type="submit">Sign in</button></form><p><a href="/auth/recovery">Recover access</a></p></main></body></html>`;
+function renderLogin(hostname: string, error?: string): string {
+  const notice =
+    error === 'credentials'
+      ? '<div class="notice error" role="alert">The email address or password was not accepted. Check your details and try again.</div>'
+      : '';
+  return renderAuthPage({
+    content: `${notice}<form method="post" action="/auth/login"><div class="field"><label for="email">Email address</label><input id="email" name="email" type="email" autocomplete="username" required autofocus></div><div class="field"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required></div><button type="submit">Sign in securely</button></form><p class="auth-card-footer"><a href="/auth/recovery">Forgot your password?</a></p>`,
+    description: `Continue to the secure administration workspace for ${escapeHtml(hostname)}.`,
+    eyebrow: 'Staff access',
+    heading: 'Welcome back',
+    title: 'Sign in',
+  });
 }
 
 function renderMfa(challengeId: string, emailAvailable: boolean): string {
   const resend = emailAvailable
-    ? `<form method="post" action="/auth/mfa/email/resend"><input name="challengeId" type="hidden" value="${escapeHtml(challengeId)}"><button type="submit">Send a new email code</button></form>`
+    ? `<form method="post" action="/auth/mfa/email/resend"><input name="challengeId" type="hidden" value="${escapeHtml(challengeId)}"><button class="secondary" type="submit">Send a new email code</button></form>`
     : '';
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><title>Verify sign in | OmniReach</title></head><body><a href="#main">Skip to content</a><main id="main"><h1>Verify sign in</h1><p>Enter your 8-digit email code, 6-digit authenticator code, or alphanumeric recovery code.</p><form method="post" action="/auth/mfa/verify"><input name="challengeId" type="hidden" value="${escapeHtml(challengeId)}"><label for="code">Verification or recovery code</label><input id="code" name="code" autocomplete="one-time-code" required autofocus><button type="submit">Verify</button></form>${resend}</main></body></html>`;
+  return renderAuthPage({
+    content: `<form method="post" action="/auth/mfa/verify"><input name="challengeId" type="hidden" value="${escapeHtml(challengeId)}"><div class="field"><label for="code">Verification or recovery code</label><input id="code" name="code" autocomplete="one-time-code" inputmode="numeric" required autofocus></div><button type="submit">Verify and continue</button></form>${resend}`,
+    description:
+      'Enter your 8-digit email code, 6-digit authenticator code, or alphanumeric recovery code.',
+    eyebrow: 'Two-step verification',
+    heading: 'Confirm it’s you',
+    title: 'Verify sign in',
+  });
 }
 
 function renderSecuritySettings(
@@ -292,6 +426,7 @@ function renderSecuritySettings(
     webauthnEnabled: boolean;
   },
   platformView = false,
+  navigation?: readonly OrapNavigationItem[],
 ): string {
   const action = settings.emailCodeEnabled ? 'disable' : 'enable';
   const verb = settings.emailCodeEnabled ? 'Disable' : 'Enable';
@@ -308,34 +443,85 @@ function renderSecuritySettings(
       current: 'security',
       eyebrow: 'Account protection',
       heading: 'Security settings',
+      ...(navigation ? { navigation } : {}),
       title: 'Security settings',
     });
   }
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><link rel="stylesheet" href="/assets/admin.css"><title>Security settings | OmniReach</title></head><body><a class="skip-link" href="#main">Skip to content</a><main class="content" id="main"><div class="page-head"><div><p class="eyebrow">Account protection</p><h1>Security settings</h1></div></div>${content}<p><a class="button secondary" href="/">Return to dashboard</a></p></main></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><link rel="stylesheet" href="/assets/admin.css?v=orap-2"><title>Security settings | OmniReach</title></head><body><a class="skip-link" href="#main">Skip to content</a><main class="content" id="main"><div class="page-head"><div><p class="eyebrow">Account protection</p><h1>Security settings</h1></div></div>${content}<p><a class="button secondary" href="/">Return to dashboard</a></p></main></body></html>`;
 }
 
 function renderEmailPolicyVerification(challengeId: string, action: 'disable' | 'enable'): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><title>Verify security change | OmniReach</title></head><body><a href="#main">Skip to content</a><main id="main"><h1>Verify security change</h1><p>Enter the 8-digit code sent to your account email to ${action} email verification.</p><form method="post" action="/auth/security/email/complete"><input name="challengeId" type="hidden" value="${escapeHtml(challengeId)}"><label for="code">Email verification code</label><input id="code" name="code" inputmode="numeric" pattern="[0-9]{8}" autocomplete="one-time-code" required autofocus><button type="submit">Confirm change</button></form><form method="post" action="/auth/mfa/email/resend"><input name="challengeId" type="hidden" value="${escapeHtml(challengeId)}"><button type="submit">Send a new code</button></form></main></body></html>`;
+  return renderAuthPage({
+    content: `<form method="post" action="/auth/security/email/complete"><input name="challengeId" type="hidden" value="${escapeHtml(challengeId)}"><div class="field"><label for="code">Email verification code</label><input id="code" name="code" inputmode="numeric" pattern="[0-9]{8}" autocomplete="one-time-code" required autofocus></div><button type="submit">Confirm security change</button></form><form method="post" action="/auth/mfa/email/resend"><input name="challengeId" type="hidden" value="${escapeHtml(challengeId)}"><button class="secondary" type="submit">Send a new code</button></form>`,
+    description: `Enter the 8-digit code sent to your account email to ${action} email verification.`,
+    eyebrow: 'Security confirmation',
+    heading: 'Verify this change',
+    title: 'Verify security change',
+  });
 }
 
 function renderRestrictedRecovery(): string {
-  return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><title>Complete account recovery | OmniReach</title></head><body><a href="#main">Skip to content</a><main id="main"><h1>Complete account recovery</h1><p>This session is restricted. Completing recovery disables optional two-step methods, revokes passkeys and authenticator enrollment, replaces every recovery code, and signs out every session. You must sign in normally with your password afterward.</p><form method="post" action="/auth/security/recovery/complete"><label for="currentPassword">Current password</label><input id="currentPassword" name="currentPassword" type="password" minlength="12" maxlength="128" autocomplete="current-password" required><label><input name="recoveryConfirmed" type="checkbox" value="true" required> I understand that all two-step methods, passkeys, and active sessions will be revoked.</label><button type="submit">Reset account security and finish</button></form><p>Privileged OmniReach staff recovery cannot be completed here and requires the approved audited recovery procedure.</p></main></body></html>';
+  return renderAuthPage({
+    content:
+      '<div class="surface-note">This session is restricted. Completing recovery revokes optional verification methods, passkeys, recovery codes, and every active session.</div><form method="post" action="/auth/security/recovery/complete"><div class="field"><label for="currentPassword">Current password</label><input id="currentPassword" name="currentPassword" type="password" minlength="12" maxlength="128" autocomplete="current-password" required></div><label class="checkbox-label"><input name="recoveryConfirmed" type="checkbox" value="true" required><span>I understand that all verification methods and active sessions will be revoked.</span></label><button type="submit">Reset account security</button></form><p class="auth-card-footer">Privileged OmniReach staff recovery requires the approved audited recovery procedure.</p>',
+    description: 'Review the impact carefully before resetting account security.',
+    eyebrow: 'Restricted recovery',
+    heading: 'Complete recovery',
+    title: 'Complete account recovery',
+  });
 }
 
 function renderInvitation(token: string): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><title>Accept invitation | OmniReach</title></head><body><a href="#main">Skip to content</a><main id="main"><h1>Accept your invitation</h1><p>Create the credentials used to manage this website.</p><form method="post" action="/auth/invitations/accept"><input name="token" type="hidden" value="${escapeHtml(token)}"><label for="displayName">Your name</label><input id="displayName" name="displayName" maxlength="160" autocomplete="name" required><label for="password">Password</label><input id="password" name="password" type="password" minlength="12" autocomplete="new-password" required><button type="submit">Accept invitation</button></form></main></body></html>`;
+  return renderAuthPage({
+    content: `<form method="post" action="/auth/invitations/accept"><input name="token" type="hidden" value="${escapeHtml(token)}"><div class="field"><label for="displayName">Your name</label><input id="displayName" name="displayName" maxlength="160" autocomplete="name" required autofocus></div><div class="field"><label for="password">Create a password</label><input id="password" name="password" type="password" minlength="12" autocomplete="new-password" required><p class="help">Use at least 12 characters and a unique password.</p></div><button type="submit">Accept invitation</button></form>`,
+    description: 'Create the secure credentials used to manage your website.',
+    eyebrow: 'Customer invitation',
+    heading: 'Accept your invitation',
+    title: 'Accept invitation',
+  });
 }
 
 function renderRecoveryRequest(): string {
-  return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><title>Recover access | OmniReach</title></head><body><a href="#main">Skip to content</a><main id="main"><h1>Recover access</h1><p>If the address belongs to an active account, a time-limited recovery link will be sent.</p><form method="post" action="/auth/recovery"><label for="email">Email</label><input id="email" name="email" type="email" autocomplete="email" required><button type="submit">Send recovery link</button></form><p><a href="/login">Return to sign in</a></p></main></body></html>';
+  return renderAuthPage({
+    content:
+      '<form method="post" action="/auth/recovery"><div class="field"><label for="email">Email address</label><input id="email" name="email" type="email" autocomplete="email" required autofocus></div><button type="submit">Send recovery link</button></form><p class="auth-card-footer"><a href="/login">Return to sign in</a></p>',
+    description:
+      'If the address belongs to an active account, we will send a time-limited recovery link.',
+    eyebrow: 'Account recovery',
+    heading: 'Recover access',
+    title: 'Recover access',
+  });
 }
 
 function renderRecoveryCompletion(token: string): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><title>Choose a new password | OmniReach</title></head><body><a href="#main">Skip to content</a><main id="main"><h1>Choose a new password</h1><form method="post" action="/auth/recovery/complete"><input name="token" type="hidden" value="${escapeHtml(token)}"><label for="newPassword">New password</label><input id="newPassword" name="newPassword" type="password" minlength="12" autocomplete="new-password" required><button type="submit">Update password</button></form></main></body></html>`;
+  return renderAuthPage({
+    content: `<form method="post" action="/auth/recovery/complete"><input name="token" type="hidden" value="${escapeHtml(token)}"><div class="field"><label for="newPassword">New password</label><input id="newPassword" name="newPassword" type="password" minlength="12" autocomplete="new-password" required autofocus><p class="help">Use at least 12 characters and a password you have not used here before.</p></div><button type="submit">Update password</button></form>`,
+    description: 'Choose a new unique password to regain access to your account.',
+    eyebrow: 'Account recovery',
+    heading: 'Choose a new password',
+    title: 'Choose a new password',
+  });
 }
 
 function renderForbidden(): string {
-  return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Access denied</title></head><body><main><h1>Access denied</h1><p>This administration site is not available to this account.</p></main></body></html>';
+  return renderAuthPage({
+    content:
+      '<div class="surface-note">This administration workspace is not available to the current account or session.</div><p class="auth-card-footer"><a href="/login">Return to sign in</a></p>',
+    description: 'Your account does not have access to this administration host.',
+    eyebrow: 'Authorization required',
+    heading: 'Access denied',
+    title: 'Access denied',
+  });
+}
+
+function renderAuthPage(input: {
+  content: string;
+  description: string;
+  eyebrow: string;
+  heading: string;
+  title: string;
+}): string {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><link rel="stylesheet" href="/assets/admin.css?v=orap-2"><title>${escapeHtml(input.title)} | OmniReach</title></head><body><a class="skip-link" href="#main">Skip to content</a><div class="auth-page"><aside class="auth-brand-panel" aria-label="OmniReach"><a class="auth-brand" href="/login"><span class="brand-mark" aria-hidden="true">OR</span><span class="brand-copy"><strong>OmniReach</strong><small>Administration platform</small></span></a><div class="auth-brand-copy"><p class="eyebrow">Agency-first website operations</p><h2>Run every customer site with confidence.</h2><p>Securely manage content, automation, publishing, access, and operational health from one staff workspace.</p></div><p class="auth-meta">Protected by host-bound sessions and two-step verification.</p></aside><div class="auth-workspace"><main class="auth-card" id="main"><p class="eyebrow">${escapeHtml(input.eyebrow)}</p><h1>${escapeHtml(input.heading)}</h1><p class="lede">${input.description}</p>${input.content}</main></div></div></body></html>`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -346,12 +532,75 @@ function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value ? value : undefined;
 }
 
+function orapNavigation(actor: AdminActor): OrapNavigationItem[] {
+  return [
+    ...(canOrap(actor, 'dashboard.view') ? (['overview'] as const) : []),
+    ...(canOrap(actor, 'websites.list') ? (['sites'] as const) : []),
+    ...(canOrap(actor, 'dashboard.view') ? (['operations'] as const) : []),
+    ...(isPlatformOwnerIdentity(actor) ? (['staff'] as const) : []),
+    'security' as const,
+  ];
+}
+
+function parseStaffSummaries(value: unknown): OrapStaffSummary[] {
+  if (!Array.isArray(value)) throw new Error('Staff directory model is unavailable');
+  return value.flatMap((entry): OrapStaffSummary[] => {
+    if (!isRecord(entry)) return [];
+    const activeSessions = entry.activeSessions;
+    const createdAt = stringValue(entry.createdAt);
+    const displayName = stringValue(entry.displayName);
+    const identityKind = stringValue(entry.identityKind);
+    const membershipId = stringValue(entry.membershipId);
+    const normalizedEmail = stringValue(entry.normalizedEmail);
+    const status = stringValue(entry.status);
+    const userId = stringValue(entry.userId);
+    const jobTitle = stringValue(entry.jobTitle);
+    const lastLoginAt = stringValue(entry.lastLoginAt);
+    if (
+      typeof activeSessions !== 'number' ||
+      !createdAt ||
+      !displayName ||
+      !membershipId ||
+      !normalizedEmail ||
+      !userId ||
+      !['platform_owner', 'platform_admin', 'staff'].includes(identityKind ?? '') ||
+      !['active', 'disabled', 'pending'].includes(status ?? '') ||
+      typeof entry.emailCodeEnabled !== 'boolean' ||
+      typeof entry.strongFactorEnrolled !== 'boolean'
+    ) {
+      return [];
+    }
+    return [
+      {
+        activeSessions,
+        createdAt,
+        displayName,
+        emailCodeEnabled: entry.emailCodeEnabled,
+        identityKind: identityKind as OrapStaffSummary['identityKind'],
+        ...(jobTitle ? { jobTitle } : {}),
+        ...(lastLoginAt ? { lastLoginAt } : {}),
+        membershipId,
+        normalizedEmail,
+        status: status as OrapStaffSummary['status'],
+        strongFactorEnrolled: entry.strongFactorEnrolled,
+        userId,
+      },
+    ];
+  });
+}
+
+function orapLandingPage(actor: AdminActor): string {
+  if (canOrap(actor, 'dashboard.view')) return '/orap';
+  if (canOrap(actor, 'websites.list')) return '/orap/sites';
+  return '/security';
+}
+
 function parseOperationsModel(value: unknown): {
   alerts: AlertRow[];
-  budget: BudgetView;
+  budget: BudgetView | null;
   jobs: JobRow[];
 } {
-  if (!isRecord(value) || !isRecord(value.budget)) {
+  if (!isRecord(value)) {
     throw new Error('Operations model is unavailable');
   }
   const alerts = Array.isArray(value.alerts)
@@ -397,22 +646,27 @@ function parseOperationsModel(value: unknown): {
       })
     : [];
   const budget = value.budget;
-  if (
-    typeof budget.capUsdMicros !== 'number' ||
-    typeof budget.reservedUsdMicros !== 'number' ||
-    typeof budget.usedUsdMicros !== 'number' ||
-    typeof budget.periodStart !== 'string'
-  ) {
+  if (budget !== null && !isRecord(budget)) {
     throw new Error('Operations budget model is unavailable');
   }
+  const parsedBudget =
+    budget === null
+      ? null
+      : typeof budget.capUsdMicros === 'number' &&
+          typeof budget.reservedUsdMicros === 'number' &&
+          typeof budget.usedUsdMicros === 'number' &&
+          typeof budget.periodStart === 'string'
+        ? {
+            capUsdMicros: budget.capUsdMicros,
+            periodStart: budget.periodStart,
+            reservedUsdMicros: budget.reservedUsdMicros,
+            usedUsdMicros: budget.usedUsdMicros,
+          }
+        : undefined;
+  if (parsedBudget === undefined) throw new Error('Operations budget model is unavailable');
   return {
     alerts,
-    budget: {
-      capUsdMicros: budget.capUsdMicros,
-      periodStart: budget.periodStart,
-      reservedUsdMicros: budget.reservedUsdMicros,
-      usedUsdMicros: budget.usedUsdMicros,
-    },
+    budget: parsedBudget,
     jobs,
   };
 }
@@ -468,6 +722,112 @@ function operationNotice(
   return undefined;
 }
 
+function staffNotice(
+  value: string | undefined,
+): { kind?: 'error' | 'success'; message: string } | undefined {
+  if (value === 'sessions') return { message: 'All active ORAP sessions were revoked.' };
+  if (value === 'reset') return { message: 'Password reset instructions were requested.' };
+  if (value === 'disabled') return { message: 'Staff access was disabled.' };
+  if (value === 'stepup') {
+    return {
+      kind: 'error',
+      message: 'Recent authenticator or passkey verification is required for this action.',
+    };
+  }
+  if (value === 'failed') {
+    return {
+      kind: 'error',
+      message: 'The staff security action could not be completed. No authority was changed.',
+    };
+  }
+  return undefined;
+}
+
+function hasRecentStrongStepUp(actor: AdminActor): boolean {
+  return (
+    actor.authenticationAssurance === 'strong' &&
+    actor.verifiedAt instanceof Date &&
+    Date.now() - actor.verifiedAt.getTime() >= 0 &&
+    Date.now() - actor.verifiedAt.getTime() <= 10 * 60_000
+  );
+}
+
+function registerOrapStaffForms(
+  server: FastifyInstance,
+  options: {
+    orapService?: OrapAdministrationEndpointService;
+    resolvePlatformActor?: ResolvePlatformActor;
+  },
+): void {
+  const register = (
+    path: string,
+    action: 'disabled' | 'reset' | 'sessions',
+    operation: (
+      actor: AdminActor,
+      userId: string,
+      reason: string,
+      request: Parameters<NonNullable<typeof options.resolvePlatformActor>>[0],
+    ) => Promise<unknown> | undefined,
+  ) => {
+    server.post<{ Body: unknown; Params: { userId: string } }>(
+      path,
+      { preHandler: requireSameOrigin },
+      async (request, reply) => {
+        const actor = await options.resolvePlatformActor?.(request);
+        if (!actor || !isPlatformOwnerIdentity(actor)) {
+          return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
+        }
+        const body = operationReason.safeParse(request.body);
+        if (!body.success) {
+          return reply
+            .code(303)
+            .redirect(`/orap/security/staff/${request.params.userId}?notice=failed`);
+        }
+        if (!hasRecentStrongStepUp(actor)) {
+          return reply
+            .code(303)
+            .redirect(`/orap/security/staff/${request.params.userId}?notice=stepup`);
+        }
+        try {
+          const pending = operation(actor, request.params.userId, body.data.reason, request);
+          if (!pending) {
+            return reply
+              .code(303)
+              .redirect(`/orap/security/staff/${request.params.userId}?notice=failed`);
+          }
+          await pending;
+          return reply
+            .code(303)
+            .redirect(`/orap/security/staff/${request.params.userId}?notice=${action}`);
+        } catch (error) {
+          request.log.error({ error }, 'ORAP staff security action failed');
+          return reply
+            .code(303)
+            .redirect(`/orap/security/staff/${request.params.userId}?notice=failed`);
+        }
+      },
+    );
+  };
+
+  register(
+    '/orap/security/staff/:userId/sessions/revoke-all',
+    'sessions',
+    (actor, userId, reason) =>
+      options.orapService?.revokeStaffSessions?.(actor, { reason, userId }),
+  );
+  register('/orap/security/staff/:userId/reset', 'reset', (actor, userId, reason, request) =>
+    options.orapService?.requestStaffReset?.(actor, {
+      host: request.hostname,
+      networkIdentifier: clientNetworkIdentifier(request.ip),
+      reason,
+      userId,
+    }),
+  );
+  register('/orap/security/staff/:userId/disable', 'disabled', (actor, userId, reason) =>
+    options.orapService?.disableStaff?.(actor, { reason, userId }),
+  );
+}
+
 function registerOrapOperationForms(
   server: FastifyInstance,
   options: {
@@ -480,7 +840,7 @@ function registerOrapOperationForms(
     { preHandler: requireSameOrigin },
     async (request, reply) => {
       const actor = await options.resolvePlatformActor?.(request);
-      if (!actor || !['platform_owner', 'platform_admin', 'staff'].includes(actor.role)) {
+      if (!actor || !canOrap(actor, 'automation.jobs.cancel')) {
         return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
       }
       const body = operationReason.safeParse(request.body);
@@ -506,7 +866,7 @@ function registerOrapOperationForms(
     { preHandler: requireSameOrigin },
     async (request, reply) => {
       const actor = await options.resolvePlatformActor?.(request);
-      if (!actor || !['platform_owner', 'platform_admin', 'staff'].includes(actor.role)) {
+      if (!actor || !canOrap(actor, 'automation.jobs.replay')) {
         return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
       }
       const body = operationReason.safeParse(request.body);
@@ -532,7 +892,7 @@ function registerOrapOperationForms(
     { preHandler: requireSameOrigin },
     async (request, reply) => {
       const actor = await options.resolvePlatformActor?.(request);
-      if (!actor || !['platform_owner', 'platform_admin', 'staff'].includes(actor.role)) {
+      if (!actor || !canOrap(actor, 'alerts.acknowledge')) {
         return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
       }
       const body = operationReason.safeParse(request.body);
@@ -558,7 +918,7 @@ function registerOrapOperationForms(
     { preHandler: requireSameOrigin },
     async (request, reply) => {
       const actor = await options.resolvePlatformActor?.(request);
-      if (!actor || !['platform_owner', 'platform_admin', 'staff'].includes(actor.role)) {
+      if (!actor || !canOrap(actor, 'alerts.resolve')) {
         return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
       }
       const body = operationReason.safeParse(request.body);

@@ -97,9 +97,38 @@ describe('PostgreSQL-backed request context', () => {
   });
 
   it('resolves active global platform membership only on the configured ORAP host', async () => {
-    const { pool, query } = contextPool([{ role: 'platform_admin', user_id: 'staff-a' }]);
+    const { pool, query } = contextPool([
+      {
+        authorization_version: 4,
+        grants: [
+          {
+            assignmentId: 'assignment-a',
+            permissionKeys: ['websites.list'],
+            portfolio: false,
+            siteIds: ['site-a'],
+            tenantIds: ['tenant-a'],
+          },
+        ],
+        membership_id: 'membership-a',
+        role: 'platform_admin',
+        user_id: 'staff-a',
+      },
+    ]);
     const resolver = new PostgresRequestContextResolver(pool, 'ADMIN.OMNIREACH.TEST');
     await expect(resolver.platform(request('admin.omnireach.test'))).resolves.toEqual({
+      authorization: {
+        grants: [
+          {
+            assignmentId: 'assignment-a',
+            permissionKeys: ['websites.list'],
+            portfolio: false,
+            siteIds: ['site-a'],
+            tenantIds: ['tenant-a'],
+          },
+        ],
+        membershipId: 'membership-a',
+        version: 4,
+      },
       id: 'staff-a',
       role: 'platform_admin',
       traceId: 'trace-context-0001',
@@ -108,8 +137,25 @@ describe('PostgreSQL-backed request context', () => {
     expect(contextSql).toContain("s.authentication_assurance IN ('baseline', 'strong')");
     expect(contextSql).toContain('s.verified_at IS NOT NULL');
     expect(contextSql).toContain('NOT s.recovery_restricted');
+    expect(contextSql).toContain('orap_staff_memberships');
+    expect(contextSql).toContain('staff_role_assignments');
+    expect(contextSql).toContain('NOT definition.is_owner_only');
     expect(contextSql).toContain("s.last_seen_at > now() - interval '30 minutes'");
     expect(String(query.mock.calls[4]?.[0])).toContain('SET last_seen_at = now()');
+  });
+
+  it('fails closed when effective ORAP authorization is malformed', async () => {
+    const { pool } = contextPool([
+      {
+        authorization_version: 1,
+        grants: [{ assignmentId: 'assignment-a', permissionKeys: ['unknown.permission'] }],
+        membership_id: 'membership-a',
+        role: 'staff',
+        user_id: 'staff-a',
+      },
+    ]);
+    const resolver = new PostgresRequestContextResolver(pool, 'admin.omnireach.test');
+    await expect(resolver.platform(request('admin.omnireach.test'))).resolves.toBeUndefined();
   });
 
   it('never resolves the canonical ORAP hostname as a public contact-form site', async () => {

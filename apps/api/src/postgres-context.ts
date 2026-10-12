@@ -1,4 +1,11 @@
-import { digestToken, roles, type Role } from '@omnireach/auth';
+import {
+  digestToken,
+  isRegisteredOrapCapability,
+  roles,
+  type OrapAssignmentGrant,
+  type OrapAuthorizationState,
+  type Role,
+} from '@omnireach/auth';
 import {
   normalizeHostname,
   withAuthTransaction,
@@ -27,8 +34,13 @@ interface CustomerContextRow extends Record<string, unknown> {
 }
 
 interface PlatformContextRow extends Record<string, unknown> {
+  authentication_assurance: string;
+  authorization_version: number;
+  grants: unknown;
+  membership_id: string;
   role: string;
   user_id: string;
+  verified_at: Date;
 }
 
 export class PostgresRequestContextResolver {
@@ -112,10 +124,58 @@ export class PostgresRequestContextResolver {
     const token = readCookie(request, '__Host-omnireach_session');
     if (!token || normalizeHostname(request.hostname) !== this.#orapHostname) return undefined;
     const result = await this.authSessionQuery<PlatformContextRow>(
-      `SELECT s.user_id, pm.role
+      `SELECT s.user_id, s.authentication_assurance, s.verified_at,
+              pm.role, osm.id AS membership_id,
+              osm.authorization_version,
+              COALESCE((
+                SELECT jsonb_agg(
+                  jsonb_build_object(
+                    'assignmentId', assignment.id,
+                    'permissionKeys', COALESCE((
+                      SELECT jsonb_agg(permission.permission_key ORDER BY permission.permission_key)
+                        FROM staff_role_permissions permission
+                        JOIN permission_definitions definition
+                          ON definition.key = permission.permission_key
+                         AND definition.deprecated_at IS NULL
+                         AND NOT definition.is_owner_only
+                       WHERE permission.role_version_id = assignment.role_version_id
+                    ), '[]'::jsonb),
+                    'portfolio', EXISTS (
+                      SELECT 1 FROM staff_resource_scopes scope
+                       WHERE scope.assignment_id = assignment.id
+                         AND scope.scope_type = 'platform'
+                    ),
+                    'tenantIds', COALESCE((
+                      SELECT jsonb_agg(DISTINCT scope.tenant_id::text)
+                        FROM staff_resource_scopes scope
+                       WHERE scope.assignment_id = assignment.id
+                         AND scope.scope_type IN ('tenant','site')
+                         AND scope.tenant_id IS NOT NULL
+                    ), '[]'::jsonb),
+                    'siteIds', COALESCE((
+                      SELECT jsonb_agg(DISTINCT scope.site_id::text)
+                        FROM staff_resource_scopes scope
+                       WHERE scope.assignment_id = assignment.id
+                         AND scope.scope_type = 'site'
+                         AND scope.site_id IS NOT NULL
+                    ), '[]'::jsonb)
+                  ) ORDER BY assignment.assigned_at, assignment.id
+                )
+                  FROM staff_role_assignments assignment
+                  JOIN staff_roles role
+                    ON role.id = assignment.role_id AND role.active
+                  JOIN staff_role_versions role_version
+                    ON role_version.id = assignment.role_version_id
+                   AND role_version.role_id = assignment.role_id
+                 WHERE assignment.staff_membership_id = osm.id
+                   AND assignment.active
+              ), '[]'::jsonb) AS grants
          FROM sessions s
          JOIN users u ON u.id = s.user_id AND u.status = 'active'
          JOIN platform_memberships pm ON pm.user_id = s.user_id AND pm.active
+         JOIN orap_staff_memberships osm
+           ON osm.user_id = s.user_id AND osm.status = 'active'
+          AND osm.identity_kind = pm.role
         WHERE s.token_hash = $1 AND s.host = $2
           AND s.tenant_id IS NULL AND s.site_id IS NULL
           AND NOT s.recovery_restricted
@@ -139,7 +199,16 @@ export class PostgresRequestContextResolver {
     if (!row || !role || !['platform_owner', 'platform_admin', 'staff'].includes(role)) {
       return undefined;
     }
-    return { id: row.user_id, role, traceId: String(request.id) };
+    const authorization = parseOrapAuthorization(row);
+    if (!authorization) return undefined;
+    return {
+      authenticationAssurance: row.authentication_assurance,
+      authorization,
+      id: row.user_id,
+      role,
+      traceId: String(request.id),
+      verifiedAt: row.verified_at,
+    };
   }
 
   private async authQuery<T extends Record<string, unknown>>(
@@ -176,4 +245,54 @@ export class PostgresRequestContextResolver {
 
 function parseRole(value: string | undefined): Role | undefined {
   return roles.find((role) => role === value);
+}
+
+function parseOrapAuthorization(row: PlatformContextRow): OrapAuthorizationState | undefined {
+  if (
+    typeof row.membership_id !== 'string' ||
+    !Number.isInteger(row.authorization_version) ||
+    row.authorization_version < 1 ||
+    !Array.isArray(row.grants)
+  ) {
+    return undefined;
+  }
+  const grants: OrapAssignmentGrant[] = [];
+  for (const value of row.grants) {
+    if (!isRecord(value)) return undefined;
+    const permissionKeys = stringArray(value.permissionKeys);
+    const siteIds = stringArray(value.siteIds);
+    const tenantIds = stringArray(value.tenantIds);
+    if (
+      typeof value.assignmentId !== 'string' ||
+      typeof value.portfolio !== 'boolean' ||
+      !permissionKeys ||
+      !siteIds ||
+      !tenantIds ||
+      permissionKeys.some((key) => !isRegisteredOrapCapability(key))
+    ) {
+      return undefined;
+    }
+    grants.push({
+      assignmentId: value.assignmentId,
+      permissionKeys,
+      portfolio: value.portfolio,
+      siteIds,
+      tenantIds,
+    });
+  }
+  return {
+    grants,
+    membershipId: row.membership_id,
+    version: row.authorization_version,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function stringArray(value: unknown): string[] | undefined {
+  return Array.isArray(value) && value.every((entry) => typeof entry === 'string')
+    ? value
+    : undefined;
 }

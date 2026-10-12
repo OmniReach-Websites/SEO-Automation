@@ -1,5 +1,10 @@
 import { createTraceId } from '@omnireach/observability';
 import {
+  OrapAuthorizationDeniedError,
+  OrapOwnerIdentityRequiredError,
+  OrapStrongStepUpRequiredError,
+} from '@omnireach/auth';
+import {
   ProtectedFieldError,
   PublicationPendingError,
   RevisionConflictError,
@@ -128,6 +133,13 @@ export function buildApiServer(options: ApiServerOptions = {}) {
   });
 
   server.setErrorHandler((error, request, reply) => {
+    if (
+      error instanceof OrapAuthorizationDeniedError ||
+      error instanceof OrapOwnerIdentityRequiredError ||
+      error instanceof OrapStrongStepUpRequiredError
+    ) {
+      return reply.code(403).send({ error: error.code });
+    }
     if (error instanceof PublicationPendingError) {
       return reply.code(409).send({ error: 'publication_pending' });
     }
