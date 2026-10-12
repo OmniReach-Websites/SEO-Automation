@@ -91,6 +91,7 @@ export class PostgresRequestContextResolver {
 
   async contact(request: FastifyRequest): Promise<ContactSiteContext | undefined> {
     const hostname = normalizeHostname(request.hostname);
+    if (hostname === this.#orapHostname) return undefined;
     const result = await this.authQuery<{ site_id: string; tenant_id: string }>(
       `SELECT d.tenant_id, d.site_id
          FROM domains d
