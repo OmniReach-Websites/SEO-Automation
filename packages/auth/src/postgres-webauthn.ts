@@ -359,10 +359,7 @@ export class PostgresWebAuthnRepository implements WebAuthnEnrollmentRepository 
       if (
         credentials.rows.length !== 1 ||
         !passwordCredential ||
-        !input.verifyCredentialState(
-          passwordCredential.password_hash,
-          input.credentialStateDigest,
-        )
+        !input.verifyCredentialState(passwordCredential.password_hash, input.credentialStateDigest)
       ) {
         return false;
       }
