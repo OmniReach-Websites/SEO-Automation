@@ -249,8 +249,10 @@ export async function createReleaseMetadata({
 }
 
 async function main() {
-  const [releaseId, output = 'omnireach-release.meta'] = process.argv.slice(2);
-  const root = resolve(import.meta.dirname, '../..');
+  const [releaseId, output = 'omnireach-release.meta', sourceRoot] = process.argv.slice(2);
+  const root = sourceRoot
+    ? resolve(process.cwd(), sourceRoot)
+    : resolve(import.meta.dirname, '../..');
   const contractPaths = {
     authSecretsPath: resolve(root, 'packages/auth/src/secrets.ts'),
     authWebAuthnPath: resolve(root, 'packages/auth/src/webauthn.ts'),
@@ -261,7 +263,9 @@ async function main() {
     return;
   }
   if (!releaseId) {
-    throw new Error('Usage: create-release-metadata.mjs --check-contract | RELEASE_ID [OUTPUT]');
+    throw new Error(
+      'Usage: create-release-metadata.mjs --check-contract | RELEASE_ID [OUTPUT] [SOURCE_ROOT]',
+    );
   }
   const { stdout } = await execFileAsync('git', ['rev-parse', '--verify', 'HEAD^{commit}'], {
     cwd: root,
