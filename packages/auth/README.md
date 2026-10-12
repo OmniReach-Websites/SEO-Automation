@@ -1,13 +1,16 @@
 # Auth Package
 
 **Status:** The owner-approved 2026-10-11 account-policy and email-code foundation is
-implemented and tested locally. G05 remains in progress because customer TOTP
-management, WebAuthn/passkeys, recent-strong-step authorization for sensitive owner
+implemented and tested locally. The inert Auth Contract v3 WebAuthn persistence,
+exact-host cryptographic wrapper, and one-use ceremony store are also implemented;
+there are deliberately no passkey routes or credential-write repository methods yet.
+G05 remains in progress because customer TOTP management, passkey enrollment/login,
+recent-strong-step authorization for sensitive owner
 changes, the audited privileged break-glass procedure, complete method-specific durable
 audit events, and a production-equivalent MFA encryption-key rotation drill are not
-complete yet. Source-bound Auth Contract v2 metadata and the reviewed bridge/rollback
+complete yet. Source-bound Auth Contract v3 metadata and the reviewed bridge/rollback
 paths are implemented and validated locally; their first live execution remains a G31
-owner-controlled change. G06 is also reopened for Auth Contract v2
+owner-controlled change. G06 is also reopened for Auth Contract v3
 host/role/RLS/session-race revalidation.
 
 The current package provides Argon2id password hashing, normalized identities, one-time
@@ -27,7 +30,7 @@ Platform Owner, Platform Admin, and Staff require two steps. Customer accounts a
 password-only by default and can opt into email codes from the security settings page.
 Routine email codes expire after five minutes, are single-use, stored only as hashes,
 and have atomic attempt/resend limits. TOTP login remains supported. Customer TOTP
-enrollment and WebAuthn are planned stronger-method work, not deployable features.
+enrollment and WebAuthn routes are planned stronger-method work, not deployable features.
 Sensitive owner recovery/security changes remain unavailable until a recent stronger
 method gate or the approved one-time audited break-glass procedure is implemented.
 
@@ -54,18 +57,31 @@ rules, filtering/delay, and Resend or recipient-provider outages can deny or com
 routine verification. Provider failure always fails closed; it never creates a
 password-only ORAP session.
 
-## Auth Contract v2 production boundary
+## Auth Contract v3 production boundary
 
-Applying the v2 schema or writing v2 account-policy, assurance, factor, challenge,
-recovery, or session state establishes the compatibility cutoff. After that point,
+Auth Contract v2 first established account policy and assurance state. Applying the v3
+schema makes exact-RP WebAuthn state possible and replaces the v2 session/recovery RLS
+gate, so a v2 process fails closed. After that point,
 deployment and rollback must activate only artifacts that explicitly declare Auth
-Contract v2 compatibility. The source-bound release manifest, metadata generator,
+Contract v3 compatibility. The source-bound release manifest, metadata generator,
 target validator, protected bridge workflow, and separately confirmed rollback workflow
 implement that fail-closed contract and pass the local deployment harness. The ordinary
-target script still refuses an unreviewed pre-v2-to-v2 transition. Production
+target script refuses an unreviewed v2-to-v3 transition. Production
 authentication remains gated until the owner-controlled bridge and rollback are proven
-against the protected environment and target. A pre-v2 binary is not a valid rollback
-target; use a compatible prior artifact, forward fix, or compatible backup restore.
+against the protected environment and target. A v2 binary is not a valid rollback
+target after the v3 migration. The bridge therefore requires a separate v3-compatible
+fallback artifact; if both v3 artifacts fail, use a compatible forward fix or restore
+the pre-transition backup together with its matching v2 artifact.
+
+WebAuthn scopes bind an opaque random 64-byte user handle to one user, exact RP host,
+and optional tenant/site pair. Credential identifiers, public keys, device type, backup
+eligibility, verification time, and scope identity are immutable; revocation is
+permanent, and its recorded timestamp and reason cannot be rewritten. Auth-role grants
+contain no DELETE capability. Enrollment/revocation must
+revoke affected sessions and audit the change in the same transaction, while assertion
+counter/backup updates must commit in the same transaction as session issuance. The
+foundation repository intentionally exposes none of those write operations until the
+later service slices can satisfy the whole transaction.
 
 Persistent TOTP secrets and encrypted recovery-delivery payloads use a versioned keyring.
 The legacy `MFA_ENCRYPTION_KEY` is accepted only as a version-1 deployment bridge. New

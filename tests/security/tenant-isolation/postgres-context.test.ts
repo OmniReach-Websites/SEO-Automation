@@ -53,7 +53,7 @@ describe('PostgreSQL-backed request context', () => {
     expect(query.mock.calls.slice(0, 3).map(([text]) => text)).toEqual([
       'BEGIN',
       'SET LOCAL ROLE omnireach_auth',
-      `SELECT set_config('app.authentication_contract_version', '2', true)`,
+      `SELECT set_config('app.authentication_contract_version', '3', true)`,
     ]);
     const values = query.mock.calls[3]?.[1];
     expect(values).toEqual([

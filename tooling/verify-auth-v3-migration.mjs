@@ -13,8 +13,9 @@ const postgresImage =
 const databaseName = 'omnireach_g06_verify';
 const databaseUser = 'omnireach_g06_verify';
 const databasePassword = 'local-g06-verifier-only';
-const resourcePrefix = 'omnireach-g06-auth-v2-';
-const verifierLabel = 'com.omnireach.g06-auth-v2-verifier';
+const resourcePrefix = 'omnireach-g06-auth-v3-';
+const verifierLabel = 'com.omnireach.g06-auth-v3-verifier';
+const authV3MigrationName = '20261011013000_g05_webauthn_credentials';
 const authV2MigrationNames = [
   '20261010250000_g05_account_authentication_policy',
   '20261010250500_g05_password_recovery_outbox',
@@ -40,6 +41,10 @@ const fixture = Object.freeze({
   customerBasicSession: '60000000-0000-4000-8000-000000000003',
   customerTotpSession: '60000000-0000-4000-8000-000000000004',
   legacyRecoveryToken: '70000000-0000-4000-8000-000000000001',
+  webAuthnScope: '80000000-0000-4000-8000-000000000001',
+  webAuthnCredential: '90000000-0000-4000-8000-000000000001',
+  webAuthnDeleteGuardUser: '30000000-0000-4000-8000-000000000099',
+  webAuthnDeleteGuardScope: '80000000-0000-4000-8000-000000000099',
 });
 
 const activeResources = new Set();
@@ -112,6 +117,9 @@ function discoverMigrations() {
       throw new Error(`Required Auth Contract v2 migration is missing: ${requiredName}`);
     }
   }
+  if (!migrations.some((migration) => migration.name === authV3MigrationName)) {
+    throw new Error(`Required Auth Contract v3 migration is missing: ${authV3MigrationName}`);
+  }
   const firstV2Index = migrations.findIndex(
     (migration) => migration.name === authV2MigrationNames[0],
   );
@@ -120,6 +128,13 @@ function discoverMigrations() {
   );
   if (secondV2Index <= firstV2Index) {
     throw new Error('Auth Contract v2 migration ordering is invalid.');
+  }
+  const v3Index = migrations.findIndex((migration) => migration.name === authV3MigrationName);
+  const priorHeadIndex = migrations.findIndex(
+    (migration) => migration.name === '20261011012000_content_draft_lifecycle',
+  );
+  if (v3Index <= priorHeadIndex || priorHeadIndex < 0) {
+    throw new Error('Auth Contract v3 migration must follow 20261011012000.');
   }
 
   return {
@@ -166,7 +181,7 @@ function validateOwnedName(resource, name) {
   const expectedPrefix = `${resourcePrefix}${resource.label}-${resource.runId}`;
   if (
     !name.startsWith(expectedPrefix) ||
-    !/^omnireach-g06-auth-v2-[a-z]+-[a-f0-9]{32}(?:-data)?$/.test(name)
+    !/^omnireach-g06-auth-v3-[a-z]+-[a-f0-9]{32}(?:-data)?$/.test(name)
   ) {
     throw new Error(`Refusing cleanup for unexpected Docker resource name: ${name}`);
   }
@@ -345,7 +360,7 @@ function psql(resource, sql, context, { expectFailure = false } = {}) {
 
 function applyMigrations(resource, migrations) {
   for (const migration of migrations) {
-    process.stderr.write(`[g06-auth-v2] ${resource.label}: applying ${migration.name}\n`);
+    process.stderr.write(`[g06-auth-v3] ${resource.label}: applying ${migration.name}\n`);
     psql(resource, readFileSync(migration.path, 'utf8'), `Migration failed: ${migration.name}`);
   }
 }
@@ -587,7 +602,12 @@ BEGIN
   IF NOT has_table_privilege('omnireach_auth', 'account_authentication_policies', 'SELECT,INSERT,UPDATE')
      OR NOT has_table_privilege('omnireach_auth', 'account_recovery_codes', 'SELECT,INSERT,UPDATE')
      OR NOT has_table_privilege('omnireach_auth', 'password_recovery_delivery_outbox', 'SELECT,INSERT,UPDATE')
-  THEN RAISE EXCEPTION 'authentication role lacks required Auth v2 grants'; END IF;
+     OR NOT has_table_privilege('omnireach_auth', 'webauthn_scopes', 'SELECT,INSERT')
+     OR NOT has_table_privilege('omnireach_auth', 'webauthn_credentials', 'SELECT,INSERT')
+     OR NOT has_column_privilege('omnireach_auth', 'webauthn_credentials', 'sign_count', 'UPDATE')
+     OR NOT has_column_privilege('omnireach_auth', 'webauthn_credentials', 'revoked_at', 'UPDATE')
+     OR has_column_privilege('omnireach_auth', 'webauthn_credentials', 'public_key', 'UPDATE')
+  THEN RAISE EXCEPTION 'authentication role lacks required Auth v3 grants'; END IF;
 
   IF has_table_privilege('omnireach_app', 'sessions', 'SELECT')
      OR has_table_privilege('omnireach_worker', 'sessions', 'SELECT')
@@ -595,6 +615,11 @@ BEGIN
      OR has_table_privilege('omnireach_platform', 'password_recovery_tokens', 'SELECT')
      OR has_table_privilege('omnireach_platform', 'mfa_factors', 'SELECT')
      OR has_table_privilege('omnireach_platform', 'account_recovery_codes', 'SELECT')
+     OR has_table_privilege('omnireach_platform', 'webauthn_scopes', 'SELECT')
+     OR has_table_privilege('omnireach_app', 'webauthn_credentials', 'SELECT')
+     OR has_table_privilege('omnireach_worker', 'webauthn_credentials', 'SELECT')
+     OR has_table_privilege('omnireach_auth', 'webauthn_scopes', 'DELETE')
+     OR has_table_privilege('omnireach_auth', 'webauthn_credentials', 'DELETE')
   THEN RAISE EXCEPTION 'sensitive table grant leaked to a non-authentication role'; END IF;
 
   IF NOT has_table_privilege('omnireach_platform', 'sessions', 'SELECT')
@@ -607,14 +632,15 @@ BEGIN
        WHERE relnamespace = 'public'::regnamespace
          AND relname IN (
            'sessions', 'password_recovery_tokens', 'account_authentication_policies',
-           'account_recovery_codes', 'password_recovery_delivery_outbox'
+           'account_recovery_codes', 'password_recovery_delivery_outbox',
+           'webauthn_scopes', 'webauthn_credentials'
          )
-         AND relrowsecurity AND relforcerowsecurity) <> 5
-  THEN RAISE EXCEPTION 'Auth v2 tables do not all force row-level security'; END IF;
+         AND relrowsecurity AND relforcerowsecurity) <> 7
+  THEN RAISE EXCEPTION 'Auth v3 tables do not all force row-level security'; END IF;
 END
 $verify$;
 `,
-    'Final Auth v2 role/RLS assertions failed',
+    'Final Auth v3 role/RLS assertions failed',
   );
 
   const hiddenSessions = roleScopedScalar(
@@ -626,20 +652,20 @@ $verify$;
   );
   if (hiddenSessions !== '0') {
     throw new Error(
-      `Auth role saw ${hiddenSessions} sessions without selecting contract version 2.`,
+      `Auth role saw ${hiddenSessions} sessions without selecting contract version 3.`,
     );
   }
 
   const visibleSessions = roleScopedScalar(
     resource,
     'omnireach_auth',
-    { 'app.authentication_contract_version': '2' },
+    { 'app.authentication_contract_version': '3' },
     'count(*) FROM sessions',
-    'Auth role contract-v2 session query failed',
+    'Auth role contract-v3 session query failed',
   );
   if (visibleSessions !== String(expectedSessionCount)) {
     throw new Error(
-      `Auth role expected ${expectedSessionCount} contract-v2 sessions, saw ${visibleSessions}.`,
+      `Auth role expected ${expectedSessionCount} contract-v3 sessions, saw ${visibleSessions}.`,
     );
   }
 
@@ -680,7 +706,7 @@ $verify$;
 }
 
 function assertUpgradeExactHost(resource) {
-  const settings = { 'app.authentication_contract_version': '2' };
+  const settings = { 'app.authentication_contract_version': '3' };
   const exactSession = roleScopedScalar(
     resource,
     'omnireach_auth',
@@ -733,6 +759,179 @@ function assertUpgradeExactHost(resource) {
         'admin.customer.example:443');`,
     /password_recovery_tokens_host_check/i,
     'Recovery host normalization constraint failed',
+  );
+}
+
+function assertWebAuthnFoundation(resource) {
+  const stateBefore = Number(
+    psql(
+      resource,
+      `SELECT auth_state_version FROM account_authentication_policies
+        WHERE user_id = '${fixture.customerBasicUser}';`,
+      'Could not read pre-WebAuthn authentication state',
+    ),
+  );
+
+  expectSqlFailure(
+    resource,
+    `BEGIN;
+     SET LOCAL ROLE omnireach_auth;
+     SELECT set_config('app.authentication_contract_version', '2', true);
+     INSERT INTO webauthn_scopes
+       (id, user_id, tenant_id, site_id, rp_id, user_handle)
+     VALUES
+       ('${fixture.webAuthnScope}', '${fixture.customerBasicUser}', '${fixture.tenant}',
+        '${fixture.site}', 'admin.customer.example', decode(repeat('ab', 64), 'hex'));
+     COMMIT;`,
+    /row-level security policy|violates row-level security/i,
+    'Auth Contract v2 WebAuthn write did not fail closed',
+  );
+
+  psql(
+    resource,
+    `BEGIN;
+     SET LOCAL ROLE omnireach_auth;
+     SELECT set_config('app.authentication_contract_version', '3', true);
+     INSERT INTO webauthn_scopes
+       (id, user_id, tenant_id, site_id, rp_id, user_handle)
+     VALUES
+       ('${fixture.webAuthnScope}', '${fixture.customerBasicUser}', '${fixture.tenant}',
+        '${fixture.site}', 'admin.customer.example', decode(repeat('ab', 64), 'hex'));
+     INSERT INTO webauthn_credentials
+       (id, scope_id, credential_id, public_key, sign_count, transports, device_type,
+        backup_eligible, backed_up, name, verified_at)
+     VALUES
+       ('${fixture.webAuthnCredential}', '${fixture.webAuthnScope}', decode('01020304', 'hex'),
+        decode('a5010203262001215820', 'hex'), 0, ARRAY['internal'], 'singleDevice',
+        false, false, 'Windows Hello', now());
+     COMMIT;`,
+    'Auth Contract v3 could not create fictional WebAuthn fixtures',
+  );
+
+  assertScalar(
+    resource,
+    `SELECT auth_state_version FROM account_authentication_policies
+      WHERE user_id = '${fixture.customerBasicUser}'`,
+    stateBefore + 1,
+    'WebAuthn enrollment did not bump authentication state exactly once',
+  );
+
+  psql(
+    resource,
+    `BEGIN;
+     SET LOCAL ROLE omnireach_auth;
+     SELECT set_config('app.authentication_contract_version', '3', true);
+     UPDATE webauthn_credentials
+        SET sign_count = 1, last_used_at = now(), updated_at = now()
+      WHERE id = '${fixture.webAuthnCredential}';
+     COMMIT;`,
+    'WebAuthn usage-state update failed',
+  );
+  assertScalar(
+    resource,
+    `SELECT auth_state_version FROM account_authentication_policies
+      WHERE user_id = '${fixture.customerBasicUser}'`,
+    stateBefore + 1,
+    'WebAuthn usage state incorrectly invalidated authentication state',
+  );
+
+  expectSqlFailure(
+    resource,
+    `UPDATE webauthn_credentials SET public_key = decode('01', 'hex')
+      WHERE id = '${fixture.webAuthnCredential}';`,
+    /WebAuthn credential identity is immutable/i,
+    'WebAuthn credential identity mutation was accepted',
+  );
+  expectSqlFailure(
+    resource,
+    `UPDATE webauthn_scopes SET rp_id = 'other.customer.example'
+      WHERE id = '${fixture.webAuthnScope}';`,
+    /WebAuthn scope identity is immutable/i,
+    'WebAuthn scope identity mutation was accepted',
+  );
+
+  psql(
+    resource,
+    `BEGIN;
+     SET LOCAL ROLE omnireach_auth;
+     SELECT set_config('app.authentication_contract_version', '3', true);
+     UPDATE webauthn_credentials
+        SET revoked_at = now(), revoke_reason = 'fictional verification', updated_at = now()
+      WHERE id = '${fixture.webAuthnCredential}';
+     COMMIT;`,
+    'WebAuthn revocation update failed',
+  );
+  assertScalar(
+    resource,
+    `SELECT auth_state_version FROM account_authentication_policies
+      WHERE user_id = '${fixture.customerBasicUser}'`,
+    stateBefore + 2,
+    'WebAuthn revocation did not bump authentication state exactly once',
+  );
+  expectSqlFailure(
+    resource,
+    `UPDATE webauthn_credentials SET revoked_at = NULL, revoke_reason = NULL
+      WHERE id = '${fixture.webAuthnCredential}';`,
+    /WebAuthn credential revocation evidence is immutable/i,
+    'WebAuthn credential revocation was reversed',
+  );
+  expectSqlFailure(
+    resource,
+    `UPDATE webauthn_credentials SET revoked_at = revoked_at + interval '1 second',
+                                      revoke_reason = 'rewritten evidence'
+      WHERE id = '${fixture.webAuthnCredential}';`,
+    /WebAuthn credential revocation evidence is immutable/i,
+    'WebAuthn credential revocation evidence was rewritten',
+  );
+  expectSqlFailure(
+    resource,
+    `UPDATE webauthn_credentials SET revoke_reason = 'rewritten reason only'
+      WHERE id = '${fixture.webAuthnCredential}';`,
+    /WebAuthn credential revocation evidence is immutable/i,
+    'WebAuthn credential revocation reason was rewritten',
+  );
+  expectSqlFailure(
+    resource,
+    `BEGIN;
+     SET LOCAL ROLE omnireach_auth;
+     SELECT set_config('app.authentication_contract_version', '3', true);
+     DELETE FROM webauthn_credentials WHERE id = '${fixture.webAuthnCredential}';
+     COMMIT;`,
+    /permission denied for table webauthn_credentials/i,
+    'Authentication role could delete WebAuthn evidence',
+  );
+
+  const v2Visible = roleScopedScalar(
+    resource,
+    'omnireach_auth',
+    { 'app.authentication_contract_version': '2' },
+    'count(*) FROM webauthn_credentials',
+    'Auth Contract v2 WebAuthn read check failed',
+  );
+  if (v2Visible !== '0') throw new Error(`Auth Contract v2 saw ${v2Visible} WebAuthn rows.`);
+  const v3Visible = roleScopedScalar(
+    resource,
+    'omnireach_auth',
+    { 'app.authentication_contract_version': '3' },
+    'count(*) FROM webauthn_credentials',
+    'Auth Contract v3 WebAuthn read check failed',
+  );
+  if (v3Visible !== '1') throw new Error(`Auth Contract v3 saw ${v3Visible} WebAuthn rows.`);
+
+  psql(
+    resource,
+    `INSERT INTO users (id, normalized_email, display_name)
+     VALUES ('${fixture.webAuthnDeleteGuardUser}', 'deletion.guard@example.invalid', 'Deletion Guard');
+     INSERT INTO webauthn_scopes (id, user_id, rp_id, user_handle)
+     VALUES ('${fixture.webAuthnDeleteGuardScope}', '${fixture.webAuthnDeleteGuardUser}',
+             'orap.example', decode(repeat('cd', 64), 'hex'));`,
+    'Could not seed WebAuthn user deletion guard',
+  );
+  expectSqlFailure(
+    resource,
+    `DELETE FROM users WHERE id = '${fixture.webAuthnDeleteGuardUser}';`,
+    /webauthn_scopes.*user_id|foreign key constraint/i,
+    'User deletion removed durable WebAuthn scope evidence',
   );
 }
 
@@ -802,7 +1001,7 @@ function assertFreshExactHost(resource) {
   const exactRecovery = roleScopedScalar(
     resource,
     'omnireach_auth',
-    { 'app.authentication_contract_version': '2' },
+    { 'app.authentication_contract_version': '3' },
     `count(*) FROM password_recovery_tokens
       WHERE token_hash = repeat('d', 64)
         AND host = 'admin.customer.example' AND used_at IS NULL`,
@@ -815,7 +1014,7 @@ function assertFreshExactHost(resource) {
   const wrongRecovery = roleScopedScalar(
     resource,
     'omnireach_auth',
-    { 'app.authentication_contract_version': '2' },
+    { 'app.authentication_contract_version': '3' },
     `count(*) FROM password_recovery_tokens
       WHERE token_hash = repeat('d', 64)
         AND host = 'admin.neighbor.example' AND used_at IS NULL`,
@@ -850,7 +1049,7 @@ function withEphemeralPostgres(label, operation) {
 
 function cleanupForSignal(exitCode) {
   const cleanupErrors = [...activeResources].flatMap((resource) => cleanupResource(resource));
-  for (const error of cleanupErrors) process.stderr.write(`[g06-auth-v2] ${error}\n`);
+  for (const error of cleanupErrors) process.stderr.write(`[g06-auth-v3] ${error}\n`);
   process.exit(exitCode);
 }
 
@@ -869,6 +1068,7 @@ try {
     applyMigrations(resource, migrations.postV2);
     assertCommonFinalState(resource, 4);
     assertUpgradeExactHost(resource);
+    assertWebAuthnFoundation(resource);
     return {
       preV2Migrations: migrations.preV2.length,
       authV2Migrations: migrations.authV2.map((migration) => migration.name),
@@ -878,6 +1078,7 @@ try {
       requiredSessionsRevoked: 3,
       tenantIsolation: true,
       exactHost: true,
+      webAuthnFoundation: true,
     };
   });
 
@@ -887,18 +1088,20 @@ try {
     assertCommonFinalState(resource, 1);
     assertUpgradeExactHost(resource);
     assertFreshExactHost(resource);
+    assertWebAuthnFoundation(resource);
     return {
       allMigrations: migrations.all.length,
       startedEmpty: true,
       defaultPolicy: true,
       tenantIsolation: true,
       exactHost: true,
+      webAuthnFoundation: true,
     };
   });
 
   process.stdout.write(
     `${JSON.stringify({
-      check: 'auth-v2-disposable-migration-and-isolation',
+      check: 'auth-v3-disposable-migration-and-isolation',
       ok: true,
       postgresImage,
       upgrade,
@@ -911,7 +1114,7 @@ try {
     error instanceof AggregateError ? error.errors.map((item) => item.message) : undefined;
   process.stderr.write(
     `${JSON.stringify({
-      check: 'auth-v2-disposable-migration-and-isolation',
+      check: 'auth-v3-disposable-migration-and-isolation',
       ok: false,
       error: error.message,
       ...(nested ? { causes: nested } : {}),

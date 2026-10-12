@@ -26,6 +26,7 @@ export function parseReleaseContractManifest(source: string): ReleaseContract;
 export function assertManifestMatchesSourceCapabilities(
   contract: ReleaseContract,
   authSecretsSource: string,
+  authWebAuthnSource?: string,
 ): true;
 
 export function renderReleaseMetadata(input: {
@@ -44,11 +45,13 @@ export function assertReleaseMetadataSupports(
 
 export function verifyReleaseContract(input: {
   authSecretsPath: string;
+  authWebAuthnPath?: string;
   manifestPath: string;
 }): Promise<ReleaseContract>;
 
 export function createReleaseMetadata(input: {
   authSecretsPath: string;
+  authWebAuthnPath?: string;
   manifestPath: string;
   migrationsRoot: string;
   outputPath: string;

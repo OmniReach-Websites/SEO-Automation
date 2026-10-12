@@ -53,6 +53,23 @@ verification satisfies a NIST Authentication Assurance Level. See the
   phishing-resistant method when available. Their enrollment, replacement, revocation,
   and use remain subject to the same host, challenge, rate-limit, audit, and recovery
   controls.
+- Bind every WebAuthn credential to the exact verified login hostname: the RP ID is the
+  normalized request hostname and the sole accepted origin is `https://<RP-ID>`. The
+  ORAP RP is `admin.omnireach.cloud`; each customer RP is its own verified admin host.
+  Do not use the apex domain, a wildcard RP, caller-provided origins, or cross-origin
+  ceremonies. Host changes require new credentials.
+- WebAuthn uses a random opaque 64-byte per-scope user handle, five-minute single-use
+  server-side ceremony state, required user verification, no attestation collection,
+  and ES256/RS256. Platform and roaming authenticators remain usable; Windows Hello is
+  encouraged without making a platform attachment a hard requirement. Persist the
+  signature counter, device type, backup eligibility/state, and transports, but do not
+  rely on a nonzero counter as the only replay control for multi-device passkeys.
+- Until every effective login host can be proven to retain a usable credential and safe
+  recovery path, WebAuthn cannot be the account's sole global fallback. Enrollment
+  requires verified email-code or TOTP fallback, and revocation must preserve that
+  invariant. Credential enrollment/revocation, audit evidence, auth-state change, and
+  affected-session revocation are atomic; assertion counter/backup state and session
+  issuance are also one transaction.
 - Sensitive owner-level recovery and security changes require recent stronger
   verification using TOTP or WebAuthn. If neither is available, they require an
   explicitly approved, short-lived, single-use, reason-bearing break-glass procedure
@@ -128,7 +145,7 @@ verification satisfies a NIST Authentication Assurance Level. See the
   initial compatibility bridge. Production authentication activation remains blocked
   until the owner-controlled production-equivalent rotation, reauthentication,
   rollback, and restore drill is completed and recorded.
-- Auth Contract v2 begins when its schema is applied or any v2 account-policy,
+- Auth Contract v2 began when its schema was applied or v2 account-policy,
   assurance, factor, challenge, recovery, or session state is written. From that cutoff,
   release activation and rollback must fail closed unless the artifact explicitly
   declares v2 compatibility. A pre-v2 binary is not a valid rollback target because it
@@ -139,6 +156,17 @@ verification satisfies a NIST Authentication Assurance Level. See the
   two-artifact bridge, and separately confirmed compatible rollback are implemented and
   validated in the local harness. Their first live execution and recovery evidence
   remain G31 production prerequisites.
+- Auth Contract v3 begins when the RP-scoped WebAuthn schema is applied. Its restrictive
+  session and recovery RLS policies accept only a v3 authentication transaction marker,
+  so a v2 process fails closed and is not a valid rollback target. Source capability
+  checks, readiness, target activation, bridge, and rollback metadata all declare v3 in
+  the same repository change. The v3 foundation is inert: no enrollment, assertion, or
+  revocation route is exposed until its complete atomic service transaction and audit
+  behavior are implemented. The first v2-to-v3 transition must stage a distinct,
+  reviewed v3-compatible fallback before applying the migration. Automatic rollback to
+  the running v2 binary is intentionally unavailable after that point; failure of both
+  v3 artifacts requires a compatible forward fix or an owner-authorized restore of the
+  pre-transition database backup with its matching v2 artifact.
 - Resend authentication delivery remains disabled until its sender domain, account,
   credentials, limits, and production activation receive the existing explicit
   approval. A disabled or unavailable provider never causes MFA bypass.
@@ -206,8 +234,8 @@ customer-only atomic recovery-session issuance, TOTP/WebAuthn regression behavio
 recovery safeguards, mixed-identity promotion races, assurance-aware step-up, locked
 session-state revalidation, canonical ORAP-host
 reservation, session revocation, CSRF defense, durable method-specific audit evidence,
-and log/audit redaction. G06 is reopened for Auth Contract v2 host/role/RLS/session-race
+and log/audit redaction. G06 is reopened for Auth Contract v3 host/role/RLS/session-race
 revalidation; G14 retains browser-level host-isolation coverage. G31 must reject
-pre-v2 artifacts after the compatibility cutoff and must not complete production owner
+pre-v3 artifacts after the compatibility cutoff and must not complete production owner
 bootstrap until key rotation and the selected second-step delivery or stronger method
 are configured and verified without a bypass.

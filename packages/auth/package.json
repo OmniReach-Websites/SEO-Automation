@@ -13,6 +13,7 @@
     "@omnireach/database": "0.0.0",
     "@omnireach/observability": "0.0.0",
     "@omnireach/shared": "0.0.0",
+    "@simplewebauthn/server": "14.0.3",
     "otpauth": "9.5.2"
   }
 }

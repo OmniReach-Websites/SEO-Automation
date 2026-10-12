@@ -275,7 +275,7 @@ try {
   assert.ok(readiness, 'API readiness endpoint did not respond');
   assert.equal(readiness.status, 200);
   assert.deepEqual(await readiness.json(), {
-    authContract: 2,
+    authContract: 3,
     dependencies: ['postgres', 'redis'],
     status: 'ready',
   });

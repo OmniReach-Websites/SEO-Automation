@@ -112,7 +112,7 @@ describe('tenant isolation boundaries', () => {
     expect(queries).toEqual([
       'BEGIN',
       'SET LOCAL ROLE omnireach_auth',
-      `SELECT set_config('app.authentication_contract_version', '2', true)`,
+      `SELECT set_config('app.authentication_contract_version', '3', true)`,
       'COMMIT',
     ]);
     expect(client.release).toHaveBeenCalledOnce();

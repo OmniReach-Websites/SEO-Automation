@@ -81,3 +81,21 @@ export {
   type AuthenticationTransactionClient,
   type AuthenticationTransactionPool,
 } from './postgres.ts';
+export { PostgresWebAuthnRepository, type WebAuthnScopeTarget } from './postgres-webauthn.ts';
+export {
+  createWebAuthnAuthenticationOptions,
+  createWebAuthnRegistrationOptions,
+  createWebAuthnUserHandle,
+  normalizeWebAuthnHost,
+  resolveWebAuthnRelyingParty,
+  verifyExactHostWebAuthnAuthentication,
+  verifyExactHostWebAuthnRegistration,
+  webAuthnCeremonyTtlSeconds,
+  webAuthnSupportedAlgorithmIds,
+  type WebAuthnCeremony,
+  type WebAuthnCeremonyPurpose,
+  type WebAuthnCeremonyStore,
+  type WebAuthnCredentialRecord,
+  type WebAuthnRelyingParty,
+  type WebAuthnScopeRecord,
+} from './webauthn.ts';

@@ -48,7 +48,7 @@ tree from the same checkout, verifies that the supplied release ID is that check
 `HEAD`, and writes metadata into the checksummed release archive. Metadata from one
 checkout must never be copied to or generated on behalf of another commit.
 
-The current manifest declares Auth Contract 2, schema contract 2, and crypto read range
+The current manifest declares Auth Contract 3, schema contract 2, and crypto read range
 1 through 2 with write contract 2. The source retains the version-1 reader only as the
 initial compatibility bridge while all new ciphertext uses the versioned keyring. The
 generator detects the `VersionedSecretKeyring` implementation marker: adding
@@ -78,7 +78,8 @@ minimum can increase. A metadata-format change increments
 The target validator rejects unknown, duplicate, missing, source-mismatched, or
 out-of-range fields. Candidate, automatic rollback, bridge rollback, and manual rollback
 paths all validate schema, authentication, and crypto/keyring compatibility before
-activation. Consequently an Auth Contract v2 artifact that only supports crypto contract
+activation. Consequently an Auth Contract v2 artifact cannot be selected after
+RP-scoped WebAuthn state is possible, and an artifact that only supports crypto contract
 1 cannot be selected after crypto contract 2 writes are possible. Reader compatibility
 is checked in both directions; the target separately prohibits lowering the write
 contract because no artifact activation can prove that older-format data is the only
@@ -103,7 +104,19 @@ checking, the fixed incoming directory, target lock, immutable release directori
 restricted wrapper apply to both operations. Neither workflow changes shared Caddy or
 Christians Reunite resources.
 
+The first Auth Contract v2-to-v3 bridge cannot use the currently deployed v2 artifact
+as its automatic rollback after the v3 migration has replaced the v2 RLS policies. That
+binary would fail closed against the v3 database. Before starting the bridge, prepare
+and review two distinct v3-compatible artifacts: the candidate and a deliberately
+conservative fallback that supports the same authentication, schema, and crypto
+contracts. If candidate readiness fails after migration, the bridge activates that v3
+fallback. If neither v3 artifact can start, the safe recovery choices are a compatible
+forward fix or an owner-authorized restore of the pre-transition database backup
+together with its matching v2 artifact. An automatic v2-binary rollback against a v3
+database is intentionally unavailable.
+
 These repository controls are preparation, not production evidence. G31 stays blocked
 until the owner-controlled environment protection, credentials, backup/restore,
 production-equivalent key rotation, live routing, health, isolation, and rollback checks
-are separately authorized and recorded.
+are separately authorized and recorded. In particular, the v2-to-v3 bridge must not run
+until the distinct v3 fallback and the matching backup-restore path have been proven.

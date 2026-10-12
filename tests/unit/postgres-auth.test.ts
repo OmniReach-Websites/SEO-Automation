@@ -278,7 +278,7 @@ describe('PostgreSQL authentication repository', () => {
     ).toEqual([
       'BEGIN',
       'SET LOCAL ROLE omnireach_auth',
-      `SELECT set_config('app.authentication_contract_version', '2', true)`,
+      `SELECT set_config('app.authentication_contract_version', '3', true)`,
     ]);
     const lookup = vi.mocked(client.query).mock.calls[3];
     expect(lookup?.[1]).toEqual(['owner@example.test', 'admin.alpha.test', 'admin.omnireach.test']);

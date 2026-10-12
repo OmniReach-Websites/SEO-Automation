@@ -18,7 +18,18 @@ const recoveryOutboxMigration = readFileSync(
   ),
   'utf8',
 );
+const webAuthnMigration = readFileSync(
+  resolve(
+    root,
+    'packages/database/prisma/migrations/20261011013000_g05_webauthn_credentials/migration.sql',
+  ),
+  'utf8',
+);
 const schema = readFileSync(resolve(root, 'packages/database/prisma/schema.prisma'), 'utf8');
+const repositorySource = readFileSync(
+  resolve(root, 'packages/auth/src/postgres-webauthn.ts'),
+  'utf8',
+);
 
 describe('account authentication database boundary', () => {
   it('uses account-level policy and prevents optional policies for active platform users', () => {
@@ -88,6 +99,8 @@ describe('account authentication database boundary', () => {
     expect(migration).toContain('AND verified_at IS NOT NULL AND recovery_restricted');
     expect(migration).toContain('sessions_require_policy_assurance');
     expect(migration).toContain('authentication_contract_v2_sessions');
+    expect(webAuthnMigration).toContain('DROP POLICY authentication_contract_v2_sessions');
+    expect(webAuthnMigration).toContain('authentication_contract_v3_sessions');
     expect(migration).toContain(
       "revoke_reason = COALESCE(session.revoke_reason, 'authentication-policy-upgrade')",
     );
@@ -104,6 +117,8 @@ describe('account authentication database boundary', () => {
     expect(schema).toMatch(/model PasswordRecoveryToken[\s\S]*host\s+String\?/u);
     expect(migration).toContain('active_password_recovery_tokens_require_host');
     expect(migration).toContain('authentication_contract_v2_password_recovery');
+    expect(webAuthnMigration).toContain('DROP POLICY authentication_contract_v2_password_recovery');
+    expect(webAuthnMigration).toContain('authentication_contract_v3_password_recovery');
   });
 
   it('keeps account authentication tables behind the auth database role', () => {
@@ -143,5 +158,67 @@ describe('account authentication database boundary', () => {
       /GRANT[^;]*password_recovery_delivery_outbox[^;]*TO omnireach_(?:app|platform|worker)/isu,
     );
     expect(schema).toContain('model PasswordRecoveryDeliveryOutbox');
+  });
+
+  it('stores WebAuthn credentials in immutable exact-RP and tenant/site scopes', () => {
+    expect(webAuthnMigration).toContain('CREATE TABLE webauthn_scopes');
+    expect(webAuthnMigration).toContain('CREATE TABLE webauthn_credentials');
+    expect(webAuthnMigration).toContain('MATCH FULL');
+    expect(webAuthnMigration).toContain(
+      'user_id uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT',
+    );
+    expect(webAuthnMigration).toContain('NULLS NOT DISTINCT');
+    expect(webAuthnMigration).toContain('octet_length(user_handle) = 64');
+    expect(webAuthnMigration).toContain('octet_length(credential_id) BETWEEN 1 AND 1023');
+    expect(webAuthnMigration).toContain('sign_count BETWEEN 0 AND 4294967295');
+    expect(webAuthnMigration).toContain('webauthn_credentials_backup_flags_check');
+    expect(webAuthnMigration).toContain('webauthn_scopes_protect_identity');
+    expect(webAuthnMigration).toContain('webauthn_credentials_protect_identity');
+    expect(webAuthnMigration).toContain('WebAuthn credential revocation evidence is immutable');
+    expect(webAuthnMigration).toMatch(
+      /OLD\.revoked_at IS NOT NULL[\s\S]+NEW\.revoked_at IS DISTINCT FROM OLD\.revoked_at[\s\S]+NEW\.revoke_reason IS DISTINCT FROM OLD\.revoke_reason/u,
+    );
+    expect(schema).toContain('model WebAuthnScope');
+    expect(schema).toContain('model WebAuthnCredential');
+  });
+
+  it('keeps WebAuthn material auth-role only and requires Auth Contract v3', () => {
+    expect(webAuthnMigration).toContain('ALTER TABLE webauthn_scopes FORCE ROW LEVEL SECURITY');
+    expect(webAuthnMigration).toContain(
+      'ALTER TABLE webauthn_credentials FORCE ROW LEVEL SECURITY',
+    );
+    expect(webAuthnMigration).toContain('auth_contract_v3_webauthn_scopes');
+    expect(webAuthnMigration).toContain('auth_contract_v3_webauthn_credentials');
+    expect(webAuthnMigration).toContain(
+      "current_setting('app.authentication_contract_version', true) = '3'",
+    );
+    expect(webAuthnMigration).toMatch(
+      /REVOKE ALL ON webauthn_scopes, webauthn_credentials\s+FROM omnireach_app, omnireach_platform, omnireach_worker;/u,
+    );
+    expect(webAuthnMigration).toContain(
+      'GRANT SELECT, INSERT ON webauthn_credentials TO omnireach_auth',
+    );
+    expect(webAuthnMigration).not.toMatch(
+      /GRANT[^;]*DELETE[^;]*webauthn_(?:scopes|credentials)[^;]*TO omnireach_auth/isu,
+    );
+    expect(webAuthnMigration).not.toMatch(
+      /GRANT[^;]*webauthn_(?:scopes|credentials)[^;]*TO omnireach_(?:app|platform|worker)/isu,
+    );
+  });
+
+  it('versions enrollment and revocation without treating counter updates as factor changes', () => {
+    expect(webAuthnMigration).toContain('bump_webauthn_account_authentication_state');
+    expect(webAuthnMigration).toContain(
+      'AFTER INSERT OR UPDATE OF revoked_at ON webauthn_credentials',
+    );
+    expect(webAuthnMigration).not.toMatch(
+      /AFTER[^;]*UPDATE OF[^;]*(?:sign_count|backed_up|last_used_at)[^;]*ON webauthn_credentials/isu,
+    );
+    expect(repositorySource).not.toContain('async updateCredentialUsage(');
+    expect(repositorySource).not.toContain('async createCredential(');
+    expect(repositorySource).not.toContain('async revokeCredential(');
+    expect(repositorySource).toContain(
+      'assertion counter updates\n * must commit in the same transaction as session issuance',
+    );
   });
 });

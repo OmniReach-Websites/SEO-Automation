@@ -19,6 +19,7 @@ model User {
   platformMembership   PlatformMembership?
   authenticationPolicy AccountAuthenticationPolicy?
   accountRecoveryCodes AccountRecoveryCode[]
+  webAuthnScopes       WebAuthnScope[]
 
   @@map("users")
 }
@@ -51,21 +52,22 @@ model Tenant {
 }
 
 model Site {
-  id                    String       @id @default(uuid()) @db.Uuid
-  tenantId              String       @map("tenant_id") @db.Uuid
-  name                  String       @db.VarChar(160)
-  status                String       @default("active") @db.VarChar(32)
-  contractVersion       String?      @map("contract_version") @db.VarChar(32)
-  contractHash          String?      @map("contract_hash") @db.VarChar(128)
-  sourcePath            String?      @map("source_path") @db.VarChar(500)
-  standardPageCount     Int          @default(1) @map("standard_page_count")
-  businessLocationCount Int          @default(1) @map("business_location_count")
-  createdAt             DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt             DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
-  tenant                Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  id                    String          @id @default(uuid()) @db.Uuid
+  tenantId              String          @map("tenant_id") @db.Uuid
+  name                  String          @db.VarChar(160)
+  status                String          @default("active") @db.VarChar(32)
+  contractVersion       String?         @map("contract_version") @db.VarChar(32)
+  contractHash          String?         @map("contract_hash") @db.VarChar(128)
+  sourcePath            String?         @map("source_path") @db.VarChar(500)
+  standardPageCount     Int             @default(1) @map("standard_page_count")
+  businessLocationCount Int             @default(1) @map("business_location_count")
+  createdAt             DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+  tenant                Tenant          @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   domains               Domain[]
   memberships           Membership[]
   auditEvents           AuditEvent[]
+  webAuthnScopes        WebAuthnScope[]
 
   @@unique([tenantId, id])
   @@index([tenantId, status])
@@ -293,6 +295,47 @@ model AccountRecoveryCode {
   @@index([userId, setVersion, createdAt])
   @@index([sourceFactorId])
   @@map("account_recovery_codes")
+}
+
+model WebAuthnScope {
+  id          String               @id @default(uuid()) @db.Uuid
+  userId      String               @map("user_id") @db.Uuid
+  tenantId    String?              @map("tenant_id") @db.Uuid
+  siteId      String?              @map("site_id") @db.Uuid
+  rpId        String               @map("rp_id") @db.VarChar(253)
+  userHandle  Bytes                @map("user_handle")
+  createdAt   DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  user        User                 @relation(fields: [userId], references: [id], onDelete: Restrict)
+  site        Site?                @relation(fields: [tenantId, siteId], references: [tenantId, id], onDelete: Restrict)
+  credentials WebAuthnCredential[]
+
+  @@index([userId, rpId, tenantId, siteId])
+  @@index([tenantId, siteId, rpId])
+  @@map("webauthn_scopes")
+}
+
+model WebAuthnCredential {
+  id             String        @id @default(uuid()) @db.Uuid
+  scopeId        String        @map("scope_id") @db.Uuid
+  credentialId   Bytes         @map("credential_id")
+  publicKey      Bytes         @map("public_key")
+  signCount      BigInt        @default(0) @map("sign_count")
+  transports     String[]      @default([]) @db.VarChar(32)
+  deviceType     String        @map("device_type") @db.VarChar(16)
+  backupEligible Boolean       @map("backup_eligible")
+  backedUp       Boolean       @map("backed_up")
+  name           String        @db.VarChar(80)
+  verifiedAt     DateTime      @map("verified_at") @db.Timestamptz(3)
+  lastUsedAt     DateTime?     @map("last_used_at") @db.Timestamptz(3)
+  revokedAt      DateTime?     @map("revoked_at") @db.Timestamptz(3)
+  revokeReason   String?       @map("revoke_reason") @db.VarChar(160)
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+  scope          WebAuthnScope @relation(fields: [scopeId], references: [id], onDelete: Restrict)
+
+  @@unique([scopeId, credentialId])
+  @@index([scopeId, createdAt])
+  @@map("webauthn_credentials")
 }
 
 model OwnerBootstrap {

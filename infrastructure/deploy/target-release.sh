@@ -7,7 +7,7 @@ releases_root=$deploy_root/releases
 shared_root=$deploy_root/shared
 lock_file=$deploy_root/.release.lock
 metadata_validator=/usr/local/libexec/omnireach-validate-release-metadata
-required_auth_contract=2
+required_auth_contract=3
 required_crypto_contract=2
 api_port=44100
 

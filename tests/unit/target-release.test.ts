@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 const target = readFileSync(resolve('infrastructure/deploy/target-release.sh'), 'utf8');
 const installer = readFileSync(resolve('infrastructure/deploy/install-target.sh'), 'utf8');
+const deployReadme = readFileSync(resolve('infrastructure/deploy/README.md'), 'utf8');
 const validator = readFileSync(
   resolve('infrastructure/deploy/validate-release-metadata.sh'),
   'utf8',
@@ -32,6 +33,7 @@ describe('restricted production release wrapper', () => {
   it('requires contract metadata and blocks an ordinary transition from a legacy release', () => {
     expect(target).toContain('omnireach-validate-release-metadata');
     expect(target).toContain('required_crypto_contract=2');
+    expect(target).toContain('required_auth_contract=3');
     expect(target).toContain(
       "fail 'candidate does not implement the required crypto/keyring contract'",
     );
@@ -49,7 +51,7 @@ describe('restricted production release wrapper', () => {
     );
   });
 
-  it('offers only an explicit bridge and compatible manual rollback across the v2 boundary', () => {
+  it('offers only an explicit bridge and compatible manual rollback across contract boundaries', () => {
     expect(target).toContain('bridge_release "$2" "$3"');
     expect(target).toMatch(
       /assert_release_supports\s+\\?\s*"\$rollback_dir" "\$candidate_schema" "\$candidate_auth" "\$candidate_crypto"/u,
@@ -64,6 +66,10 @@ describe('restricted production release wrapper', () => {
     expect(target).toContain("fail 'active release cannot recover from rollback writes'");
     expect(target).toContain("fail 'rollback would lower the active crypto write contract'");
     expect(target).toContain("fail 'usage: omnireach-release rollback'");
+    expect(deployReadme).toMatch(
+      /An automatic v2-binary rollback against a v3\s+database is intentionally unavailable\./u,
+    );
+    expect(deployReadme).toMatch(/prepare\s+and review two distinct v3-compatible artifacts/u);
   });
 
   it('installs a single command-scoped sudo rule without Docker-socket access', () => {

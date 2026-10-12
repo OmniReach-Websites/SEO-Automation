@@ -168,7 +168,7 @@ export class PostgresMfaKeyRotator {
     try {
       await client.query('BEGIN');
       await client.query('SET LOCAL ROLE omnireach_auth');
-      await client.query(`SELECT set_config('app.authentication_contract_version', '2', true)`);
+      await client.query(`SELECT set_config('app.authentication_contract_version', '3', true)`);
       const result = await operation(client);
       await client.query('COMMIT');
       return result;
