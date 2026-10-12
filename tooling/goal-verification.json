@@ -57,6 +57,7 @@
     ],
     ["npm", "run", "test:integration", "--", "auth/routes.test.ts"],
     ["npm", "run", "test:security"],
+    ["node", "--experimental-transform-types", "tooling/verify-mfa-key-retirement.mjs"],
     ["npm", "run", "typecheck"]
   ],
   "G06": [

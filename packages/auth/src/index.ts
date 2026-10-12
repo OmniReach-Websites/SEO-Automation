@@ -23,10 +23,18 @@ export {
   type SessionCookieOptions,
 } from './tokens.ts';
 export {
+  activeSecretKey,
+  createVersionedSecretKeyring,
   decryptMfaSecret,
   decryptPasswordRecoveryDeliveryToken,
   encryptMfaSecret,
   encryptPasswordRecoveryDeliveryToken,
+  maximumMfaKeyVersion,
+  parseVersionedSecretKeyring,
+  secretKeyForVersion,
+  type ActiveSecretKey,
+  type VersionedSecretKeyring,
+  type VersionedSecretKeyringInput,
 } from './secrets.ts';
 export {
   PostgresPasswordRecoveryOutbox,
@@ -34,6 +42,14 @@ export {
   type PasswordRecoveryOutboxPool,
   type PasswordRecoveryOutboxResult,
 } from './password-recovery-outbox.ts';
+export {
+  PostgresMfaKeyRotator,
+  type MfaKeyRetirementReport,
+  type MfaKeyRetirementResult,
+  type MfaKeyRotationBatchResult,
+  type MfaKeyRotationClient,
+  type MfaKeyRotationPool,
+} from './key-rotation.ts';
 export {
   AuthenticationService,
   type AccountSecuritySettings,

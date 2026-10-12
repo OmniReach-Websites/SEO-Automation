@@ -13,6 +13,7 @@ const addressBits = { 4: 32, 6: 128 } as const;
 const minimumPublicPrefix = { 4: 12, 6: 32 } as const;
 const minimumPrivateOrSpecialPrefix = { 4: 24, 6: 64 } as const;
 const ipv4Mask = (1n << 32n) - 1n;
+const maximumPostgresInteger = 2_147_483_647;
 
 const privateOrSpecialRanges: Record<IpFamily, readonly NumericIpRange[]> = {
   4: [
@@ -84,7 +85,11 @@ const configSchema = z
     LOG_LEVEL: z
       .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
       .default('info'),
-    MFA_ENCRYPTION_KEY: z.string().min(32),
+    MFA_ENCRYPTION_KEY: z.preprocess(
+      (value) => (value === '' ? undefined : value),
+      z.string().min(32).optional(),
+    ),
+    MFA_ENCRYPTION_KEYRING_JSON: optionalNonempty,
     OMNIREACH_ENV: z.enum(['local', 'test', 'ci', 'production']).default('local'),
     OPENAI_API_KEY: z.string().min(1).optional(),
     OPENAI_PROVIDER_ENABLED: z
@@ -111,6 +116,32 @@ const configSchema = z
     TRUSTED_PROXY_CIDRS: trustedProxyCidrs,
   })
   .superRefine((config, context) => {
+    if (!config.MFA_ENCRYPTION_KEY && !config.MFA_ENCRYPTION_KEYRING_JSON) {
+      context.addIssue({
+        code: 'custom',
+        message: 'An MFA encryption key or versioned keyring is required',
+        path: ['MFA_ENCRYPTION_KEYRING_JSON'],
+      });
+    }
+    if (config.MFA_ENCRYPTION_KEYRING_JSON) {
+      try {
+        const keyMaterials = assertMfaKeyringJson(config.MFA_ENCRYPTION_KEYRING_JSON);
+        if (keyMaterials.includes(config.SESSION_SECRET)) throw new Error('invalid');
+      } catch {
+        context.addIssue({
+          code: 'custom',
+          message: 'MFA encryption keyring JSON is invalid',
+          path: ['MFA_ENCRYPTION_KEYRING_JSON'],
+        });
+      }
+    }
+    if (config.MFA_ENCRYPTION_KEY === config.SESSION_SECRET) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Session and MFA encryption secrets must be independent',
+        path: ['MFA_ENCRYPTION_KEY'],
+      });
+    }
     let modelAliases: Record<string, string> | undefined;
     try {
       const parsed: unknown = JSON.parse(config.OPENAI_MODEL_ALIASES_JSON);
@@ -233,7 +264,8 @@ export function redactConfig(config: AppConfig): Record<string, string | number>
     ...config,
     DATABASE_URL: redactUrl(config.DATABASE_URL),
     CONTACT_ENCRYPTION_KEY: '[REDACTED]',
-    MFA_ENCRYPTION_KEY: '[REDACTED]',
+    ...(config.MFA_ENCRYPTION_KEY ? { MFA_ENCRYPTION_KEY: '[REDACTED]' } : {}),
+    ...(config.MFA_ENCRYPTION_KEYRING_JSON ? { MFA_ENCRYPTION_KEYRING_JSON: '[REDACTED]' } : {}),
     ...(config.OPENAI_API_KEY ? { OPENAI_API_KEY: '[REDACTED]' } : {}),
     ORAP_HOSTNAME: config.ORAP_HOSTNAME,
     PREVIEW_SIGNING_KEY: '[REDACTED]',
@@ -255,6 +287,40 @@ function redactUrl(value: string): string {
   if (url.username) url.username = '[REDACTED]';
   if (url.password) url.password = '[REDACTED]';
   return url.toString();
+}
+
+function assertMfaKeyringJson(value: string): string[] {
+  const parsed = JSON.parse(value) as unknown;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('invalid');
+  const candidate = parsed as { activeVersion?: unknown; keys?: unknown };
+  if (
+    typeof candidate.activeVersion !== 'number' ||
+    !Number.isSafeInteger(candidate.activeVersion) ||
+    candidate.activeVersion <= 0 ||
+    candidate.activeVersion > maximumPostgresInteger ||
+    !candidate.keys ||
+    typeof candidate.keys !== 'object' ||
+    Array.isArray(candidate.keys)
+  ) {
+    throw new Error('invalid');
+  }
+  const entries = Object.entries(candidate.keys as Record<string, unknown>);
+  if (
+    entries.length === 0 ||
+    entries.some(
+      ([version, key]) =>
+        !/^[1-9]\d*$/u.test(version) ||
+        !Number.isSafeInteger(Number(version)) ||
+        Number(version) > maximumPostgresInteger ||
+        typeof key !== 'string' ||
+        key.length < 32,
+    ) ||
+    !Object.hasOwn(candidate.keys, String(candidate.activeVersion)) ||
+    new Set(entries.map(([, key]) => key)).size !== entries.length
+  ) {
+    throw new Error('invalid');
+  }
+  return entries.map(([, key]) => key as string);
 }
 
 function validIpOrCidr(value: string): boolean {
