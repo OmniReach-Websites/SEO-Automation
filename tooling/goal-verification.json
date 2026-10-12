@@ -37,18 +37,32 @@
       "npm",
       "test",
       "--",
+      "auth-attempt-limits.test.ts",
+      "auth-rate-limit.test.ts",
       "auth.test.ts",
       "auth-service.test.ts",
+      "client-network.test.ts",
+      "configuration.test.ts",
+      "mfa-key-rotation.test.ts",
+      "orap-admin.test.ts",
+      "password-recovery-outbox.test.ts",
+      "postgres-auth.test.ts",
+      "postgres-orap.test.ts",
+      "postgres-password-recovery.test.ts",
+      "postgres-recovery-code.test.ts",
+      "postgres-session-idle.test.ts",
       "redis-auth.test.ts",
+      "redis-email-code-challenge.test.ts",
       "resend-auth-alert.test.ts"
     ],
     ["npm", "run", "test:integration", "--", "auth/routes.test.ts"],
-    ["npm", "run", "test:security"]
+    ["npm", "run", "test:security"],
+    ["npm", "run", "typecheck"]
   ],
   "G06": [
     ["npm", "run", "check:migrations"],
     ["npm", "run", "test:security"],
-    ["npm", "run", "verify:local-stack"]
+    ["node", "tooling/verify-auth-v2-migration.mjs"]
   ],
   "G07": [
     ["npm", "test", "--", "orap-admin.test.ts"],
@@ -226,6 +240,40 @@
     ["npm", "run", "verify:backup-harness"],
     ["npm", "run", "verify:caddy"],
     ["npm", "run", "verify:g30-observer"],
+    ["npm", "run", "scan:secrets"]
+  ],
+  "G31": [
+    ["npm", "run", "check:workflows"],
+    ["npm", "run", "check:production-compose"],
+    ["npm", "run", "verify:production-compose"],
+    ["npm", "run", "verify:deploy-harness"],
+    ["npm", "run", "verify:backup-harness"],
+    ["npm", "run", "verify:caddy"],
+    [
+      "npm",
+      "test",
+      "--",
+      "target-release.test.ts",
+      "caddy-deployment-script.test.ts",
+      "configuration.test.ts"
+    ],
+    ["npm", "run", "check:migrations"],
+    ["npm", "run", "scan:secrets"]
+  ],
+  "G32": [
+    ["node", "tooling/check-docs.mjs"],
+    ["npm", "run", "validate:sites"],
+    ["npm", "run", "test:contracts"],
+    [
+      "npm",
+      "run",
+      "test:e2e",
+      "--",
+      "platform-flows.spec.ts",
+      "admin-shells.spec.ts",
+      "accessibility-reporting.spec.ts"
+    ],
+    ["npm", "run", "test:load"],
     ["npm", "run", "scan:secrets"]
   ]
 }
