@@ -1,0 +1,59 @@
+---
+import FaqList from '../components/FaqList.astro';
+import Layout from '../layouts/Layout.astro';
+import {
+  CALL_HREF,
+  INSTAGRAM_URL,
+  PHONE_DISPLAY,
+  serviceAreas,
+  TEXT_HREF,
+} from '../data/site';
+---
+
+<Layout
+  title="Contact Cooper"
+  description="Call or text Cooper for a mobile detailing quote in Aledo, Weatherford, Willow Park, Fort Worth, and surrounding communities."
+>
+  <section class="contact-hero">
+    <div class="shell contact-hero-grid">
+      <div>
+        <p class="eyebrow">Call or text</p>
+        <h1>Let's talk about your vehicle.</h1>
+        <p>For the quickest quote, share what you drive, the detailing service you want, the vehicle's condition, and your service location.</p>
+      </div>
+      <div class="contact-actions-card">
+        <p>Direct contact</p>
+        <a class="contact-method primary" href={CALL_HREF}><span>Call Cooper</span><strong>{PHONE_DISPLAY}</strong><b aria-hidden="true">↗</b></a>
+        <a class="contact-method" href={TEXT_HREF}><span>Send a text</span><strong>{PHONE_DISPLAY}</strong><b aria-hidden="true">↗</b></a>
+        <a class="contact-method" href={INSTAGRAM_URL} rel="noopener noreferrer"><span>See more</span><strong>@coops_mobile_detailing</strong><b aria-hidden="true">↗</b></a>
+        <p class="contact-note">No business email is published because one has not been verified.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section section-light" aria-labelledby="quote-heading">
+    <div class="shell quote-grid">
+      <div class="section-heading"><p class="eyebrow">What to include</p><h2 id="quote-heading">Four details help Cooper quote accurately.</h2></div>
+      <ol class="quote-list">
+        <li><span>01</span><div><h3>Vehicle type</h3><p>Car, truck, SUV, or another vehicle type.</p></div></li>
+        <li><span>02</span><div><h3>Desired service</h3><p>Exterior, interior, full detail, or an add-on.</p></div></li>
+        <li><span>03</span><div><h3>Vehicle condition</h3><p>Describe areas that may need extra attention.</p></div></li>
+        <li><span>04</span><div><h3>Service location</h3><p>Share the city or community where the vehicle will be.</p></div></li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="section contact-area-section" aria-labelledby="contact-area-heading">
+    <div class="shell two-column-simple">
+      <div><p class="eyebrow">Service area</p><h2 id="contact-area-heading">Mobile around Aledo.</h2><p>{serviceAreas.join(', ')}, and surrounding communities.</p></div>
+      <div class="contact-area-note"><strong>At the service location</strong><p>Water and electricity need to be available. Weather may require rescheduling.</p></div>
+    </div>
+  </section>
+
+  <section class="section section-light faq-section" aria-labelledby="contact-faq-heading">
+    <div class="shell faq-grid">
+      <div class="section-heading"><p class="eyebrow">Before you contact</p><h2 id="contact-faq-heading">A few quick answers.</h2><p>Starting prices and timing can vary with the vehicle and its condition.</p></div>
+      <FaqList />
+    </div>
+  </section>
+</Layout>

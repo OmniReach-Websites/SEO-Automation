@@ -1,0 +1,35 @@
+---
+import BeforeAfter from '../components/BeforeAfter.astro';
+import FinalCta from '../components/FinalCta.astro';
+import Gallery from '../components/Gallery.astro';
+import Layout from '../layouts/Layout.astro';
+---
+
+<Layout
+  title="Our Detailing Work"
+  description="See real exterior and interior detailing work from Coop's Mobile Detailing, including an interactive before-and-after comparison."
+>
+  <section class="page-hero work-page-hero">
+    <div class="page-hero-media"><img src="/images/work-1.webp" width="756" height="1008" alt="Cooper detailing a blue Ford Mustang" fetchpriority="high" /></div>
+    <div class="shell page-hero-content"><p class="eyebrow">Our work</p><h1>The finish speaks for itself.</h1><p>Real vehicles and real detailing work. Select any photo for a closer look.</p></div>
+  </section>
+
+  <section class="section gallery-section" aria-labelledby="gallery-heading">
+    <div class="shell">
+      <div class="section-heading split-heading">
+        <div><p class="eyebrow">Portfolio</p><h2 id="gallery-heading">Details from every angle.</h2></div>
+        <p>Filter by the type of work, then open a photo to use the full-size, keyboard-accessible viewer.</p>
+      </div>
+      <Gallery />
+    </div>
+  </section>
+
+  <section class="section comparison-section" aria-labelledby="work-comparison-heading">
+    <div class="shell comparison-grid">
+      <div><p class="eyebrow">Before & after</p><h2 id="work-comparison-heading">One interior. Two moments.</h2><p>Use the slider, arrow keys, or touch controls to compare the verified photo pair.</p></div>
+      <BeforeAfter />
+    </div>
+  </section>
+
+  <FinalCta />
+</Layout>

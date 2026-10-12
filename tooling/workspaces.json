@@ -56,6 +56,12 @@
       ]
     },
     {
+      "name": "@omnireach/site-coops-mobile-detailing",
+      "path": "sites/coops-mobile-detailing",
+      "kind": "site",
+      "allowedWorkspaceDependencies": ["@omnireach/contracts", "@omnireach/site-runtime"]
+    },
+    {
       "name": "@omnireach/site-custom-portfolio-example",
       "path": "sites/custom-portfolio-example",
       "kind": "site",

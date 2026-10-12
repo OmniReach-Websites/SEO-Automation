@@ -1,0 +1,64 @@
+---
+import '../styles/global.css';
+import Footer from '../components/Footer.astro';
+import Header from '../components/Header.astro';
+import MobileActions from '../components/MobileActions.astro';
+import { SITE_URL } from '../data/site';
+
+interface Props {
+  canonicalPath?: string;
+  description: string;
+  image?: string;
+  noindex?: boolean;
+  structuredData?: Record<string, unknown> | Record<string, unknown>[];
+  title: string;
+}
+
+const {
+  canonicalPath = Astro.url.pathname,
+  description,
+  image = '/images/social-card.webp',
+  noindex = false,
+  structuredData,
+  title,
+} = Astro.props;
+const canonical = new URL(canonicalPath, SITE_URL).toString();
+const socialImage = new URL(image, SITE_URL).toString();
+const documentTitle = `${title} | Coop's Mobile Detailing`;
+const serializedSchema = structuredData
+  ? JSON.stringify(structuredData).replaceAll('<', '\\u003c')
+  : undefined;
+---
+
+<!doctype html>
+<html lang="en-US">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content={description} />
+    <meta name="theme-color" content="#0e141b" />
+    {noindex && <meta name="robots" content="noindex, follow" />}
+    <link rel="canonical" href={canonical} />
+    <link rel="icon" href="/favicon.png" type="image/png" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Coop's Mobile Detailing" />
+    <meta property="og:title" content={documentTitle} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={socialImage} />
+    <meta property="og:image:alt" content="Coop's Mobile Detailing logo beside a detailed vehicle" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={documentTitle} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={socialImage} />
+    <title>{documentTitle}</title>
+    {serializedSchema && <script type="application/ld+json" set:html={serializedSchema} />}
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to content</a>
+    <Header />
+    <main id="main-content"><slot /></main>
+    <Footer />
+    <MobileActions />
+  </body>
+</html>

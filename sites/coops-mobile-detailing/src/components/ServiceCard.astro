@@ -1,0 +1,45 @@
+---
+import { TEXT_HREF } from '../data/site';
+
+interface Props {
+  service: {
+    alt: string;
+    description: string;
+    featured?: boolean;
+    id: string;
+    image: string;
+    imageSmall: string;
+    includes: readonly string[];
+    name: string;
+    price: string;
+  };
+}
+const { service } = Astro.props;
+---
+
+<article class:list={['service-card', { featured: service.featured }]} id={service.id}>
+  <div class="service-image">
+    <img
+      src={service.imageSmall}
+      srcset={`${service.imageSmall} 480w, ${service.image} 756w`}
+      sizes="(max-width: 700px) 100vw, 33vw"
+      width="756"
+      height="1008"
+      alt={service.alt}
+      loading="lazy"
+      decoding="async"
+    />
+    {service.featured && <span class="service-badge">Inside + out</span>}
+  </div>
+  <div class="service-card-body">
+    <div class="service-title-row">
+      <h3>{service.name}</h3>
+      <p class="service-price"><span>Starting at</span>{service.price}</p>
+    </div>
+    <p>{service.description}</p>
+    <ul class="check-list">
+      {service.includes.map((item) => <li>{item}</li>)}
+    </ul>
+    <a class="text-link" href={TEXT_HREF}>Text for a quote <span aria-hidden="true">→</span></a>
+  </div>
+</article>
