@@ -76,6 +76,20 @@ describe('production release workflow gates', () => {
     );
   });
 
+  it('rejects a rollback that is not explicitly confirmed and repository-activated', () => {
+    const result = withWorkflowFixture((files) => ({
+      ...files,
+      'deploy-production.yml': workflowSource(files, 'deploy-production.yml').replace(
+        "inputs.confirm_rollback == true &&\n      vars.PRODUCTION_DEPLOYMENT_ENABLED == 'true'",
+        'inputs.confirm_rollback == true',
+      ),
+    }));
+
+    expect(result.errors).toContain(
+      'deploy-production.yml: rollback must be main-only and default off behind both gates',
+    );
+  });
+
   it('rejects reuse of one checkout metadata path for the two bridge artifacts', () => {
     const result = withWorkflowFixture((files) => {
       const source = workflowSource(files, 'deploy-production.yml');

@@ -127,10 +127,12 @@ export function checkWorkflows(directory = workflowsDirectory) {
           "github.event_name == 'workflow_dispatch'",
           "github.ref == 'refs/heads/main'",
           "inputs.operation == 'rollback'",
+          'inputs.confirm_rollback == true',
+          "vars.PRODUCTION_DEPLOYMENT_ENABLED == 'true'",
         ]) ||
         !source.includes('omnireach-release rollback')
       ) {
-        errors.push(`${file}: rollback must be an environment-reviewed manual operation`);
+        errors.push(`${file}: rollback must be main-only and default off behind both gates`);
       }
       const dispatchInputs = workflow.on.workflow_dispatch?.inputs ?? {};
       if (
@@ -138,11 +140,13 @@ export function checkWorkflows(directory = workflowsDirectory) {
         dispatchInputs.rollback_sha?.type !== 'string' ||
         dispatchInputs.confirm_bridge?.type !== 'boolean' ||
         dispatchInputs.confirm_bridge?.default !== false ||
+        dispatchInputs.confirm_rollback?.type !== 'boolean' ||
+        dispatchInputs.confirm_rollback?.default !== false ||
         dispatchInputs.operation?.default !== 'rollback' ||
         !dispatchInputs.operation?.options?.includes('bridge') ||
         !dispatchInputs.operation?.options?.includes('rollback')
       ) {
-        errors.push(`${file}: bridge dispatch must accept two SHAs and default-off confirmation`);
+        errors.push(`${file}: production dispatch inputs must default both operations off`);
       }
       if (
         !includesEvery(jobs.bridge?.if, [
