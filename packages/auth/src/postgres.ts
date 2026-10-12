@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { domainToASCII } from 'node:url';
 
 import { roles, type Role } from './roles.ts';
@@ -271,8 +272,7 @@ export class PostgresAuthenticationRepository implements AuthenticationRepositor
              ON version.role_id = invitation.role_id
             AND version.id = invitation.role_version_id
           WHERE invitation.token_hash = $1 AND invitation.state = 'pending'
-            AND invitation.expires_at > $2 AND invitation.exact_host = $3
-          FOR UPDATE OF invitation`,
+            AND invitation.expires_at > $2 AND invitation.exact_host = $3`,
         [input.tokenHash, input.now, input.host],
       );
       if (invitation.rows.length !== 1 || !invitation.rows[0]) return undefined;
@@ -353,29 +353,20 @@ export class PostgresAuthenticationRepository implements AuthenticationRepositor
         ),
         'ORAP staff membership creation failed',
       );
-      const assignment = requiredRow(
-        await query<{ id: string }>(
-          client,
-          `INSERT INTO staff_role_assignments
-             (staff_membership_id, role_id, role_version_id, primary_role,
-              assigned_by, reason)
-           VALUES ($1, $2, $3, true, $4, 'Accepted owner-issued staff invitation')
-           RETURNING id`,
-          [membership.id, invited.role_id, invited.role_version_id, invited.created_by],
-        ),
-        'Invited staff role assignment failed',
+      const assignmentId = randomUUID();
+      await client.query(
+        `INSERT INTO staff_role_assignments
+           (id, staff_membership_id, role_id, role_version_id, primary_role,
+            assigned_by, reason)
+         VALUES ($1, $2, $3, $4, true, $5, 'Accepted owner-issued staff invitation')`,
+        [assignmentId, membership.id, invited.role_id, invited.role_version_id, invited.created_by],
       );
       await client.query(
         `INSERT INTO staff_resource_scopes (assignment_id, scope_type, created_by)
          VALUES ($1, 'platform', $2)`,
-        [assignment.id, invited.created_by],
+        [assignmentId, invited.created_by],
       );
-      await client.query(
-        `UPDATE staff_invitations
-            SET state = 'accepted', accepted_at = $2, accepted_user_id = $3
-          WHERE id = $1`,
-        [invited.id, input.now, user.id],
-      );
+      await client.query(`SELECT accept_orap_staff_invitation($1, $2)`, [invited.id, user.id]);
       await insertAudit(client, {
         action: 'staff.invitation.accepted',
         actorId: user.id,

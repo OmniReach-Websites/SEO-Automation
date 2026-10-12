@@ -5,6 +5,7 @@ import {
   assertPlatformOwnerIdentity,
   canOrap,
   createOneTimeToken,
+  hashPassword,
   normalizeEmail,
   OrapAuthorizationDeniedError,
   orapVisibleScope,
@@ -244,6 +245,47 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
         permissionCount: row.permission_count,
         slug: row.slug,
       }));
+    });
+  }
+
+  async updateStaffAccount(
+    actor: AdminActor,
+    input: {
+      displayName: string;
+      email: string;
+      jobTitle?: string;
+      newPassword?: string;
+      reason: string;
+      userId: string;
+    },
+  ): Promise<unknown> {
+    assertStaffAuthorityMutation(actor, input.reason);
+    const normalizedEmail = normalizeEmail(input.email);
+    const passwordHash = input.newPassword ? await hashPassword(input.newPassword) : null;
+    return this.transaction(actor, async (client) => {
+      const result = await query<{
+        password_replaced: boolean;
+        revoked_sessions: number;
+        updated_display_name: string;
+        updated_job_title: string | null;
+        updated_normalized_email: string;
+      }>(client, `SELECT * FROM orap_owner_update_staff_account($1, $2, $3, $4, $5, $6, $7)`, [
+        input.userId,
+        input.displayName.trim(),
+        normalizedEmail,
+        input.jobTitle?.trim() ?? '',
+        passwordHash,
+        input.reason.trim(),
+        actor.traceId,
+      ]);
+      const updated = required(result.rows[0], 'ORAP staff account update failed');
+      return {
+        displayName: updated.updated_display_name,
+        ...(updated.updated_job_title ? { jobTitle: updated.updated_job_title } : {}),
+        normalizedEmail: updated.updated_normalized_email,
+        passwordReplaced: updated.password_replaced,
+        revokedSessions: updated.revoked_sessions,
+      };
     });
   }
 
