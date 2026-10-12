@@ -176,6 +176,7 @@ describe('immutable release contract metadata', () => {
 
       const input = {
         authSecretsPath,
+        authWebAuthnPath: join(fixture, 'missing-legacy-webauthn.ts'),
         manifestPath,
         migrationsRoot,
         outputPath,
