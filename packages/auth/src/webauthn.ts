@@ -18,6 +18,8 @@ import {
   type WebAuthnCredential,
 } from '@simplewebauthn/server';
 
+import type { Role } from './roles.ts';
+
 export const webAuthnCeremonyTtlSeconds = 300;
 export const webAuthnSupportedAlgorithmIds = [-7, -257] as const;
 
@@ -87,7 +89,19 @@ export type WebAuthnCeremony = WebAuthnCeremonyBinding &
     | {
         baseChallengeDigest?: never;
         bootstrapBindingDigest?: never;
-        purpose: 'registration' | 'step_up';
+        credentialName: string;
+        credentialStateDigest: string;
+        purpose: 'registration';
+        recoveryCodeHashes: string[];
+        sessionTokenHash: string;
+      }
+    | {
+        baseChallengeDigest?: never;
+        bootstrapBindingDigest?: never;
+        credentialName?: never;
+        credentialStateDigest?: never;
+        purpose: 'step_up';
+        recoveryCodeHashes?: never;
         sessionTokenHash: string;
       }
   );
@@ -96,6 +110,62 @@ export interface WebAuthnCeremonyStore {
   consume(ceremonyId: string): Promise<WebAuthnCeremony | undefined>;
   create(ceremony: WebAuthnCeremony, ttlSeconds?: number): Promise<string>;
 }
+
+export interface WebAuthnEnrollmentTarget extends WebAuthnScopeRecord {
+  activeCredentialCount: number;
+  authStateVersion: string;
+  credentials: Pick<WebAuthnCredentialRecord, 'credentialId' | 'transports'>[];
+  displayName: string;
+  emailCodeEnabled: boolean;
+  hasTotp: boolean;
+  hasWebAuthn: boolean;
+  host: string;
+  normalizedEmail: string;
+  passwordHash: string;
+  role: Role;
+  secondStepRequired: boolean;
+}
+
+export interface WebAuthnEnrollmentRepository {
+  completeEnrollment(input: WebAuthnEnrollmentCompletionInput): Promise<boolean>;
+  findEnrollmentTarget(input: {
+    host: string;
+    now: Date;
+    sessionTokenHash: string;
+  }): Promise<WebAuthnEnrollmentTarget | undefined>;
+}
+
+export interface WebAuthnEnrollmentCompletionInput {
+  backedUp: boolean;
+  backupEligible: boolean;
+  credentialId: Uint8Array;
+  credentialName: string;
+  credentialStateDigest: string;
+  deviceType: CredentialDeviceType;
+  expectedAuthStateVersion: string;
+  host: string;
+  now: Date;
+  publicKey: Uint8Array;
+  recoveryCodeHashes: string[];
+  scopeId: string;
+  sessionTokenHash: string;
+  signCount: number;
+  siteId?: string;
+  tenantId?: string;
+  traceId: string;
+  transports: string[];
+  userHandle: Uint8Array;
+  userId: string;
+  verifyCredentialState(passwordHash: string, expectedDigest: string): boolean;
+}
+
+export interface WebAuthnEnrollmentPreparation {
+  ceremonyId: string;
+  options: PublicKeyCredentialCreationOptionsJSON;
+  recoveryCodes: string[];
+}
+
+export type WebAuthnRegistrationResponse = RegistrationResponseJSON;
 
 export function createWebAuthnUserHandle(): Uint8Array {
   return new Uint8Array(randomBytes(64));

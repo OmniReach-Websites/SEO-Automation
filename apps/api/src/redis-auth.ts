@@ -500,19 +500,30 @@ function parseWebAuthnCeremonyBinding(
       'bootstrapBindingDigest' | 'purpose'
     >
   | Pick<
-      Extract<WebAuthnCeremony, { purpose: 'registration' | 'step_up' }>,
-      'purpose' | 'sessionTokenHash'
+      Extract<WebAuthnCeremony, { purpose: 'registration' }>,
+      | 'credentialName'
+      | 'credentialStateDigest'
+      | 'purpose'
+      | 'recoveryCodeHashes'
+      | 'sessionTokenHash'
     >
+  | Pick<Extract<WebAuthnCeremony, { purpose: 'step_up' }>, 'purpose' | 'sessionTokenHash'>
   | undefined {
   if (!isWebAuthnPurpose(parsed.purpose)) return undefined;
   const base = parsed.baseChallengeDigest;
   const bootstrap = parsed.bootstrapBindingDigest;
   const session = parsed.sessionTokenHash;
+  const credentialName = parsed.credentialName;
+  const credentialState = parsed.credentialStateDigest;
+  const recoveryCodes = parsed.recoveryCodeHashes;
   if (
     parsed.purpose === 'authentication' &&
     isSha256Digest(base) &&
     bootstrap === undefined &&
-    session === undefined
+    session === undefined &&
+    credentialName === undefined &&
+    credentialState === undefined &&
+    recoveryCodes === undefined
   ) {
     return { baseChallengeDigest: base, purpose: parsed.purpose };
   }
@@ -520,15 +531,45 @@ function parseWebAuthnCeremonyBinding(
     parsed.purpose === 'owner_bootstrap' &&
     base === undefined &&
     isSha256Digest(bootstrap) &&
-    session === undefined
+    session === undefined &&
+    credentialName === undefined &&
+    credentialState === undefined &&
+    recoveryCodes === undefined
   ) {
     return { bootstrapBindingDigest: bootstrap, purpose: parsed.purpose };
   }
   if (
-    (parsed.purpose === 'registration' || parsed.purpose === 'step_up') &&
+    parsed.purpose === 'registration' &&
     base === undefined &&
     bootstrap === undefined &&
-    isSha256Digest(session)
+    isSha256Digest(session) &&
+    typeof credentialName === 'string' &&
+    credentialName === credentialName.trim() &&
+    credentialName.length >= 1 &&
+    credentialName.length <= 80 &&
+    !/[\u0000-\u001f\u007f]/u.test(credentialName) &&
+    isSha256Digest(credentialState) &&
+    Array.isArray(recoveryCodes) &&
+    recoveryCodes.length === 10 &&
+    recoveryCodes.every(isSha256Digest) &&
+    new Set(recoveryCodes).size === recoveryCodes.length
+  ) {
+    return {
+      credentialName,
+      credentialStateDigest: credentialState,
+      purpose: parsed.purpose,
+      recoveryCodeHashes: recoveryCodes,
+      sessionTokenHash: session,
+    };
+  }
+  if (
+    parsed.purpose === 'step_up' &&
+    base === undefined &&
+    bootstrap === undefined &&
+    isSha256Digest(session) &&
+    credentialName === undefined &&
+    credentialState === undefined &&
+    recoveryCodes === undefined
   ) {
     return { purpose: parsed.purpose, sessionTokenHash: session };
   }

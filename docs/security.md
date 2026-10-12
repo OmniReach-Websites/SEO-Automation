@@ -98,10 +98,17 @@
   at most five minutes. User verification is required and attestation is not collected.
 - The Auth Contract v3 persistence foundation stores random 64-byte user handles and
   immutable RP/site credential identity behind forced RLS and auth-role-only grants.
-  There are no passkey routes or credential mutation methods yet. Later enrollment and
-  revocation must atomically audit and revoke sessions; assertion counter/backup updates
-  must be atomic with session issuance. A verified email-code or TOTP fallback remains
-  mandatory before passkey enrollment in V1, including for multi-host identities.
+  Enrollment preparation requires the current password, a recent non-recovery
+  baseline/strong customer session or existing strong ORAP session, an exact verified
+  host, and an existing email/TOTP/passkey path. Completion consumes a five-minute
+  one-use session/auth-state/credential-state-bound ceremony and atomically inserts the
+  credential, replaces account recovery-code hashes, activates required/preferred
+  WebAuthn policy, revokes every session, and writes non-secret audit evidence. The
+  first ORAP strong factor requires the separate approved bootstrap/recovery
+  authorization; email assurance alone cannot enroll it. The API and Windows Hello UI
+  remain behind a compile-time-off capability gate until assertion/login atomically
+  updates credential state with session issuance. Revocation management is not yet
+  exposed.
 - Customer Owner, Customer Editor, and Customer Viewer accounts are password-only by
   default. Customers may voluntarily enable email-code verification, TOTP, or WebAuthn
   through tenant-safe security settings. Enrollment must verify the new method before

@@ -117,7 +117,12 @@ describe('Redis authentication boundaries', () => {
     };
     const registration: WebAuthnCeremony = {
       ...common,
+      credentialName: 'Windows Hello',
+      credentialStateDigest: 'e'.repeat(64),
       purpose: 'registration',
+      recoveryCodeHashes: Array.from({ length: 10 }, (_, index) =>
+        index.toString(16).padStart(64, '0'),
+      ),
       sessionTokenHash: 'b'.repeat(64),
     };
     const ownerBootstrap: WebAuthnCeremony = {
@@ -126,6 +131,9 @@ describe('Redis authentication boundaries', () => {
       purpose: 'owner_bootstrap',
     };
     await expect(store.create(registration)).resolves.toBeTypeOf('string');
+    const serialized = [...redis.values.values()].find((value) => value.includes('Windows Hello'));
+    expect(serialized).toContain(registration.recoveryCodeHashes[0]);
+    expect(serialized).not.toContain('AAAA-BBBB-CCCC-DDDD');
     await expect(store.create(ownerBootstrap)).resolves.toBeTypeOf('string');
     await expect(
       store.create({

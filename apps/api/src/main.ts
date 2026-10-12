@@ -6,6 +6,7 @@ import {
   parseVersionedSecretKeyring,
   PostgresAuthenticationRepository,
   PostgresPasswordRecoveryOutbox,
+  PostgresWebAuthnRepository,
   type AuthenticationTransactionPool,
   type PasswordRecoveryOutboxPool,
 } from '@omnireach/auth';
@@ -35,6 +36,7 @@ import {
   RedisEmailCodeChallengeStore,
   RedisMfaChallengeStore,
   RedisOwnerBootstrapPendingStore,
+  RedisWebAuthnCeremonyStore,
   type AuthRedisClient,
   type EmailCodeRedisClient,
 } from './redis-auth.ts';
@@ -53,6 +55,10 @@ const config = parseConfig(process.env);
 const database = createDatabase(config.DATABASE_URL);
 const redis = createClient({ url: config.REDIS_URL });
 const authRepository = new PostgresAuthenticationRepository(
+  database.pool as unknown as AuthenticationTransactionPool,
+  config.ORAP_HOSTNAME,
+);
+const webAuthnRepository = new PostgresWebAuthnRepository(
   database.pool as unknown as AuthenticationTransactionPool,
   config.ORAP_HOSTNAME,
 );
@@ -92,6 +98,11 @@ const authService = new AuthenticationService(
     mfaEncryptionKeyring,
     orapHostname: config.ORAP_HOSTNAME,
     ownerBootstrapStore: new RedisOwnerBootstrapPendingStore(redisAuth),
+    // This kill switch intentionally cannot be enabled from production configuration
+    // until assertion/login support lands and is tested in the same release.
+    webAuthnAuthenticationEnabled: false,
+    webAuthnCeremonies: new RedisWebAuthnCeremonyStore(redisAuth),
+    webAuthnRepository,
     ...(verificationNotifier ? { verificationNotifier } : {}),
   },
 );

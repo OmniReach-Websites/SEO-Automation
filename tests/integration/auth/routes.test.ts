@@ -1,4 +1,5 @@
 import { buildApiServer } from '@omnireach/api';
+import type { WebAuthnEnrollmentPreparation } from '@omnireach/auth';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const servers = [] as ReturnType<typeof buildApiServer>[];
@@ -375,6 +376,7 @@ describe('authentication route safety', () => {
           emailPolicyChangeAllowed: true,
           secondStepRequired: false,
           totpEnabled: false,
+          webauthnEnrollmentAvailable: false,
           webauthnEnabled: false,
         })),
         verifyMfa: vi.fn(async () => ({ kind: 'invalid' as const })),
@@ -496,6 +498,129 @@ describe('authentication route safety', () => {
     expect(invitation.headers.location).toBe('/mfa?email=1');
     expect(invitation.headers['set-cookie']).toContain(
       '__Host-omnireach_challenge=invitation-challenge-a',
+    );
+  });
+
+  it('serves exact-origin passkey enrollment UI and revokes the current cookie on completion', async () => {
+    const prepareWebAuthnEnrollment = vi.fn(
+      async () =>
+        ({
+          ceremonyId: 'fictional-ceremony',
+          options: {
+            attestation: 'none',
+            authenticatorSelection: { userVerification: 'required' },
+            challenge: 'fictional_challenge',
+            excludeCredentials: [],
+            pubKeyCredParams: [{ alg: -7, type: 'public-key' }],
+            rp: { id: 'admin.alpha.test', name: 'OmniReach' },
+            timeout: 300_000,
+            user: {
+              displayName: 'Customer Owner',
+              id: 'Bw',
+              name: 'owner@example.test',
+            },
+          },
+          recoveryCodes: ['AAAA-BBBB-CCCC-DDDD'],
+        }) satisfies WebAuthnEnrollmentPreparation,
+    );
+    const completeWebAuthnEnrollment = vi.fn(async () => ({ sessionsRevoked: true as const }));
+    const server = buildApiServer({
+      authService: {
+        acceptInvitation: vi.fn(async () => ({ kind: 'invalid' as const })),
+        completeOwnerBootstrap: vi.fn(async () => false),
+        completePasswordRecovery: vi.fn(async () => false),
+        completeWebAuthnEnrollment,
+        listSessions: vi.fn(async () => []),
+        login: vi.fn(async () => ({ kind: 'invalid' as const })),
+        logout: vi.fn(async () => undefined),
+        prepareOwnerBootstrap: vi.fn(async () => undefined),
+        prepareWebAuthnEnrollment,
+        requestPasswordRecovery: vi.fn(async () => undefined),
+        revokeSession: vi.fn(async () => false),
+        securitySettings: vi.fn(async () => ({
+          emailCodeEnabled: true,
+          emailPolicyChangeAllowed: true,
+          secondStepRequired: false,
+          totpEnabled: false,
+          webauthnEnabled: false,
+          webauthnEnrollmentAvailable: true,
+        })),
+        verifyMfa: vi.fn(async () => ({ kind: 'invalid' as const })),
+      },
+      logLevel: 'silent',
+    });
+    servers.push(server);
+
+    const page = await server.inject({
+      cookies: { '__Host-omnireach_session': 'customer-session' },
+      headers: { host: 'admin.alpha.test' },
+      method: 'GET',
+      url: '/security',
+    });
+    expect(page.statusCode).toBe(200);
+    expect(page.body).toContain('id="passkey-enrollment"');
+    expect(page.body).toContain('/security/passkey.js');
+    expect(page.headers['content-security-policy']).toContain("script-src 'self'");
+    expect(page.headers['content-security-policy']).toContain("connect-src 'self'");
+
+    const script = await server.inject({ method: 'GET', url: '/security/passkey.js' });
+    expect(script.statusCode).toBe(200);
+    expect(script.headers['content-type']).toContain('application/javascript');
+    expect(script.body).toContain('navigator.credentials.create');
+    expect(script.body).not.toContain('localStorage');
+
+    const crossOrigin = await server.inject({
+      cookies: { '__Host-omnireach_session': 'customer-session' },
+      headers: { host: 'admin.alpha.test', origin: 'https://attacker.example' },
+      method: 'POST',
+      payload: { credentialName: 'Windows Hello', currentPassword: 'fictional-password' },
+      url: '/auth/security/webauthn/prepare',
+    });
+    expect(crossOrigin.statusCode).toBe(403);
+    expect(prepareWebAuthnEnrollment).not.toHaveBeenCalled();
+
+    const prepared = await server.inject({
+      cookies: { '__Host-omnireach_session': 'customer-session' },
+      headers: { host: 'admin.alpha.test', origin: 'https://admin.alpha.test' },
+      method: 'POST',
+      payload: { credentialName: 'Windows Hello', currentPassword: 'fictional-password' },
+      url: '/auth/security/webauthn/prepare',
+    });
+    expect(prepared.statusCode).toBe(200);
+    expect(prepared.headers['cache-control']).toBe('no-store');
+    expect(prepared.headers.pragma).toBe('no-cache');
+    expect(prepareWebAuthnEnrollment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        host: 'admin.alpha.test',
+        sessionToken: 'customer-session',
+      }),
+    );
+
+    const completed = await server.inject({
+      cookies: { '__Host-omnireach_session': 'customer-session' },
+      headers: { host: 'admin.alpha.test', origin: 'https://admin.alpha.test' },
+      method: 'POST',
+      payload: {
+        ceremonyId: 'fictional-ceremony',
+        recoveryCodesAcknowledged: true,
+        response: {
+          clientExtensionResults: {},
+          id: 'AQID',
+          rawId: 'AQID',
+          response: { attestationObject: 'AQ', clientDataJSON: 'AQ', transports: ['internal'] },
+          type: 'public-key',
+        },
+      },
+      url: '/auth/security/webauthn/complete',
+    });
+    expect(completed.statusCode).toBe(200);
+    expect(String(completed.headers['set-cookie'])).toContain('__Host-omnireach_session=;');
+    expect(completeWebAuthnEnrollment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        host: 'admin.alpha.test',
+        recoveryCodesAcknowledged: true,
+        sessionToken: 'customer-session',
+      }),
     );
   });
 });
