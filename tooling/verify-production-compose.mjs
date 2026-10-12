@@ -91,8 +91,15 @@ try {
     `apk add --no-cache openssl >/dev/null && mkdir -p /output/secrets && sh ${bootstrapScript} --secrets-dir /output/secrets && chown -R ${hostUid}:${hostGid} /output/secrets`,
   ]);
   const before = await secretValues();
+  const beforeKeyring = (
+    await readFile(resolve(secretsDirectory, 'mfa_encryption_keyring'), 'utf8')
+  ).trim();
   assert.equal(new Set(before).size, before.length, 'generated secrets must be independent');
   for (const value of before) assert.match(value, /^[a-f0-9]{64}$/u);
+  assert.deepEqual(JSON.parse(beforeKeyring), {
+    activeVersion: 1,
+    keys: { 1: before[4] },
+  });
 
   run('docker', [
     'run',
@@ -110,6 +117,11 @@ try {
     await secretValues(),
     before,
     'idempotent bootstrap must not rotate credentials',
+  );
+  assert.equal(
+    (await readFile(resolve(secretsDirectory, 'mfa_encryption_keyring'), 'utf8')).trim(),
+    beforeKeyring,
+    'idempotent bootstrap must not rotate the MFA keyring',
   );
 
   await cp(environmentExample, environmentFile);
@@ -131,6 +143,7 @@ try {
     assert.deepEqual(configuration.services[serviceName].networks, { backend: null });
   }
   for (const secret of before) assert.ok(!rendered.stdout.includes(secret));
+  assert.ok(!rendered.stdout.includes(beforeKeyring));
 
   stackCreated = true;
   try {

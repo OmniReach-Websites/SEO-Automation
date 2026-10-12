@@ -81,6 +81,7 @@ export function checkProductionCompose() {
     'redis_app_password',
     'session_secret',
     'mfa_encryption_key',
+    'mfa_encryption_keyring',
     'preview_signing_key',
     'contact_encryption_key',
   ]) {

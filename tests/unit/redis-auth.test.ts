@@ -66,6 +66,7 @@ describe('Redis authentication boundaries', () => {
     const store = new RedisOwnerBootstrapPendingStore(redis);
     const value = {
       encryptedMfaSecret: new Uint8Array(40).fill(7),
+      keyVersion: 2,
       method: 'totp' as const,
       normalizedEmail: 'owner@example.test',
       recoveryCodeHashes: ['a'.repeat(64)],

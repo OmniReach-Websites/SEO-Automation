@@ -1,8 +1,12 @@
 import { domainToASCII } from 'node:url';
 
 import {
+  activeSecretKey,
+  createVersionedSecretKeyring,
   decryptPasswordRecoveryDeliveryToken,
   encryptPasswordRecoveryDeliveryToken,
+  secretKeyForVersion,
+  type VersionedSecretKeyring,
 } from './secrets.ts';
 import type { PasswordRecoveryNotifier } from './service.ts';
 import { digestToken } from './tokens.ts';
@@ -51,15 +55,20 @@ export class PostgresPasswordRecoveryOutbox implements PasswordRecoveryNotifier 
   readonly #maxAttempts: number;
   readonly #now: () => Date;
   readonly #pollIntervalMs: number;
+  readonly #keyring: VersionedSecretKeyring;
   #activeDrain: Promise<void> | undefined;
   #timer: NodeJS.Timeout | undefined;
 
   constructor(
     private readonly pool: PasswordRecoveryOutboxPool,
     private readonly downstream: PasswordRecoveryNotifier,
-    private readonly keyMaterial: string,
+    keyring: string | VersionedSecretKeyring,
     options: OutboxOptions = {},
   ) {
+    this.#keyring =
+      typeof keyring === 'string'
+        ? createVersionedSecretKeyring({ activeVersion: 1, keys: { 1: keyring } })
+        : keyring;
     this.#baseRetryMs = positiveInteger(options.baseRetryMs ?? 30_000, 'base retry');
     this.#batchSize = positiveInteger(options.batchSize ?? 10, 'batch size');
     this.#leaseMs = positiveInteger(options.leaseMs ?? 60_000, 'lease');
@@ -70,26 +79,28 @@ export class PostgresPasswordRecoveryOutbox implements PasswordRecoveryNotifier 
 
   async send(input: { host: string; normalizedEmail: string; token: string }): Promise<void> {
     const now = this.#now();
-    const encryptedToken = encryptPasswordRecoveryDeliveryToken(input.token, this.keyMaterial);
+    const activeKey = activeSecretKey(this.#keyring);
+    const encryptedToken = encryptPasswordRecoveryDeliveryToken(input.token, activeKey.keyMaterial);
     const rows = await this.transaction<{ id: string }[]>(async (client) =>
       queryRows<{ id: string }>(
         client,
         `INSERT INTO password_recovery_delivery_outbox
            (recovery_token_id, encrypted_token, encryption_key_version, status,
             attempts, available_at)
-         SELECT recovery.id, $2, 1, 'queued', 0, $5
+         SELECT recovery.id, $2, $3, 'queued', 0, $6
            FROM password_recovery_tokens recovery
            JOIN users account ON account.id = recovery.user_id
           WHERE recovery.token_hash = $1
-            AND recovery.host = $3
-            AND account.normalized_email = $4
+            AND recovery.host = $4
+            AND account.normalized_email = $5
             AND recovery.used_at IS NULL
-            AND recovery.expires_at > $5
+            AND recovery.expires_at > $6
          ON CONFLICT (recovery_token_id) DO NOTHING
          RETURNING id`,
         [
           digestToken(input.token),
           encryptedToken,
+          activeKey.keyVersion,
           normalizeHost(input.host),
           input.normalizedEmail,
           now,
@@ -104,14 +115,15 @@ export class PostgresPasswordRecoveryOutbox implements PasswordRecoveryNotifier 
     const delivery = await this.claim(now);
     if (!delivery) return 'idle';
 
-    if (delivery.encryption_key_version !== 1) {
-      await this.finishTerminal(delivery, 'key_version_unavailable', now);
-      return 'failed';
+    const keyMaterial = secretKeyForVersion(this.#keyring, delivery.encryption_key_version);
+    if (!keyMaterial) {
+      await this.finishKeyUnavailable(delivery, now);
+      return 'retrying';
     }
 
     let token: string;
     try {
-      token = decryptPasswordRecoveryDeliveryToken(delivery.encrypted_token, this.keyMaterial);
+      token = decryptPasswordRecoveryDeliveryToken(delivery.encrypted_token, keyMaterial);
     } catch {
       await this.finishTerminal(delivery, 'payload_invalid', now);
       return 'failed';
@@ -263,6 +275,21 @@ export class PostgresPasswordRecoveryOutbox implements PasswordRecoveryNotifier 
           WHERE id = $1 AND status = 'processing' AND attempts = $4
             AND locked_until = $5`,
         [delivery.id, errorCode, now, delivery.attempts, delivery.leaseUntil],
+      );
+    });
+  }
+
+  private async finishKeyUnavailable(delivery: ClaimedDelivery, now: Date): Promise<void> {
+    const retryAt = new Date(now.getTime() + this.#baseRetryMs);
+    await this.transaction(async (client) => {
+      await client.query(
+        `UPDATE password_recovery_delivery_outbox
+            SET status = 'queued', attempts = GREATEST(attempts - 1, 0),
+                available_at = $2, locked_until = NULL,
+                last_error_code = 'key_version_unavailable', updated_at = $3
+          WHERE id = $1 AND status = 'processing' AND attempts = $4
+            AND locked_until = $5`,
+        [delivery.id, retryAt, now, delivery.attempts, delivery.leaseUntil],
       );
     });
   }

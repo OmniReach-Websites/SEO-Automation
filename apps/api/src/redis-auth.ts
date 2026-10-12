@@ -47,7 +47,10 @@ export class RedisOwnerBootstrapPendingStore implements OwnerBootstrapPendingSto
   async create(value: PendingOwnerBootstrap, ttlSeconds: number): Promise<string> {
     const serialized = JSON.stringify({
       ...(value.encryptedMfaSecret
-        ? { encryptedMfaSecret: Buffer.from(value.encryptedMfaSecret).toString('base64') }
+        ? {
+            encryptedMfaSecret: Buffer.from(value.encryptedMfaSecret).toString('base64'),
+            ...(value.keyVersion ? { keyVersion: value.keyVersion } : {}),
+          }
         : {}),
       method: value.method,
       normalizedEmail: value.normalizedEmail,
@@ -339,6 +342,8 @@ function parseOwnerBootstrap(value: string | null): PendingOwnerBootstrap | unde
       !['email_code', 'totp'].includes(String(parsed.method)) ||
       (parsed.method === 'totp' && typeof parsed.encryptedMfaSecret !== 'string') ||
       (parsed.encryptedMfaSecret !== undefined && typeof parsed.encryptedMfaSecret !== 'string') ||
+      (parsed.keyVersion !== undefined &&
+        (!Number.isSafeInteger(parsed.keyVersion) || Number(parsed.keyVersion) <= 0)) ||
       typeof parsed.normalizedEmail !== 'string' ||
       !Array.isArray(parsed.recoveryCodeHashes) ||
       !parsed.recoveryCodeHashes.every(
@@ -356,6 +361,7 @@ function parseOwnerBootstrap(value: string | null): PendingOwnerBootstrap | unde
     if (encryptedMfaSecret && encryptedMfaSecret.length < 30) return undefined;
     return {
       ...(encryptedMfaSecret ? { encryptedMfaSecret } : {}),
+      ...(typeof parsed.keyVersion === 'number' ? { keyVersion: parsed.keyVersion } : {}),
       method: parsed.method as 'email_code' | 'totp',
       normalizedEmail: parsed.normalizedEmail,
       recoveryCodeHashes: parsed.recoveryCodeHashes as string[],

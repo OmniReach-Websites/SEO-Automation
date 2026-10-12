@@ -1,6 +1,7 @@
 import {
   AuthenticationService,
   createMfaEnrollment,
+  createVersionedSecretKeyring,
   digestToken,
   encryptMfaSecret,
   hashPassword,
@@ -949,12 +950,16 @@ describe('authentication service', () => {
   it('creates the first platform owner only after one-time token and TOTP verification', async () => {
     const repo = repository();
     const pending = ownerBootstrapStore();
+    const activeMfaKey = 'fictional-dedicated-mfa-key-material-0002';
     const auth = new AuthenticationService(
       repo,
       challengeStore(),
       { send: vi.fn() },
       {
-        mfaEncryptionKey: mfaKey,
+        mfaEncryptionKeyring: createVersionedSecretKeyring({
+          activeVersion: 2,
+          keys: { 1: mfaKey, 2: activeMfaKey },
+        }),
         now: () => now,
         orapHostname: 'admin.omnireach.test',
         ownerBootstrapStore: pending,
@@ -1016,6 +1021,7 @@ describe('authentication service', () => {
       expect.objectContaining({
         displayName: 'Platform Owner',
         encryptedMfaSecret: expect.any(Uint8Array),
+        keyVersion: 2,
         normalizedEmail: 'owner@example.test',
         recoveryCodeHashes: expect.arrayContaining([expect.stringMatching(/^[a-f0-9]{64}$/u)]),
         tokenHash: digestToken('fictional-one-time-bootstrap-token'),

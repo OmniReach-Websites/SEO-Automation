@@ -11,6 +11,7 @@ x-runtime-secrets: &runtime-secrets
   - redis_app_password
   - session_secret
   - mfa_encryption_key
+  - mfa_encryption_keyring
   - preview_signing_key
   - contact_encryption_key
 
@@ -212,6 +213,8 @@ secrets:
     file: ${OMNIREACH_SECRETS_DIR}/session_secret
   mfa_encryption_key:
     file: ${OMNIREACH_SECRETS_DIR}/mfa_encryption_key
+  mfa_encryption_keyring:
+    file: ${OMNIREACH_SECRETS_DIR}/mfa_encryption_keyring
   preview_signing_key:
     file: ${OMNIREACH_SECRETS_DIR}/preview_signing_key
   contact_encryption_key:

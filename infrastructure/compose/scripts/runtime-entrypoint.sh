@@ -22,9 +22,19 @@ export DATABASE_URL="postgresql://omnireach_runtime:${postgres_password}@postgre
 export REDIS_URL="redis://omnireach_runtime:${redis_password}@redis:6379/0"
 export SESSION_SECRET="$(read_hex_secret session_secret)"
 export MFA_ENCRYPTION_KEY="$(read_hex_secret mfa_encryption_key)"
+keyring_path=/run/secrets/mfa_encryption_keyring
+[ -r "$keyring_path" ] || {
+  printf '%s\n' 'Required secret is not readable: mfa_encryption_keyring' >&2
+  exit 78
+}
+keyring_pattern='^\{"activeVersion":[1-9][0-9]*,"keys":\{"[1-9][0-9]*":"[a-f0-9]{64}"(,"[1-9][0-9]*":"[a-f0-9]{64}")*\}\}$'
+grep -Eq "$keyring_pattern" "$keyring_path" || {
+  printf '%s\n' 'Required secret has an invalid format: mfa_encryption_keyring' >&2
+  exit 78
+}
+export MFA_ENCRYPTION_KEYRING_JSON="$(cat "$keyring_path")"
 export PREVIEW_SIGNING_KEY="$(read_hex_secret preview_signing_key)"
 export CONTACT_ENCRYPTION_KEY="$(read_hex_secret contact_encryption_key)"
 unset postgres_password redis_password
 
 exec "$@"
-
