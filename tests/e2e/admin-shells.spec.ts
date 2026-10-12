@@ -3,11 +3,9 @@ import type { AdminActor } from '@omnireach/tenant';
 import { expect, test } from '@playwright/test';
 
 const staff: AdminActor = {
-  authenticationAssurance: 'strong',
   id: '40000000-0000-4000-8000-000000000010',
   role: 'platform_owner',
   traceId: 'browser-staff-trace',
-  verifiedAt: new Date(),
 };
 const customer: CustomerPrincipal = {
   editorPublishGrant: false,

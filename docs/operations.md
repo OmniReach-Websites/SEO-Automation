@@ -427,11 +427,14 @@ destructive schema/data changes, backup key/provider changes, MFA key
 rotation/retirement, customer/legal policy, contact-form destination,
 plan/pricing/grace policy, and real pilot onboarding.
 
-Internal ORAP employee provisioning and staff-authority changes additionally require a
-currently authenticated Platform Owner and the strong step-up safeguards defined in ADR
-0003/0010. Platform Admin or a custom employee role cannot approve or perform these
-actions. Repository implementation and fictional tests do not authorize creating a real
-employee or changing a production owner's authority.
+Internal ORAP employee provisioning and staff-authority changes require a currently
+authenticated Platform Owner who completed the mandatory ORAP two-step login. They do
+not require an additional authenticator/passkey step-up. Platform Admin or a custom
+employee role cannot approve or perform these actions. Every change retains an audit
+reason, last-owner protection, and session invalidation. SMS step-up may be added later
+only through a separately approved authentication-policy change. Repository
+implementation and fictional tests do not authorize creating a real employee or
+changing a production owner's authority.
 
 ## 12. Completion evidence by goal
 

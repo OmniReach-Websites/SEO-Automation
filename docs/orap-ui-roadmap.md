@@ -257,7 +257,7 @@ O10 ── O11 documentation and release-readiness handoff
 ### O03 — Owner-only internal staff lifecycle
 
 **Status:** `in progress`
-**Dependencies:** O02 and the G05 strong-step-up contract for live high-risk actions.
+**Dependencies:** O02 and the mandatory ORAP two-step authentication contract.
 
 **Requirements**
 
@@ -279,8 +279,9 @@ O10 ── O11 documentation and release-readiness handoff
 
 **Implementation tasks**
 
-1. Require current `platform_owner` identity and recent strong step-up for high-risk
-   operations; reject Platform Admin/Staff regardless of grants.
+1. Require a current `platform_owner` identity for every staff-authority operation;
+   reject Platform Admin/Staff regardless of grants. The owner's completed mandatory
+   ORAP two-step login is sufficient until a separately approved SMS policy exists.
 2. Use expiring hash-only single-use invitations with resend/attempt limits and audited
    pending/accepted/expired/revoked states.
 3. Preserve mandatory platform two-step verification and prevent full session issuance
@@ -297,8 +298,8 @@ O10 ── O11 documentation and release-readiness handoff
 
 **Definition of done**
 
-- A strongly verified Owner can manage fictional internal staff end to end; no other
-  identity can provision or change staff authority.
+- A currently authenticated Owner can manage fictional internal staff end to end; no
+  other identity can provision or change staff authority.
 
 ### O04 — Role templates, custom roles, scopes, versions, and impact preview
 

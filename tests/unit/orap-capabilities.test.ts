@@ -20,9 +20,20 @@ describe('ORAP capability catalog', () => {
   });
 
   it('makes owner-only capabilities permanently ineligible for role grants', () => {
+    const staffAuthorityKeys = new Set([
+      'owners.manage',
+      'staff.activate',
+      'staff.assign_roles',
+      'staff.create',
+      'staff.credentials.reset',
+      'staff.disable',
+      'staff.invite',
+      'staff.permissions.manage',
+      'staff.roles.manage',
+    ]);
     for (const definition of orapCapabilityCatalog.filter(({ ownerOnly }) => ownerOnly)) {
       expect(definition.requiresReason).toBe(true);
-      expect(definition.requiresStrongStepUp).toBe(true);
+      expect(definition.requiresStrongStepUp).toBe(!staffAuthorityKeys.has(definition.key));
       expect(definition.risk).toBe('critical');
       expect(isAssignableOrapCapability(definition.key)).toBe(false);
     }

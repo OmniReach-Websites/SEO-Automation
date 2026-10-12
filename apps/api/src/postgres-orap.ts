@@ -3,7 +3,6 @@ import { randomUUID } from 'node:crypto';
 import {
   assertOrapCapability,
   assertPlatformOwnerIdentity,
-  assertRecentStrongOrapStepUp,
   canOrap,
   createOneTimeToken,
   normalizeEmail,
@@ -1700,7 +1699,6 @@ function assertBoundedAdministrativeReason(reason: string): void {
 
 function assertStaffAuthorityMutation(actor: AdminActor, reason: string): void {
   assertPlatformOwnerIdentity(actor);
-  assertRecentStrongOrapStepUp(actor);
   const normalized = reason.trim();
   if (normalized.length < 3 || normalized.length > 500) {
     throw new Error('Staff authority changes require a reason between 3 and 500 characters');

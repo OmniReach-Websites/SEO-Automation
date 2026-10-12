@@ -10,11 +10,6 @@ const actor: AdminActor = {
   traceId: 'trace-000000000001',
 };
 const deniedStaff: AdminActor = { ...actor, role: 'staff' };
-const strongOwner: AdminActor = {
-  ...actor,
-  authenticationAssurance: 'strong',
-  verifiedAt: new Date(),
-};
 
 function service() {
   return {
@@ -101,17 +96,12 @@ describe('ORAP administration routes', () => {
     expect(administration.listStaff).toHaveBeenCalledTimes(1);
   });
 
-  it('requires recent strong owner verification for staff security mutations', async () => {
+  it('allows the current owner session and denies non-owners for staff security mutations', async () => {
     const administration = service();
-    const baselineServer = buildApiServer({
+    const ownerServer = buildApiServer({
       logLevel: 'silent',
       orapService: administration,
       resolvePlatformActor: async () => actor,
-    });
-    const strongServer = buildApiServer({
-      logLevel: 'silent',
-      orapService: administration,
-      resolvePlatformActor: async () => strongOwner,
     });
     const staffServer = buildApiServer({
       logLevel: 'silent',
@@ -122,7 +112,7 @@ describe('ORAP administration routes', () => {
         verifiedAt: new Date(),
       }),
     });
-    servers.push(baselineServer, strongServer, staffServer);
+    servers.push(ownerServer, staffServer);
     const userId = '40000000-0000-4000-8000-000000000099';
     const request = {
       headers: { host: 'admin.omnireach.test', origin: 'https://admin.omnireach.test' },
@@ -131,17 +121,14 @@ describe('ORAP administration routes', () => {
       url: `/v1/orap/staff/${userId}/sessions/revoke-all`,
     };
 
-    const baseline = await baselineServer.inject(request);
-    const allowed = await strongServer.inject(request);
+    const allowed = await ownerServer.inject(request);
     const denied = await staffServer.inject(request);
 
-    expect(baseline.statusCode).toBe(403);
-    expect(baseline.json()).toEqual({ error: 'orap_strong_step_up_required' });
     expect(allowed.statusCode).toBe(200);
     expect(denied.statusCode).toBe(403);
     expect(denied.json()).toEqual({ error: 'orap_owner_identity_required' });
     expect(administration.revokeStaffSessions).toHaveBeenCalledTimes(1);
-    expect(administration.revokeStaffSessions).toHaveBeenCalledWith(strongOwner, {
+    expect(administration.revokeStaffSessions).toHaveBeenCalledWith(actor, {
       reason: 'Approved fictional staff security action',
       userId,
     });
