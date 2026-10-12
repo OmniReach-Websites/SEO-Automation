@@ -794,13 +794,15 @@ export class PostgresAuthenticationRepository implements AuthenticationRepositor
   }
 
   async completeCustomerRecovery(input: {
+    confirmed: boolean;
     host: string;
     now: Date;
     recoveryCodeHashes: string[];
     sessionTokenHash: string;
     traceId: string;
+    verifyCurrentPassword(passwordHash: string): Promise<boolean>;
   }): Promise<boolean> {
-    if (input.recoveryCodeHashes.length === 0) return false;
+    if (input.confirmed !== true || input.recoveryCodeHashes.length === 0) return false;
     const host = normalizeHost(input.host);
     if (host === this.#orapHostname) return false;
     return withAuthTransaction(this.pool, async (client) => {
@@ -836,12 +838,36 @@ export class PostgresAuthenticationRepository implements AuthenticationRepositor
         [account.user_id],
       );
       if (userLock.rows.length !== 1) return false;
-      const credentialLock = await query<{ user_id: string }>(
+      // Platform-membership activation must take the same user-row lock before it
+      // commits. Rechecking after that lock prevents an in-flight promotion from
+      // using this customer-only recovery path.
+      const privileged = await query<{ id: string }>(
         client,
-        `SELECT user_id FROM credentials WHERE user_id = $1 FOR UPDATE`,
+        `SELECT id
+           FROM platform_memberships
+          WHERE user_id = $1 AND active
+          LIMIT 1`,
         [account.user_id],
       );
-      if (credentialLock.rows.length !== 1) return false;
+      if (privileged.rows.length !== 0) return false;
+      // Verify the submitted password while holding the credential-row lock. Any
+      // password change must wait for this transaction; if it wins first, this reads
+      // and verifies the replacement hash instead of a stale pre-lock snapshot.
+      const credentialLock = await query<{ password_hash: string; user_id: string }>(
+        client,
+        `SELECT user_id, password_hash
+           FROM credentials
+          WHERE user_id = $1
+          FOR UPDATE`,
+        [account.user_id],
+      );
+      if (
+        credentialLock.rows.length !== 1 ||
+        !credentialLock.rows[0] ||
+        !(await input.verifyCurrentPassword(credentialLock.rows[0].password_hash))
+      ) {
+        return false;
+      }
       const sessionLock = await query<{ id: string; site_id: string; tenant_id: string }>(
         client,
         `SELECT s.id, s.tenant_id, s.site_id
@@ -870,15 +896,20 @@ export class PostgresAuthenticationRepository implements AuthenticationRepositor
       if (sessionLock.rows.length !== 1) return false;
       const lockedSession = sessionLock.rows[0];
       if (!lockedSession) return false;
-      const policy = await query<{ user_id: string }>(
+      const policy = await query<{
+        email_code_enabled: boolean;
+        second_step_requirement: string;
+        user_id: string;
+      }>(
         client,
-        `UPDATE account_authentication_policies
-            SET auth_state_version = auth_state_version + 1, updated_at = $2
+        `SELECT user_id, second_step_requirement, email_code_enabled
+           FROM account_authentication_policies
           WHERE user_id = $1
-          RETURNING user_id`,
-        [account.user_id, input.now],
+          FOR UPDATE`,
+        [account.user_id],
       );
-      if (policy.rows.length !== 1) return false;
+      if (policy.rows.length !== 1 || !policy.rows[0]) return false;
+      const lockedPolicy = policy.rows[0];
       const nextSet = requiredRow(
         await query<{ set_version: number }>(
           client,
@@ -889,27 +920,83 @@ export class PostgresAuthenticationRepository implements AuthenticationRepositor
         ),
         'Recovery-code version was not available',
       );
-      await client.query(
+      const recoveryCodesRevoked = await query<{ id: string }>(
+        client,
         `UPDATE account_recovery_codes
             SET revoked_at = COALESCE(revoked_at, $1)
-          WHERE user_id = $2 AND revoked_at IS NULL`,
+          WHERE user_id = $2 AND revoked_at IS NULL
+          RETURNING id`,
         [input.now, account.user_id],
+      );
+      const totpRevoked = await query<{ id: string }>(
+        client,
+        `UPDATE mfa_factors
+            SET revoked_at = $1
+          WHERE user_id = $2 AND kind = 'totp'
+            AND verified_at IS NOT NULL AND revoked_at IS NULL
+          RETURNING id`,
+        [input.now, account.user_id],
+      );
+      const webauthnRevoked = await query<{ id: string }>(
+        client,
+        `UPDATE webauthn_credentials credential
+            SET revoked_at = $1,
+                revoke_reason = 'customer-account-recovery',
+                updated_at = $1
+           FROM webauthn_scopes scope
+          WHERE credential.scope_id = scope.id
+            AND scope.user_id = $2
+            AND credential.revoked_at IS NULL
+          RETURNING credential.id`,
+        [input.now, account.user_id],
+      );
+      await client.query(
+        `UPDATE account_authentication_policies
+            SET second_step_requirement = 'optional',
+                email_code_enabled = false,
+                preferred_method = NULL,
+                auth_state_version = auth_state_version + 1,
+                updated_at = $2
+          WHERE user_id = $1`,
+        [account.user_id, input.now],
       );
       await client.query(
         `INSERT INTO account_recovery_codes (user_id, set_version, code_hash)
          SELECT $1, $2, unnest($3::text[])`,
         [account.user_id, nextSet.set_version, input.recoveryCodeHashes],
       );
-      await client.query(
+      const resetTokensRevoked = await query<{ id: string }>(
+        client,
+        `UPDATE password_recovery_tokens
+            SET used_at = $1
+          WHERE user_id = $2 AND used_at IS NULL
+          RETURNING id`,
+        [input.now, account.user_id],
+      );
+      const sessionsRevoked = await query<{ id: string }>(
+        client,
         `UPDATE sessions
             SET revoked_at = $1, revoke_reason = 'account-recovery-completed'
-          WHERE user_id = $2 AND revoked_at IS NULL`,
+          WHERE user_id = $2 AND revoked_at IS NULL
+          RETURNING id`,
         [input.now, account.user_id],
       );
       await insertAudit(client, {
         action: 'auth.customer_recovery.completed',
         actorId: account.user_id,
-        metadata: { recoveryCodesReplaced: true, sessionsRevoked: true },
+        metadata: {
+          accountWide: true,
+          emailCodeDisabled: true,
+          emailCodePreviouslyEnabled: lockedPolicy.email_code_enabled,
+          previousSecondStepRequirement: lockedPolicy.second_step_requirement,
+          reason: 'customer-recovery-lockout-reset',
+          recoveryCodesIssued: input.recoveryCodeHashes.length,
+          recoveryCodesRevoked: recoveryCodesRevoked.rows.length,
+          resetTokensRevoked: resetTokensRevoked.rows.length,
+          sessionsRevoked: sessionsRevoked.rows.length,
+          totpFactorsRevoked: totpRevoked.rows.length,
+          webauthnCredentialsRevoked: webauthnRevoked.rows.length,
+        },
         siteId: lockedSession.site_id,
         targetId: account.user_id,
         targetType: 'user',

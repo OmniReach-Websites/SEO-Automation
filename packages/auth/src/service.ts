@@ -19,6 +19,7 @@ export type SessionAuthenticationMethod =
   'email_code' | 'password' | 'recovery_code' | 'totp' | 'webauthn';
 export type AuthenticationAssurance = 'baseline' | 'basic' | 'recovery' | 'strong';
 export type AuthenticationRateLimitScope =
+  | 'customer_recovery_completion'
   | 'email_code_issue'
   | 'invitation_acceptance'
   | 'login_attempt'
@@ -118,11 +119,13 @@ export interface AuthenticationRepository {
     tokenHash: string;
   }): Promise<boolean>;
   completeCustomerRecovery(input: {
+    confirmed: boolean;
     host: string;
     now: Date;
     recoveryCodeHashes: string[];
     sessionTokenHash: string;
     traceId: string;
+    verifyCurrentPassword(passwordHash: string): Promise<boolean>;
   }): Promise<boolean>;
   createPasswordRecovery(input: {
     expiresAt: Date;
@@ -804,18 +807,44 @@ export class AuthenticationService {
   }
 
   async completeCustomerRecovery(input: {
+    currentPassword: string;
     host: string;
+    networkIdentifier?: string;
+    recoveryConfirmed: boolean;
     sessionToken: string | undefined;
     traceId: string;
   }): Promise<{ recoveryCodes: string[]; sessionsRevoked: true } | undefined> {
-    if (!input.sessionToken) return undefined;
+    if (
+      !input.sessionToken ||
+      input.recoveryConfirmed !== true ||
+      input.currentPassword.length < 1 ||
+      input.currentPassword.length > 128 ||
+      this.isOrapHost(input.host)
+    ) {
+      return undefined;
+    }
+    const sessionTokenHash = this.recoverySessionTokenDigest(input.sessionToken);
+    if (
+      !(await this.allowAttempt(
+        'customer_recovery_completion',
+        `${rateLimitHost(input.host)}\0${sessionTokenHash}`,
+        input.networkIdentifier,
+        3,
+        10,
+        15 * 60,
+      ))
+    ) {
+      return undefined;
+    }
     const recovery = createRecoveryCodes();
     const completed = await this.repository.completeCustomerRecovery({
+      confirmed: true,
       host: input.host,
       now: this.now(),
       recoveryCodeHashes: recovery.recoveryDigests,
-      sessionTokenHash: this.recoverySessionTokenDigest(input.sessionToken),
+      sessionTokenHash,
       traceId: input.traceId,
+      verifyCurrentPassword: (passwordHash) => verifyPassword(passwordHash, input.currentPassword),
     });
     return completed ? { recoveryCodes: recovery.recoveryCodes, sessionsRevoked: true } : undefined;
   }

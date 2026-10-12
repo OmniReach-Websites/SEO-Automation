@@ -115,7 +115,13 @@
   valid code may create the restricted 15-minute recovery session. Platform accounts do
   not receive this fallback. Preliminary validation does not consume the code; final
   consumption, revocation of sibling codes, and restricted-session insertion commit or
-  roll back together.
+  roll back together. Completion requires explicit confirmation and current-password
+  verification under a credential-row lock. Its single auth-role transaction disables
+  optional email verification, revokes active TOTP and WebAuthn credentials, rotates
+  recovery codes, advances authentication state, invalidates reset tokens, revokes all
+  account sessions across customer hosts, and records scoped non-secret counts with an
+  explicit account-wide marker. No full session is issued; the recovery cookie is
+  cleared and normal password login is required.
 - The initial owner is created through a one-time, exact-ORAP-host bootstrap with no
   default credential. Production identity, recovery custody, and break-glass approval
   are R-002. Bootstrap failure or unavailable email delivery fails closed.

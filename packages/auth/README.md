@@ -45,7 +45,15 @@ are atomic and same-account recovery claims serialize on the identity row. Datab
 deadlock or serialization failures are retried at most three times as complete
 transactions; exhaustion fails closed with no partial commit. Platform accounts never
 receive that fallback, and customer reset/security mutations recheck platform membership
-after locking the identity.
+after locking the identity. Completing a restricted customer recovery additionally
+requires an explicit destructive-action confirmation and the current password verified
+against the credential row while it is locked. The same transaction disables email
+verification, revokes active TOTP and RP-scoped WebAuthn credentials, changes the
+account policy to optional/password-first, rotates account recovery codes, advances the
+authentication-state version, invalidates password-reset tokens, revokes every session
+for the account across customer hosts, and records scoped non-secret counts with an
+explicit account-wide marker. It never issues a full session; the caller clears the
+recovery cookie and requires an ordinary password login.
 
 Invitation acceptance and password-reset completion pass an atomic token-digest plus
 client-network admission limit before Argon2id work. Redis keys are HMAC-derived and do

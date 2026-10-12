@@ -104,7 +104,10 @@ export interface AuthEndpointService {
     traceId: string;
   }): Promise<EmailCodePolicyChangeResult>;
   completeCustomerRecovery?(input: {
+    currentPassword: string;
     host: string;
+    networkIdentifier?: string;
+    recoveryConfirmed: boolean;
     sessionToken: string | undefined;
     traceId: string;
   }): Promise<{ recoveryCodes: string[]; sessionsRevoked: true } | undefined>;
@@ -340,15 +343,32 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
     },
   );
 
-  server.post(
+  server.post<{
+    Body: { currentPassword?: string; recoveryConfirmed?: boolean | string };
+  }>(
     '/auth/security/recovery/complete',
     { config: { rateLimit: { max: 3, timeWindow: '15 minutes' } }, preHandler: requireSameOrigin },
     async (request, reply) => {
       if (!service.completeCustomerRecovery) {
         return reply.code(404).send({ error: 'not_found' });
       }
+      const recoveryConfirmed =
+        request.body?.recoveryConfirmed === true ||
+        request.body?.recoveryConfirmed === 'true' ||
+        request.body?.recoveryConfirmed === 'on';
+      if (
+        typeof request.body?.currentPassword !== 'string' ||
+        request.body.currentPassword.length < 1 ||
+        request.body.currentPassword.length > 128 ||
+        !recoveryConfirmed
+      ) {
+        return reply.code(400).send({ error: 'invalid_request' });
+      }
       const result = await service.completeCustomerRecovery({
+        currentPassword: request.body.currentPassword,
         host: request.hostname,
+        networkIdentifier: clientNetworkIdentifier(request.ip),
+        recoveryConfirmed,
         sessionToken: sessionToken(request),
         traceId: String(request.id),
       });
@@ -558,7 +578,7 @@ function renderEmailPolicyChangeCompletion(recoveryCodes: string[]): string {
 }
 
 function renderCustomerRecoveryCompletion(recoveryCodes: string[]): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><title>Recovery completed | OmniReach</title></head><body><main><h1>Recovery completed</h1><p>Every active session has been signed out. Save these replacement recovery codes now. They will not be shown again.</p><ul>${recoveryCodes.map((code) => `<li><code>${escapeHtml(code)}</code></li>`).join('')}</ul><p><a href="/login">Sign in again</a></p></main></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><title>Recovery completed | OmniReach</title></head><body><main><h1>Recovery completed</h1><p>Optional two-step methods and passkeys were disabled, every active session was signed out, and password-reset links were invalidated. Save these replacement recovery codes now. They will not be shown again.</p><ul>${recoveryCodes.map((code) => `<li><code>${escapeHtml(code)}</code></li>`).join('')}</ul><p><a href="/login">Sign in again with your password</a></p></main></body></html>`;
 }
 
 function escapeHtml(value: string): string {

@@ -918,10 +918,16 @@ describe('authentication service', () => {
   });
 
   it('finishes a customer recovery session by replacing codes without exposing hashes', async () => {
-    const repo = repository();
+    const repo = repository({
+      completeCustomerRecovery: vi.fn(
+        async (input) => input.confirmed && input.verifyCurrentPassword(passwordHash),
+      ),
+    });
     const { auth } = service(repo);
     const result = await auth.completeCustomerRecovery({
+      currentPassword: 'fictional-secure-password',
       host: 'admin.alpha.test',
+      recoveryConfirmed: true,
       sessionToken: 'recovery-session',
       traceId,
     });
@@ -934,9 +940,11 @@ describe('authentication service', () => {
     const completeCustomerRecovery = vi.mocked(repo.completeCustomerRecovery);
     expect(completeCustomerRecovery).toHaveBeenCalledWith(
       expect.objectContaining({
+        confirmed: true,
         host: 'admin.alpha.test',
         recoveryCodeHashes: expect.arrayContaining([expect.stringMatching(/^[a-f0-9]{64}$/u)]),
         sessionTokenHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        verifyCurrentPassword: expect.any(Function),
       }),
     );
     expect(completeCustomerRecovery.mock.calls[0]?.[0].sessionTokenHash).not.toBe(
@@ -945,6 +953,48 @@ describe('authentication service', () => {
     expect(JSON.stringify(completeCustomerRecovery.mock.calls)).not.toContain(
       result?.recoveryCodes[0] ?? 'missing',
     );
+    expect(repo.createSession).not.toHaveBeenCalled();
+  });
+
+  it('requires explicit confirmation and the current password for customer recovery', async () => {
+    const completeCustomerRecovery = vi.fn(async (input) =>
+      input.verifyCurrentPassword(passwordHash),
+    );
+    const repo = repository({ completeCustomerRecovery });
+    const { auth } = service(repo);
+
+    await expect(
+      auth.completeCustomerRecovery({
+        currentPassword: 'fictional-secure-password',
+        host: 'admin.alpha.test',
+        recoveryConfirmed: false,
+        sessionToken: 'recovery-session',
+        traceId,
+      }),
+    ).resolves.toBeUndefined();
+    expect(completeCustomerRecovery).not.toHaveBeenCalled();
+
+    await expect(
+      auth.completeCustomerRecovery({
+        currentPassword: 'wrong-password',
+        host: 'admin.alpha.test',
+        recoveryConfirmed: true,
+        sessionToken: 'recovery-session',
+        traceId,
+      }),
+    ).resolves.toBeUndefined();
+    expect(completeCustomerRecovery).toHaveBeenCalledOnce();
+
+    await expect(
+      auth.completeCustomerRecovery({
+        currentPassword: 'fictional-secure-password',
+        host: 'admin.omnireach.test',
+        recoveryConfirmed: true,
+        sessionToken: 'recovery-session',
+        traceId,
+      }),
+    ).resolves.toBeUndefined();
+    expect(completeCustomerRecovery).toHaveBeenCalledOnce();
   });
 
   it('creates the first platform owner only after one-time token and TOTP verification', async () => {
