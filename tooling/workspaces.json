@@ -9,6 +9,7 @@
         "@omnireach/auth",
         "@omnireach/content",
         "@omnireach/contracts",
+        "@omnireach/customer-admin",
         "@omnireach/database",
         "@omnireach/integrations",
         "@omnireach/observability",

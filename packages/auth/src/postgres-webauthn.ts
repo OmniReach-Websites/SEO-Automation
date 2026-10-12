@@ -70,8 +70,8 @@ interface EnrollmentTargetRow extends Record<string, unknown> {
  *
  * Enrollment is the only credential write exposed here and includes recovery rotation,
  * policy activation, session revocation, and audit evidence in one transaction.
- * Standalone assertion updates and management mutations remain intentionally absent:
- * counter/backup updates must commit with session issuance, and rename/revocation must
+ * Standalone management mutations remain intentionally absent; assertion counter updates
+ * must commit in the same transaction as session issuance, and rename/revocation must
  * preserve their own session, recovery, and audit invariants.
  */
 export class PostgresWebAuthnRepository implements WebAuthnEnrollmentRepository {
