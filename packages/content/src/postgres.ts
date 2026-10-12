@@ -791,10 +791,10 @@ async function insertPublicationRequest(
   await client.query(
     `INSERT INTO publication_requests
        (tenant_id, site_id, idempotency_key, requested_by, origin, reason,
-        content_revision, status, previous_artifact_id)
+        content_revision, status, previous_artifact_id, trace_id)
      VALUES (
        $1, $2, $3, $4, $5, $6, $7, 'queued',
-       (SELECT artifact_id FROM active_artifacts WHERE tenant_id = $1 AND site_id = $2)
+       (SELECT artifact_id FROM active_artifacts WHERE tenant_id = $1 AND site_id = $2), $8
      )`,
     [
       context.tenantId,
@@ -804,6 +804,7 @@ async function insertPublicationRequest(
       input.origin,
       input.reason,
       input.contentRevision,
+      context.traceId,
     ],
   );
 }

@@ -43,6 +43,7 @@
     "publisher:run-request": "node --experimental-transform-types --env-file-if-exists=.env.local workers/publisher/src/run-publication.ts",
     "verify:local-stack": "node --experimental-transform-types tooling/verify-local-stack.mjs",
     "verify:publication-flow": "node --experimental-transform-types tooling/verify-publication-flow.ts",
+    "verify:publication-job-admission": "node tooling/verify-publication-job-admission.mjs",
     "verify:content-draft-lifecycle": "node tooling/verify-content-draft-lifecycle.mjs",
     "verify:production-compose": "node tooling/verify-production-compose.mjs",
     "verify:deploy-harness": "node tooling/verify-deploy-harness.mjs",
