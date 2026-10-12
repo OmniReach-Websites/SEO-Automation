@@ -168,9 +168,15 @@ verification satisfies a NIST Authentication Assurance Level. See the
   session and recovery RLS policies accept only a v3 authentication transaction marker,
   so a v2 process fails closed and is not a valid rollback target. Source capability
   checks, readiness, target activation, bridge, and rollback metadata all declare v3 in
-  the same repository change. The v3 foundation is inert: no enrollment, assertion, or
-  revocation route is exposed until its complete atomic service transaction and audit
-  behavior are implemented. The first v2-to-v3 transition must stage a distinct,
+  the same repository change. Enrollment preparation, exact-host browser ceremony, and
+  atomic completion are implemented, but the production composition holds them behind
+  a compile-time-off capability gate until WebAuthn assertion/login ships and proves
+  atomic credential-state update plus session issuance. This prevents enrollment from
+  making WebAuthn required/preferred while the running release cannot use it. The first
+  ORAP strong-factor enrollment is not authorized by routine email assurance and remains
+  unavailable until the separate approved one-use bootstrap/recovery authorization is
+  implemented. Revocation and rename management also remain unavailable. The first
+  v2-to-v3 transition must stage a distinct,
   reviewed v3-compatible fallback before applying the migration. Automatic rollback to
   the running v2 binary is intentionally unavailable after that point; failure of both
   v3 artifacts requires a compatible forward fix or an owner-authorized restore of the
@@ -239,7 +245,9 @@ challenge replay and authentication-state-version rejection, no pre-verification
 provider-independent recovery responses, the non-atomic recovery enqueue failure window,
 encrypted durable recovery delivery with lease/retry/ciphertext-erasure behavior,
 customer-only atomic recovery-session issuance, TOTP/WebAuthn regression behavior,
-recovery safeguards, mixed-identity promotion races, assurance-aware step-up, locked
+recovery safeguards, disabled-capability no-write behavior, exact-origin/RP/user-
+verification enrollment, ceremony replay/race rejection, mixed-identity promotion
+races, assurance-aware step-up, locked
 session-state revalidation, canonical ORAP-host
 reservation, session revocation, CSRF defense, durable method-specific audit evidence,
 and log/audit redaction. G06 is reopened for Auth Contract v3 host/role/RLS/session-race

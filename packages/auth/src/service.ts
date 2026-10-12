@@ -13,6 +13,15 @@ import {
   type VersionedSecretKeyring,
 } from './secrets.ts';
 import { createOneTimeToken, digestToken } from './tokens.ts';
+import {
+  createWebAuthnRegistrationOptions,
+  resolveWebAuthnRelyingParty,
+  verifyExactHostWebAuthnRegistration,
+  type WebAuthnCeremonyStore,
+  type WebAuthnEnrollmentPreparation,
+  type WebAuthnEnrollmentRepository,
+  type WebAuthnRegistrationResponse,
+} from './webauthn.ts';
 
 export type VerificationMethod = 'email_code' | 'totp' | 'webauthn';
 export type SessionAuthenticationMethod =
@@ -25,7 +34,8 @@ export type AuthenticationRateLimitScope =
   | 'login_attempt'
   | 'password_recovery_completion'
   | 'password_recovery_issue'
-  | 'verification_attempt';
+  | 'verification_attempt'
+  | 'webauthn_enrollment';
 
 export interface AuthenticationRateLimiter {
   consume(input: {
@@ -81,6 +91,7 @@ export interface SessionOwner {
 export interface AccountSecurityTarget {
   emailCodeEnabled: boolean;
   hasTotp: boolean;
+  hasWebAuthn: boolean;
   host: string;
   normalizedEmail: string;
   passwordHash: string;
@@ -96,6 +107,7 @@ export interface AccountSecuritySettings {
   emailPolicyChangeAllowed: boolean;
   secondStepRequired: boolean;
   totpEnabled: boolean;
+  webauthnEnrollmentAvailable: boolean;
   webauthnEnabled: boolean;
 }
 
@@ -322,6 +334,10 @@ export class AuthenticationService {
       recoveryTtlMs?: number;
       sessionTtlMs?: number;
       verificationNotifier?: VerificationCodeNotifier;
+      verifyWebAuthnRegistration?: typeof verifyExactHostWebAuthnRegistration;
+      webAuthnAuthenticationEnabled?: boolean;
+      webAuthnCeremonies?: WebAuthnCeremonyStore;
+      webAuthnRepository?: WebAuthnEnrollmentRepository;
     },
   ) {
     this.#mfaKeyring =
@@ -915,8 +931,193 @@ export class AuthenticationService {
       emailPolicyChangeAllowed: target.role.startsWith('customer_'),
       secondStepRequired: target.secondStepRequired,
       totpEnabled: target.hasTotp,
-      webauthnEnabled: false,
+      webauthnEnabled: target.hasWebAuthn,
+      webauthnEnrollmentAvailable: this.webAuthnEnrollmentAvailable(),
     };
+  }
+
+  async prepareWebAuthnEnrollment(input: {
+    credentialName: string;
+    currentPassword: string;
+    host: string;
+    networkIdentifier?: string;
+    sessionToken: string | undefined;
+    traceId: string;
+  }): Promise<WebAuthnEnrollmentPreparation | undefined> {
+    const repository = this.options.webAuthnRepository;
+    const ceremonies = this.options.webAuthnCeremonies;
+    if (!this.webAuthnEnrollmentAvailable() || !repository || !ceremonies || !input.sessionToken) {
+      return undefined;
+    }
+    const credentialName = input.credentialName.trim();
+    if (
+      input.currentPassword.length < 1 ||
+      input.currentPassword.length > 128 ||
+      credentialName.length < 1 ||
+      credentialName.length > 80 ||
+      /[\u0000-\u001f\u007f]/u.test(credentialName)
+    ) {
+      return undefined;
+    }
+    const sessionTokenHash = digestToken(input.sessionToken);
+    const target = await repository.findEnrollmentTarget({
+      host: input.host,
+      now: this.now(),
+      sessionTokenHash,
+    });
+    if (
+      !target ||
+      target.activeCredentialCount >= 10 ||
+      (!target.emailCodeEnabled && !target.hasTotp && !target.hasWebAuthn) ||
+      !(await this.allowAttempt(
+        'webauthn_enrollment',
+        `${rateLimitHost(input.host)}\0${target.userId}`,
+        input.networkIdentifier,
+        5,
+        20,
+        15 * 60,
+      )) ||
+      !(await verifyPassword(target.passwordHash, input.currentPassword))
+    ) {
+      return undefined;
+    }
+    const relyingParty = resolveWebAuthnRelyingParty(target.host);
+    if (target.rpId !== relyingParty.id) return undefined;
+    const options = await createWebAuthnRegistrationOptions({
+      credentials: target.credentials,
+      displayName: target.displayName,
+      relyingParty,
+      userHandle: target.userHandle,
+      userName: target.normalizedEmail,
+    });
+    const recovery = createRecoveryCodes();
+    const ceremonyId = await ceremonies.create({
+      authStateVersion: target.authStateVersion,
+      challenge: options.challenge,
+      credentialName,
+      credentialStateDigest: this.webAuthnCredentialStateDigest(target.passwordHash),
+      host: relyingParty.id,
+      origin: relyingParty.origin,
+      purpose: 'registration',
+      recoveryCodeHashes: recovery.recoveryDigests,
+      rpId: relyingParty.id,
+      scopeId: target.id,
+      sessionTokenHash,
+      ...(target.siteId ? { siteId: target.siteId } : {}),
+      ...(target.tenantId ? { tenantId: target.tenantId } : {}),
+      traceId: input.traceId,
+      userHandle: Buffer.from(target.userHandle).toString('base64url'),
+      userId: target.userId,
+    });
+    return { ceremonyId, options, recoveryCodes: recovery.recoveryCodes };
+  }
+
+  async completeWebAuthnEnrollment(input: {
+    ceremonyId: string;
+    host: string;
+    networkIdentifier?: string;
+    recoveryCodesAcknowledged: boolean;
+    response: WebAuthnRegistrationResponse;
+    sessionToken: string | undefined;
+    traceId: string;
+  }): Promise<{ sessionsRevoked: true } | undefined> {
+    const repository = this.options.webAuthnRepository;
+    const ceremonies = this.options.webAuthnCeremonies;
+    if (
+      !this.webAuthnEnrollmentAvailable() ||
+      !repository ||
+      !ceremonies ||
+      !input.sessionToken ||
+      !input.recoveryCodesAcknowledged ||
+      !input.ceremonyId
+    ) {
+      return undefined;
+    }
+    const sessionTokenHash = digestToken(input.sessionToken);
+    const ceremony = await ceremonies.consume(input.ceremonyId);
+    if (
+      !ceremony ||
+      ceremony.purpose !== 'registration' ||
+      ceremony.host !== rateLimitHost(input.host) ||
+      ceremony.sessionTokenHash !== sessionTokenHash ||
+      !(await this.allowAttempt(
+        'webauthn_enrollment',
+        `${ceremony.host}\0${ceremony.userId}`,
+        input.networkIdentifier,
+        5,
+        20,
+        15 * 60,
+      ))
+    ) {
+      return undefined;
+    }
+    let verification: Awaited<ReturnType<typeof verifyExactHostWebAuthnRegistration>>;
+    try {
+      verification = await (
+        this.options.verifyWebAuthnRegistration ?? verifyExactHostWebAuthnRegistration
+      )({
+        challenge: ceremony.challenge,
+        relyingParty: {
+          id: ceremony.rpId,
+          name: 'OmniReach',
+          origin: ceremony.origin,
+        },
+        response: input.response,
+      });
+    } catch {
+      return undefined;
+    }
+    if (
+      !verification.verified ||
+      !verification.registrationInfo.userVerified ||
+      verification.registrationInfo.origin !== ceremony.origin ||
+      (verification.registrationInfo.rpID !== undefined &&
+        verification.registrationInfo.rpID !== ceremony.rpId)
+    ) {
+      return undefined;
+    }
+    const credential = verification.registrationInfo.credential;
+    const credentialId = new Uint8Array(Buffer.from(credential.id, 'base64url'));
+    const publicKey = new Uint8Array(credential.publicKey);
+    const signCount = credential.counter;
+    const transports = normalizeWebAuthnTransports(input.response.response.transports);
+    if (
+      credentialId.byteLength < 1 ||
+      credentialId.byteLength > 1023 ||
+      publicKey.byteLength < 1 ||
+      publicKey.byteLength > 4096 ||
+      !Number.isSafeInteger(signCount) ||
+      signCount < 0 ||
+      signCount > 4_294_967_295 ||
+      !transports
+    ) {
+      return undefined;
+    }
+    const completed = await repository.completeEnrollment({
+      backedUp: verification.registrationInfo.credentialBackedUp,
+      backupEligible: verification.registrationInfo.credentialDeviceType === 'multiDevice',
+      credentialId,
+      credentialName: ceremony.credentialName,
+      credentialStateDigest: ceremony.credentialStateDigest,
+      deviceType: verification.registrationInfo.credentialDeviceType,
+      expectedAuthStateVersion: ceremony.authStateVersion,
+      host: ceremony.host,
+      now: this.now(),
+      publicKey,
+      recoveryCodeHashes: ceremony.recoveryCodeHashes,
+      scopeId: ceremony.scopeId,
+      sessionTokenHash,
+      signCount,
+      ...(ceremony.siteId ? { siteId: ceremony.siteId } : {}),
+      ...(ceremony.tenantId ? { tenantId: ceremony.tenantId } : {}),
+      traceId: input.traceId,
+      transports,
+      userHandle: new Uint8Array(Buffer.from(ceremony.userHandle, 'base64url')),
+      userId: ceremony.userId,
+      verifyCredentialState: (passwordHash, expectedDigest) =>
+        safeDigestEqual(this.webAuthnCredentialStateDigest(passwordHash), expectedDigest),
+    });
+    return completed ? { sessionsRevoked: true } : undefined;
   }
 
   async prepareCustomerEmailCodePolicyChange(input: {
@@ -1240,6 +1441,24 @@ export class AuthenticationService {
     return rateLimitHost(host) === rateLimitHost(this.options.orapHostname);
   }
 
+  private webAuthnEnrollmentAvailable(): boolean {
+    // Enrollment stays fail-closed until assertion/login support ships in the same
+    // release. A credential must never make WebAuthn preferred or required while the
+    // active binary cannot use it to authenticate.
+    return Boolean(
+      this.options.webAuthnAuthenticationEnabled &&
+      this.options.webAuthnCeremonies &&
+      this.options.webAuthnRepository,
+    );
+  }
+
+  private webAuthnCredentialStateDigest(passwordHash: string): string {
+    return createHmac('sha256', this.#authenticationPepper)
+      .update('omnireach-webauthn-enrollment-credential-state-v1\0', 'utf8')
+      .update(passwordHash, 'utf8')
+      .digest('hex');
+  }
+
   private async allowAttempt(
     scope: AuthenticationRateLimitScope,
     accountIdentifier: string,
@@ -1310,4 +1529,12 @@ function formatRecoveryCode(compactCode: string): string {
 
 function rateLimitHost(value: string): string {
   return value.trim().toLowerCase().replace(/\.$/u, '');
+}
+
+function normalizeWebAuthnTransports(value: string[] | undefined): string[] | undefined {
+  const allowed = new Set(['ble', 'cable', 'hybrid', 'internal', 'nfc', 'smart-card', 'usb']);
+  const transports = [...new Set(value ?? [])];
+  return transports.length <= 8 && transports.every((entry) => allowed.has(entry))
+    ? transports
+    : undefined;
 }

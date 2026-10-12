@@ -1016,6 +1016,7 @@ export class PostgresAuthenticationRepository implements AuthenticationRepositor
       const result = await query<{
         email_code_enabled: boolean;
         has_totp: boolean;
+        has_webauthn: boolean;
         host: string;
         normalized_email: string;
         password_hash: string;
@@ -1035,7 +1036,18 @@ export class PostgresAuthenticationRepository implements AuthenticationRepositor
                     SELECT 1 FROM mfa_factors factor
                      WHERE factor.user_id = u.id AND factor.kind = 'totp'
                        AND factor.verified_at IS NOT NULL AND factor.revoked_at IS NULL
-                  ) AS has_totp
+                  ) AS has_totp,
+                  EXISTS (
+                    SELECT 1
+                      FROM webauthn_scopes webauthn_scope
+                      JOIN webauthn_credentials webauthn_credential
+                        ON webauthn_credential.scope_id = webauthn_scope.id
+                       AND webauthn_credential.revoked_at IS NULL
+                     WHERE webauthn_scope.user_id = u.id
+                       AND webauthn_scope.tenant_id = s.tenant_id
+                       AND webauthn_scope.site_id = s.site_id
+                       AND webauthn_scope.rp_id = s.host
+                  ) AS has_webauthn
              FROM sessions s
              JOIN users u ON u.id = s.user_id AND u.status = 'active'
              JOIN credentials c ON c.user_id = u.id
@@ -1070,7 +1082,18 @@ export class PostgresAuthenticationRepository implements AuthenticationRepositor
                     SELECT 1 FROM mfa_factors factor
                      WHERE factor.user_id = u.id AND factor.kind = 'totp'
                        AND factor.verified_at IS NOT NULL AND factor.revoked_at IS NULL
-                  ) AS has_totp
+                  ) AS has_totp,
+                  EXISTS (
+                    SELECT 1
+                      FROM webauthn_scopes webauthn_scope
+                      JOIN webauthn_credentials webauthn_credential
+                        ON webauthn_credential.scope_id = webauthn_scope.id
+                       AND webauthn_credential.revoked_at IS NULL
+                     WHERE webauthn_scope.user_id = u.id
+                       AND webauthn_scope.tenant_id IS NULL
+                       AND webauthn_scope.site_id IS NULL
+                       AND webauthn_scope.rp_id = s.host
+                  ) AS has_webauthn
              FROM sessions s
              JOIN users u ON u.id = s.user_id AND u.status = 'active'
              JOIN credentials c ON c.user_id = u.id
@@ -1097,6 +1120,7 @@ export class PostgresAuthenticationRepository implements AuthenticationRepositor
       return {
         emailCodeEnabled: row.email_code_enabled,
         hasTotp: row.has_totp,
+        hasWebAuthn: row.has_webauthn,
         host: row.host,
         normalizedEmail: row.normalized_email,
         passwordHash: row.password_hash,

@@ -3,6 +3,8 @@ import {
   sessionCookieOptions,
   type AccountSecuritySettings,
   type EmailCodePolicyChangeResult,
+  type WebAuthnEnrollmentPreparation,
+  type WebAuthnRegistrationResponse,
 } from '@omnireach/auth';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
@@ -22,6 +24,30 @@ export type LoginResult =
   | { kind: 'invalid' };
 
 const challengeCookieName = '__Host-omnireach_challenge';
+const base64UrlValue = z
+  .string()
+  .min(1)
+  .max(32_768)
+  .regex(/^[A-Za-z0-9_-]+$/u);
+const webAuthnRegistrationResponseSchema = z
+  .object({
+    authenticatorAttachment: z.enum(['cross-platform', 'platform']).optional(),
+    clientExtensionResults: z.record(z.string(), z.unknown()),
+    id: base64UrlValue,
+    rawId: base64UrlValue,
+    response: z
+      .object({
+        attestationObject: base64UrlValue,
+        authenticatorData: base64UrlValue.optional(),
+        clientDataJSON: base64UrlValue,
+        publicKey: base64UrlValue.optional(),
+        publicKeyAlgorithm: z.number().int().optional(),
+        transports: z.array(z.string().min(1).max(32)).max(8).optional(),
+      })
+      .strict(),
+    type: z.literal('public-key'),
+  })
+  .strict();
 
 export interface AuthEndpointService {
   acceptInvitation(input: {
@@ -83,6 +109,14 @@ export interface AuthEndpointService {
     sessionToken: string | undefined;
     traceId: string;
   }): Promise<{ challengeId: string } | undefined>;
+  prepareWebAuthnEnrollment?(input: {
+    credentialName: string;
+    currentPassword: string;
+    host: string;
+    networkIdentifier?: string;
+    sessionToken: string | undefined;
+    traceId: string;
+  }): Promise<WebAuthnEnrollmentPreparation | undefined>;
   requestPasswordRecovery(input: {
     host: string;
     networkIdentifier?: string;
@@ -111,6 +145,15 @@ export interface AuthEndpointService {
     sessionToken: string | undefined;
     traceId: string;
   }): Promise<{ recoveryCodes: string[]; sessionsRevoked: true } | undefined>;
+  completeWebAuthnEnrollment?(input: {
+    ceremonyId: string;
+    host: string;
+    networkIdentifier?: string;
+    recoveryCodesAcknowledged: boolean;
+    response: WebAuthnRegistrationResponse;
+    sessionToken: string | undefined;
+    traceId: string;
+  }): Promise<{ sessionsRevoked: true } | undefined>;
   resendEmailCode?(input: {
     challengeId: string;
     host: string;
@@ -411,6 +454,82 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
       ? reply.code(200).send({ settings })
       : reply.code(401).send({ error: 'authentication_required' });
   });
+
+  server.post<{
+    Body: { credentialName?: string; currentPassword?: string };
+  }>(
+    '/auth/security/webauthn/prepare',
+    { config: { rateLimit: { max: 3, timeWindow: '15 minutes' } }, preHandler: requireSameOrigin },
+    async (request, reply) => {
+      if (
+        !service.prepareWebAuthnEnrollment ||
+        typeof request.body?.currentPassword !== 'string' ||
+        typeof request.body.credentialName !== 'string' ||
+        request.body.currentPassword.length < 1 ||
+        request.body.currentPassword.length > 128 ||
+        request.body.credentialName.length < 1 ||
+        request.body.credentialName.length > 80
+      ) {
+        return reply.code(400).send({ error: 'invalid_request' });
+      }
+      const prepared = await service.prepareWebAuthnEnrollment({
+        credentialName: request.body.credentialName,
+        currentPassword: request.body.currentPassword,
+        host: request.hostname,
+        networkIdentifier: clientNetworkIdentifier(request.ip),
+        sessionToken: sessionToken(request),
+        traceId: String(request.id),
+      });
+      return prepared
+        ? reply
+            .header('Cache-Control', 'no-store')
+            .header('Pragma', 'no-cache')
+            .code(200)
+            .send(prepared)
+        : reply.code(403).send({ error: 'webauthn_enrollment_unavailable' });
+    },
+  );
+
+  server.post<{
+    Body: {
+      ceremonyId?: string;
+      recoveryCodesAcknowledged?: boolean;
+      response?: unknown;
+    };
+  }>(
+    '/auth/security/webauthn/complete',
+    {
+      bodyLimit: 65_536,
+      config: { rateLimit: { max: 5, timeWindow: '15 minutes' } },
+      preHandler: requireSameOrigin,
+    },
+    async (request, reply) => {
+      const response = webAuthnRegistrationResponseSchema.safeParse(request.body?.response);
+      if (
+        !service.completeWebAuthnEnrollment ||
+        typeof request.body?.ceremonyId !== 'string' ||
+        request.body.ceremonyId.length > 512 ||
+        request.body.recoveryCodesAcknowledged !== true ||
+        !response.success
+      ) {
+        return reply.code(400).send({ error: 'invalid_request' });
+      }
+      const completed = await service.completeWebAuthnEnrollment({
+        ceremonyId: request.body.ceremonyId,
+        host: request.hostname,
+        networkIdentifier: clientNetworkIdentifier(request.ip),
+        recoveryCodesAcknowledged: true,
+        response: response.data as WebAuthnRegistrationResponse,
+        sessionToken: sessionToken(request),
+        traceId: String(request.id),
+      });
+      if (!completed) return reply.code(403).send({ error: 'webauthn_enrollment_failed' });
+      return reply
+        .clearCookie('__Host-omnireach_session', sessionCookieOptions())
+        .code(200)
+        .send(completed);
+    },
+  );
 
   server.post<{
     Body: { action?: string; currentPassword?: string; enabled?: boolean | string };

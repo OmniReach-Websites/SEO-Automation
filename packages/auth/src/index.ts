@@ -96,6 +96,11 @@ export {
   type WebAuthnCeremonyPurpose,
   type WebAuthnCeremonyStore,
   type WebAuthnCredentialRecord,
+  type WebAuthnEnrollmentCompletionInput,
+  type WebAuthnEnrollmentPreparation,
+  type WebAuthnEnrollmentRepository,
+  type WebAuthnEnrollmentTarget,
+  type WebAuthnRegistrationResponse,
   type WebAuthnRelyingParty,
   type WebAuthnScopeRecord,
 } from './webauthn.ts';

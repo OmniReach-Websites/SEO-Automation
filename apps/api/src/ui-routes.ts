@@ -13,6 +13,7 @@ import type { CustomerEndpointService, ResolveCustomerPrincipal } from './custom
 import type { OrapAdministrationEndpointService, ResolvePlatformActor } from './orap-routes.ts';
 import { registerCustomerUiRoutes } from './customer-ui-routes.ts';
 import { readCookie } from './request-auth.ts';
+import { webAuthnEnrollmentBrowserScript } from './webauthn-browser.ts';
 
 export function registerUiRoutes(
   server: FastifyInstance,
@@ -53,14 +54,30 @@ export function registerUiRoutes(
   );
 
   if (options.authService?.securitySettings) {
+    if (
+      options.authService.prepareWebAuthnEnrollment &&
+      options.authService.completeWebAuthnEnrollment
+    ) {
+      server.get('/security/passkey.js', async (_request, reply) =>
+        reply
+          .type('application/javascript; charset=utf-8')
+          .header('Cache-Control', 'no-store')
+          .send(webAuthnEnrollmentBrowserScript),
+      );
+    }
     server.get('/security', async (request, reply) => {
       const settings = await options.authService?.securitySettings?.(
         readCookie(request, '__Host-omnireach_session'),
         request.hostname,
       );
-      return settings
-        ? reply.type('text/html; charset=utf-8').send(renderSecuritySettings(settings))
-        : reply.code(303).redirect('/login');
+      if (!settings) return reply.code(303).redirect('/login');
+      if (settings.webauthnEnrollmentAvailable) {
+        reply.header(
+          'Content-Security-Policy',
+          "default-src 'none'; script-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+        );
+      }
+      return reply.type('text/html; charset=utf-8').send(renderSecuritySettings(settings));
     });
     server.get<{ Querystring: { action?: string } }>('/security/email', async (request, reply) => {
       const settings = await options.authService?.securitySettings?.(
@@ -187,6 +204,7 @@ function renderSecuritySettings(settings: {
   emailPolicyChangeAllowed: boolean;
   secondStepRequired: boolean;
   totpEnabled: boolean;
+  webauthnEnrollmentAvailable: boolean;
   webauthnEnabled: boolean;
 }): string {
   const action = settings.emailCodeEnabled ? 'disable' : 'enable';
@@ -194,7 +212,10 @@ function renderSecuritySettings(settings: {
   const emailControl = settings.emailPolicyChangeAllowed
     ? `<form method="post" action="/auth/security/email/prepare"><input name="action" type="hidden" value="${action}"><label for="currentPassword">Current password</label><input id="currentPassword" name="currentPassword" type="password" autocomplete="current-password" required><button type="submit">${verb} email verification</button></form>`
     : '<p>Privileged-account verification changes require the approved stronger recovery or security procedure.</p>';
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><title>Security settings | OmniReach</title></head><body><a href="#main">Skip to content</a><main id="main"><h1>Security settings</h1><p>Two-step verification is ${settings.secondStepRequired ? 'required' : 'optional'} for this account.</p><section><h2>Email verification codes</h2><p>Status: ${settings.emailCodeEnabled ? 'enabled' : 'disabled'}.</p>${emailControl}</section><section><h2>Authenticator app</h2><p>${settings.totpEnabled ? 'Enrolled. Management controls are not yet available on this page.' : 'Enrollment is not yet available.'}</p></section><section><h2>Passkey</h2><p>${settings.webauthnEnabled ? 'Enrolled. Management controls are not yet available on this page.' : 'Enrollment is not yet available.'}</p></section><p>Changing email verification signs out every active session.</p><p><a href="/">Return to dashboard</a></p></main></body></html>`;
+  const passkeyEnrollment = settings.webauthnEnrollmentAvailable
+    ? `<form id="passkey-enrollment" novalidate><label for="credentialName">Passkey name</label><input id="credentialName" name="credentialName" maxlength="80" autocomplete="off" required><label for="passkeyCurrentPassword">Current password</label><input id="passkeyCurrentPassword" name="currentPassword" type="password" maxlength="128" autocomplete="current-password" required><button type="submit">Create passkey</button></form><section id="passkey-recovery" hidden><h3>Save replacement recovery codes</h3><p>These codes are shown once. Store them securely before completing enrollment.</p><ul id="passkey-recovery-codes"></ul><label><input id="passkey-recovery-acknowledged" type="checkbox"> I saved every recovery code.</label><button id="passkey-complete" type="button">Finish passkey enrollment</button></section><p id="passkey-status" role="status" aria-live="polite"></p><script src="/security/passkey.js" defer></script>`
+    : '<p>Enrollment remains unavailable until passkey sign-in support is activated in the same release.</p>';
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><title>Security settings | OmniReach</title></head><body><a href="#main">Skip to content</a><main id="main"><h1>Security settings</h1><p>Two-step verification is ${settings.secondStepRequired ? 'required' : 'optional'} for this account.</p><section><h2>Email verification codes</h2><p>Status: ${settings.emailCodeEnabled ? 'enabled' : 'disabled'}.</p>${emailControl}</section><section><h2>Authenticator app</h2><p>${settings.totpEnabled ? 'Enrolled. Management controls are not yet available on this page.' : 'Enrollment is not yet available.'}</p></section><section><h2>Passkeys and Windows Hello</h2><p>${settings.webauthnEnabled ? 'A passkey is enrolled. Management controls are not yet available on this page.' : 'No passkey is enrolled.'}</p>${passkeyEnrollment}</section><p>Changing a verification method signs out every active session.</p><p><a href="/">Return to dashboard</a></p></main></body></html>`;
 }
 
 function renderEmailPolicyVerification(challengeId: string, action: 'disable' | 'enable'): string {

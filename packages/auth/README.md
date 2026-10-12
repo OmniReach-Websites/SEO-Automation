@@ -1,10 +1,12 @@
 # Auth Package
 
 **Status:** The owner-approved 2026-10-11 account-policy and email-code foundation is
-implemented and tested locally. The inert Auth Contract v3 WebAuthn persistence,
-exact-host cryptographic wrapper, and one-use ceremony store are also implemented;
-there are deliberately no passkey routes or credential-write repository methods yet.
-G05 remains in progress because customer TOTP management, passkey enrollment/login,
+implemented and tested locally. The Auth Contract v3 WebAuthn persistence, exact-host
+cryptographic wrapper, one-use ceremony store, and atomic enrollment transaction are
+also implemented. The enrollment API and Windows Hello browser flow remain behind a
+compile-time-off capability gate: the production composition cannot write a passkey or
+change account policy until assertion/login ships in the same release. G05 remains in
+progress because customer TOTP management, passkey assertion/login and management,
 recent-strong-step authorization for sensitive owner
 changes, the audited privileged break-glass procedure, complete method-specific durable
 audit events, and a production-equivalent MFA encryption-key rotation drill are not
@@ -29,8 +31,8 @@ bounded retries and erases ciphertext on every terminal outcome.
 Platform Owner, Platform Admin, and Staff require two steps. Customer accounts are
 password-only by default and can opt into email codes from the security settings page.
 Routine email codes expire after five minutes, are single-use, stored only as hashes,
-and have atomic attempt/resend limits. TOTP login remains supported. Customer TOTP
-enrollment and WebAuthn routes are planned stronger-method work, not deployable features.
+and have atomic attempt/resend limits. TOTP login remains supported. Customer TOTP and
+active WebAuthn capabilities are not deployable features yet.
 Sensitive owner recovery/security changes remain unavailable until a recent stronger
 method gate or the approved one-time audited break-glass procedure is implemented.
 
@@ -85,11 +87,16 @@ WebAuthn scopes bind an opaque random 64-byte user handle to one user, exact RP 
 and optional tenant/site pair. Credential identifiers, public keys, device type, backup
 eligibility, verification time, and scope identity are immutable; revocation is
 permanent, and its recorded timestamp and reason cannot be rewritten. Auth-role grants
-contain no DELETE capability. Enrollment/revocation must
-revoke affected sessions and audit the change in the same transaction, while assertion
-counter/backup updates must commit in the same transaction as session issuance. The
-foundation repository intentionally exposes none of those write operations until the
-later service slices can satisfy the whole transaction.
+contain no DELETE capability. Enrollment verifies an exact-host, five-minute one-use
+registration ceremony and commits the scope/credential, replacement recovery-code
+hashes, required/preferred policy, all-session revocation, authentication-state change,
+and non-secret audit event in one auth-role transaction. Preparation and completion
+revalidate a recent baseline/strong customer session or an existing recent strong ORAP
+session, the current password state, current role/membership, host, scope, and limits.
+The first ORAP strong factor still requires the separate approved bootstrap/recovery
+authorization and cannot use routine email assurance alone. Revocation management is
+not exposed. Assertion counter/backup updates must commit with session issuance and are
+the blocker that keeps enrollment disabled in the production composition.
 
 Persistent TOTP secrets and encrypted recovery-delivery payloads use a versioned keyring.
 The legacy `MFA_ENCRYPTION_KEY` is accepted only as a version-1 deployment bridge. New

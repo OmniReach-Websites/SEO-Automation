@@ -65,6 +65,7 @@ function repository(
     findAccountSecurityTarget: vi.fn(async () => ({
       emailCodeEnabled: false,
       hasTotp: false,
+      hasWebAuthn: false,
       host: 'admin.alpha.test',
       normalizedEmail: 'owner@alpha.example.test',
       passwordHash,
@@ -577,6 +578,7 @@ describe('authentication service', () => {
       findAccountSecurityTarget: vi.fn(async () => ({
         emailCodeEnabled: true,
         hasTotp: true,
+        hasWebAuthn: false,
         host: 'admin.omnireach.test',
         normalizedEmail: 'staff@example.test',
         passwordHash,
