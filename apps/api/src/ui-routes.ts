@@ -237,7 +237,7 @@ export function registerUiRoutes(
             .send(
               renderOrapStaffInviteForm(
                 roles,
-                'Check every field and provide an audit reason.',
+                'Check every field and try again.',
                 orapNavigation(actor),
               ),
             );
@@ -248,7 +248,7 @@ export function registerUiRoutes(
             email: body.data.email,
             host: request.hostname,
             ...(body.data.jobTitle ? { jobTitle: body.data.jobTitle } : {}),
-            reason: body.data.reason,
+            reason: staffUiAuditReason.invite,
             roleSlug: body.data.roleSlug,
           });
           return reply.code(303).redirect('/orap/security/staff?notice=invited');
@@ -773,11 +773,18 @@ const siteCreationInput = z.object({
 });
 
 const operationReason = z.object({ reason: z.string().trim().min(3).max(500) });
+const staffUiAuditReason = {
+  disable: 'Platform Owner disabled staff access through Team & access',
+  invite: 'Platform Owner invited staff through Team & access',
+  profile: 'Platform Owner updated a staff account through Team & access',
+  reset: 'Platform Owner requested a staff password reset through Team & access',
+  role: 'Platform Owner changed a staff role through Team & access',
+  sessions: 'Platform Owner revoked staff sessions through Team & access',
+} as const;
 const staffInvitationInput = z.object({
   displayName: z.string().trim().min(1).max(160),
   email: z.string().trim().email().max(320),
   jobTitle: z.string().trim().max(160).optional(),
-  reason: z.string().trim().min(3).max(500),
   roleSlug: z.string().regex(/^[a-z0-9-]{1,100}$/u),
 });
 const staffAccountUpdateInput = z
@@ -787,7 +794,6 @@ const staffAccountUpdateInput = z
     email: z.string().trim().email().max(320),
     jobTitle: z.string().trim().max(160).optional(),
     newPassword: z.string().max(128).optional(),
-    reason: z.string().trim().min(3).max(500),
   })
   .superRefine((value, context) => {
     const password = value.newPassword ?? '';
@@ -889,7 +895,7 @@ function registerOrapStaffForms(
           email: body.data.email,
           ...(body.data.jobTitle ? { jobTitle: body.data.jobTitle } : {}),
           ...(body.data.newPassword ? { newPassword: body.data.newPassword } : {}),
-          reason: body.data.reason,
+          reason: staffUiAuditReason.profile,
           userId: request.params.userId,
         });
         return request.params.userId === actor.id
@@ -912,7 +918,6 @@ function registerOrapStaffForms(
     operation: (
       actor: AdminActor,
       userId: string,
-      reason: string,
       request: Parameters<NonNullable<typeof options.resolvePlatformActor>>[0],
     ) => Promise<unknown> | undefined,
   ) => {
@@ -924,14 +929,8 @@ function registerOrapStaffForms(
         if (!actor || !isPlatformOwnerIdentity(actor)) {
           return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
         }
-        const body = operationReason.safeParse(request.body);
-        if (!body.success) {
-          return reply
-            .code(303)
-            .redirect(`/orap/security/staff/${request.params.userId}?notice=failed`);
-        }
         try {
-          const pending = operation(actor, request.params.userId, body.data.reason, request);
+          const pending = operation(actor, request.params.userId, request);
           if (!pending) {
             return reply
               .code(303)
@@ -951,22 +950,25 @@ function registerOrapStaffForms(
     );
   };
 
-  register(
-    '/orap/security/staff/:userId/sessions/revoke-all',
-    'sessions',
-    (actor, userId, reason) =>
-      options.orapService?.revokeStaffSessions?.(actor, { reason, userId }),
-  );
-  register('/orap/security/staff/:userId/reset', 'reset', (actor, userId, reason, request) =>
-    options.orapService?.requestStaffReset?.(actor, {
-      host: request.hostname,
-      networkIdentifier: clientNetworkIdentifier(request.ip),
-      reason,
+  register('/orap/security/staff/:userId/sessions/revoke-all', 'sessions', (actor, userId) =>
+    options.orapService?.revokeStaffSessions?.(actor, {
+      reason: staffUiAuditReason.sessions,
       userId,
     }),
   );
-  register('/orap/security/staff/:userId/disable', 'disabled', (actor, userId, reason) =>
-    options.orapService?.disableStaff?.(actor, { reason, userId }),
+  register('/orap/security/staff/:userId/reset', 'reset', (actor, userId, request) =>
+    options.orapService?.requestStaffReset?.(actor, {
+      host: request.hostname,
+      networkIdentifier: clientNetworkIdentifier(request.ip),
+      reason: staffUiAuditReason.reset,
+      userId,
+    }),
+  );
+  register('/orap/security/staff/:userId/disable', 'disabled', (actor, userId) =>
+    options.orapService?.disableStaff?.(actor, {
+      reason: staffUiAuditReason.disable,
+      userId,
+    }),
   );
   server.post<{ Body: unknown; Params: { userId: string } }>(
     '/orap/security/staff/:userId/role',
@@ -978,7 +980,6 @@ function registerOrapStaffForms(
       }
       const body = z
         .object({
-          reason: z.string().trim().min(3).max(500),
           roleSlug: z.string().regex(/^[a-z0-9-]{1,100}$/u),
         })
         .safeParse(request.body);
@@ -989,7 +990,8 @@ function registerOrapStaffForms(
       }
       try {
         await options.orapService.changeStaffRole(actor, {
-          ...body.data,
+          reason: staffUiAuditReason.role,
+          roleSlug: body.data.roleSlug,
           userId: request.params.userId,
         });
         return reply

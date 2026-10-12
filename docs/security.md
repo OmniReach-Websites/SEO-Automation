@@ -94,11 +94,12 @@
   alone cannot authorize those changes. The owner-approved ORAP staff-lifecycle
   exception permits a current Platform Owner who completed mandatory ORAP two-step
   login to replace another staff/Owner password without an additional strong-factor
-  prompt. That write-only, reason-bearing action revokes the target's sessions,
-  invalidates password-recovery links, preserves required two-step login, and writes a
-  non-secret before/after audit record. This recovery convenience increases the impact
-  of a compromised Owner session and must be revisited when SMS or another recovery
-  control is introduced.
+  prompt. That write-only action revokes the target's sessions, invalidates
+  password-recovery links, preserves required two-step login, and writes a non-secret
+  before/after audit record with a system-generated action description. The staff UI does
+  not collect a typed audit reason. This recovery convenience increases the impact of a
+  compromised Owner session and must be revisited when SMS or another recovery control
+  is introduced.
 - WebAuthn is exact-host scoped. The normalized verified admin hostname is both RP ID
   and the only accepted HTTPS origin; apex, wildcard, caller-selected, and cross-origin
   bindings are rejected. Ceremony state is opaque, one-use, server-side, and expires in
