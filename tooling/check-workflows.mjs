@@ -200,6 +200,18 @@ export function checkWorkflows(directory = workflowsDirectory) {
       ) {
         errors.push(`${file}: bridge must preflight both release contracts before transfer`);
       }
+      if (
+        !source.includes('release_manifest=infrastructure/deploy/release-contract.json') ||
+        !source.includes('if test -f "${release_manifest}"; then') ||
+        !source.includes('"${RELEASE_SHA}" omnireach-release.meta . "${release_manifest}"') ||
+        !source.includes(
+          '../bridge-verification/infrastructure/deploy/legacy-release-contract-v2.json',
+        )
+      ) {
+        errors.push(
+          `${file}: bridge rollback metadata must prefer the exact source manifest and use the legacy contract only when absent`,
+        );
+      }
       const metadataGeneratorCount =
         occurrences(source, 'node infrastructure/deploy/create-release-metadata.mjs') +
         occurrences(
@@ -207,7 +219,7 @@ export function checkWorkflows(directory = workflowsDirectory) {
           'node ../bridge-verification/infrastructure/deploy/create-release-metadata.mjs',
         );
       if (
-        metadataGeneratorCount < 3 ||
+        metadataGeneratorCount < 4 ||
         occurrences(source, 'npm run verify:goal -- G05') < 3 ||
         occurrences(source, 'npm run verify:goal -- G06') < 3 ||
         occurrences(source, 'npm run verify:goal -- G30') < 3
