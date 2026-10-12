@@ -141,10 +141,12 @@
   leave a valid but undelivered token until expiry; the response remains generic, no
   session is issued, and a retry safely replaces/invalidates that token. This is a known
   availability gap, not a claimed atomic guarantee.
-- Persistent TOTP and recovery-delivery ciphertext currently depend on a single
-  version-1 `MFA_ENCRYPTION_KEY`. Safe rotation is unsupported: there is no keyring,
-  re-encryption job, or retirement procedure. Production authentication activation is
-  blocked until rotation is implemented and tested.
+- Persistent TOTP and recovery-delivery ciphertext use a versioned keyring. New writes
+  select the active version; reads use the stored version; a bounded transactional job
+  rewrites TOTP factors; and retirement fails while durable factor or delivery
+  references remain. The legacy version-1 file is only the first-release bridge. Live
+  activation remains blocked until an isolated production-equivalent rotation,
+  reauthentication, rollback, and recovery drill passes under owner approval.
 - Authentication attempts, invitation acceptance, reset completion, and all
   email-code/recovery issuance use an atomic Redis limiter across both keyed account or
   token-digest and client-network dimensions. Identifier keys are HMAC-derived and never
@@ -223,16 +225,22 @@ AND current resource belongs to resolved site
 ## 9. Deployment and operations controls
 
 - Branch and PR workflows cannot access production credentials or deploy.
-- The reusable G19 workflow is inert for production. G31 binds it to protected `main` only after owner authorization and R-003/R-010.
+- G19 produced an independently reusable deployment workflow and isolated target
+  harness. The repository now also contains a `main`-push production wrapper referencing
+  the protected `production` environment as partial G31 preparation. Repository files
+  do not prove the external GitHub protection, approver, credential, VPS permission, or
+  activation state; G31 remains blocked on its recorded prerequisites and live evidence.
 - Actions and base images are pinned; artifacts carry checksums; the target verifies exact SHA/manifest/host key.
 - The deploy account is non-root and restricted to named OmniReach release paths and scripts.
 - Releases serialize, stage to versioned directories, run compatibility/health checks, atomically switch, and restore the prior pointer on failure.
 - Auth Contract v2 establishes a compatibility cutoff when its schema is applied or v2
   authentication state is written. Activation and rollback fail closed unless the
   artifact explicitly declares v2 compatibility; after the cutoff, a pre-v2 artifact is
-  never an acceptable automatic or manual rollback target. The ordinary target script
-  refuses a pre-v2-to-v2 transition; a reviewed first-transition bridge/forward-recovery
-  runbook and explicit compatibility metadata remain required before production use.
+  never an acceptable automatic or manual rollback target. Source-bound metadata, the
+  separately confirmed two-artifact bridge, and compatible rollback paths are
+  implemented and locally validated. The ordinary target refuses an unreviewed
+  pre-v2-to-v2 transition; first live bridge/rollback evidence remains required before
+  production use.
 - Shared Caddy changes are additive, validated before reload, and backed by an exact rollback. Christians Reunite health is checked before and after.
 - Logs redact passwords, keys, tokens, cookies, verification codes, factor material,
   recovery codes, private content, and sensitive form values.
