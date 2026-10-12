@@ -331,12 +331,15 @@ test('served ORAP and customer shells remain accessible and host isolated', asyn
     await expect(staffPage.getByLabel('Email')).toHaveValue('employee@example.test');
     await expect(staffPage.getByLabel('New password', { exact: true })).toHaveValue('');
     await expect(staffPage.getByText('Current passwords', { exact: false })).toBeVisible();
-    await expect(staffPage.getByLabel('Staff role')).toHaveValue('operations-manager');
+    await expect(staffPage.getByLabel('Authority level')).toHaveValue('operations-manager');
+    await expect(
+      staffPage.getByLabel('Authority level').getByRole('option', { name: 'Platform Owner' }),
+    ).toHaveCount(1);
     await expect(staffPage.getByRole('button', { name: 'Update authority' })).toBeVisible();
     await expect(staffPage.getByLabel('Audit reason')).toHaveCount(0);
     await staffPage.getByRole('button', { name: 'Save account details' }).click();
     await expect(staffPage.getByRole('status')).toContainText('Account details were updated');
-    await staffPage.getByLabel('Staff role').selectOption('analyst');
+    await staffPage.getByLabel('Authority level').selectOption('platform-owner');
     await staffPage.getByRole('button', { name: 'Update authority' }).click();
     await expect(staffPage.getByRole('status')).toContainText('Staff authority was updated');
 

@@ -101,6 +101,121 @@ describe('PostgreSQL ORAP service', () => {
     );
   });
 
+  it('promotes existing staff to Platform Owner and revokes their active sessions', async () => {
+    const targetUserId = '40000000-0000-4000-8000-000000000099';
+    const targetMembershipId = '60000000-0000-4000-8000-000000000099';
+    const query = vi.fn(async (text: string, values?: unknown[]) => {
+      if (text.includes('pg_advisory_xact_lock')) return { rows: [] };
+      if (text.includes("WHERE user_id = $1 AND status = 'active'")) {
+        return {
+          rows: [{ identity_kind: 'staff', membership_id: targetMembershipId }],
+        };
+      }
+      if (text.includes('FROM staff_roles role')) {
+        expect(values).toEqual(['platform-owner', true]);
+        return {
+          rows: [
+            {
+              id: 'role-owner',
+              name: 'Platform Owner',
+              owner_identity_only: true,
+              role_version_id: 'role-owner-v1',
+              slug: 'platform-owner',
+            },
+          ],
+        };
+      }
+      if (text.includes('SELECT assignment.id')) {
+        return {
+          rows: [{ id: 'assignment-a', name: 'Operations Manager', slug: 'operations-manager' }],
+        };
+      }
+      if (text.includes('UPDATE sessions')) return { rows: [{ id: 'session-a' }] };
+      return { rows: [] };
+    });
+    const service = new PostgresOrapService(
+      { connect: vi.fn(async () => ({ query, release: vi.fn() })) },
+      { send: vi.fn() },
+      vi.fn(),
+    );
+
+    await expect(
+      service.changeStaffRole(actor, {
+        reason: 'Platform Owner changed a staff role through Team & access',
+        roleSlug: 'platform-owner',
+        userId: targetUserId,
+      }),
+    ).resolves.toEqual({
+      identityKind: 'platform_owner',
+      roleName: 'Platform Owner',
+      revokedSessions: 1,
+    });
+    expect(
+      query.mock.calls.some(([text]) => text.includes('INSERT INTO staff_role_assignments')),
+    ).toBe(false);
+    expect(
+      query.mock.calls.find(([text]) => text.includes('UPDATE platform_memberships'))?.[1],
+    ).toEqual([targetUserId, 'platform_owner']);
+    expect(query.mock.calls.find(([text]) => text.includes('staff_access_audits'))?.[1]).toEqual(
+      expect.arrayContaining([actor.id, targetUserId, 'staff.owner_assigned']),
+    );
+  });
+
+  it('refuses to demote the final active Platform Owner', async () => {
+    const targetUserId = '40000000-0000-4000-8000-000000000099';
+    const query = vi.fn(async (text: string, values?: unknown[]) => {
+      void values;
+      if (text.includes('pg_advisory_xact_lock')) return { rows: [] };
+      if (text.includes("WHERE user_id = $1 AND status = 'active'")) {
+        return {
+          rows: [
+            {
+              identity_kind: 'platform_owner',
+              membership_id: '60000000-0000-4000-8000-000000000099',
+            },
+          ],
+        };
+      }
+      if (text.includes('FROM staff_roles role')) {
+        return {
+          rows: [
+            {
+              id: 'role-admin',
+              name: 'Platform Admin',
+              owner_identity_only: false,
+              role_version_id: 'role-admin-v1',
+              slug: 'platform-admin',
+            },
+          ],
+        };
+      }
+      if (text.includes('SELECT assignment.id')) return { rows: [] };
+      if (text.includes("identity_kind = 'platform_owner'")) {
+        return { rows: [{ id: '60000000-0000-4000-8000-000000000099' }] };
+      }
+      return { rows: [] };
+    });
+    const service = new PostgresOrapService(
+      { connect: vi.fn(async () => ({ query, release: vi.fn() })) },
+      { send: vi.fn() },
+      vi.fn(),
+    );
+
+    await expect(
+      service.changeStaffRole(actor, {
+        reason: 'Platform Owner changed a staff role through Team & access',
+        roleSlug: 'platform-admin',
+        userId: targetUserId,
+      }),
+    ).rejects.toThrow('last active Platform Owner cannot be demoted');
+    expect(query.mock.calls.some(([text]) => text.includes('UPDATE staff_role_assignments'))).toBe(
+      false,
+    );
+    expect(query.mock.calls.some(([text]) => text.includes('UPDATE platform_memberships'))).toBe(
+      false,
+    );
+  });
+
   it('revokes privileged staff sessions and records an immutable access audit', async () => {
     const targetUserId = '40000000-0000-4000-8000-000000000099';
     const query = vi.fn(async (text: string, values?: unknown[]) => {
