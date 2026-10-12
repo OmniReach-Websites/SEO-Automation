@@ -30,8 +30,37 @@ const repositorySource = readFileSync(
   resolve(root, 'packages/auth/src/postgres-webauthn.ts'),
   'utf8',
 );
+const authenticationRepositorySource = readFileSync(
+  resolve(root, 'packages/auth/src/postgres.ts'),
+  'utf8',
+);
 
 describe('account authentication database boundary', () => {
+  it('requires locked-password proof and removes every customer lockout factor atomically', () => {
+    expect(authenticationRepositorySource).toMatch(
+      /SELECT user_id, password_hash[\s\S]*FROM credentials[\s\S]*FOR UPDATE/u,
+    );
+    expect(authenticationRepositorySource).toContain(
+      'await input.verifyCurrentPassword(credentialLock.rows[0].password_hash)',
+    );
+    expect(authenticationRepositorySource).toContain("second_step_requirement = 'optional'");
+    expect(authenticationRepositorySource).toContain('email_code_enabled = false');
+    expect(authenticationRepositorySource).toContain('preferred_method = NULL');
+    expect(authenticationRepositorySource).toContain('auth_state_version = auth_state_version + 1');
+    expect(authenticationRepositorySource).toMatch(/UPDATE mfa_factors[\s\S]*revoked_at = \$1/u);
+    expect(authenticationRepositorySource).toMatch(
+      /UPDATE webauthn_credentials credential[\s\S]*scope\.user_id = \$2/u,
+    );
+    expect(authenticationRepositorySource).toMatch(
+      /UPDATE password_recovery_tokens[\s\S]*used_at = \$1/u,
+    );
+    expect(authenticationRepositorySource).toContain(
+      "revoke_reason = 'account-recovery-completed'",
+    );
+    expect(authenticationRepositorySource).toContain("reason: 'customer-recovery-lockout-reset'");
+    expect(authenticationRepositorySource).toContain('accountWide: true');
+  });
+
   it('uses account-level policy and prevents optional policies for active platform users', () => {
     expect(migration).toContain('CREATE TABLE account_authentication_policies');
     expect(migration).toContain('platform_membership_requires_second_step');

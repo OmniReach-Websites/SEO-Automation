@@ -97,7 +97,15 @@ verification satisfies a NIST Authentication Assurance Level. See the
   platform account and never grants strong assurance. Same-account recovery claims
   serialize on the identity row; PostgreSQL deadlock or serialization failures retry as
   complete transactions up to a bounded limit and otherwise fail closed without a
-  partial recovery mutation.
+  partial recovery mutation. Completing that restricted customer flow requires explicit
+  confirmation plus the current password, verified while the credential row is locked.
+  In the same auth-role transaction, it rechecks that no platform membership exists,
+  disables email-code verification, revokes TOTP and WebAuthn credentials, restores the
+  optional/password-first customer policy, rotates recovery codes, advances account
+  authentication state, invalidates reset tokens, revokes all account sessions across
+  customer hosts, and writes scoped audit counts plus an explicit account-wide marker
+  without secrets. It creates no full session; the recovery cookie is cleared and the
+  customer must perform an ordinary password login.
 - Bootstrap the initial owner once through a secure, exact-ORAP-host flow with no
   default or committed credential. The one-time bootstrap authorization plus verified
   second step establishes the initial account; recovery-code custody must be confirmed

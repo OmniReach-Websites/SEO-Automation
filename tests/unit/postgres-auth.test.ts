@@ -396,6 +396,152 @@ describe('PostgreSQL authentication repository', () => {
     ).toBe(false);
   });
 
+  it('finishes restricted customer recovery by atomically removing lockout factors', async () => {
+    const calls: string[] = [];
+    const verifyCurrentPassword = vi.fn(async (hash: string) => hash === '$argon2id$current');
+    const { client, pool } = poolFor(async (query) => {
+      calls.push(query.trimStart());
+      if (query.includes('FROM sessions s') && !query.includes('FOR UPDATE OF s')) {
+        return { rows: [{ site_id: 'site-a', tenant_id: 'tenant-a', user_id: 'user-a' }] };
+      }
+      if (query.includes('SELECT id FROM users')) return { rows: [{ id: 'user-a' }] };
+      if (query.includes('FOR UPDATE OF s')) {
+        return { rows: [{ id: 'session-a', site_id: 'site-a', tenant_id: 'tenant-a' }] };
+      }
+      if (query.includes('FROM platform_memberships')) return { rows: [] };
+      if (query.includes('FROM credentials') && query.includes('FOR UPDATE')) {
+        return { rows: [{ password_hash: '$argon2id$current', user_id: 'user-a' }] };
+      }
+      if (query.includes('FROM account_authentication_policies') && query.includes('FOR UPDATE')) {
+        return {
+          rows: [
+            {
+              email_code_enabled: true,
+              second_step_requirement: 'required',
+              user_id: 'user-a',
+            },
+          ],
+        };
+      }
+      if (query.includes('COALESCE(max(set_version)')) return { rows: [{ set_version: 4 }] };
+      if (query.includes('UPDATE account_recovery_codes')) {
+        return { rows: [{ id: 'recovery-code-a' }, { id: 'recovery-code-b' }] };
+      }
+      if (query.includes('UPDATE mfa_factors')) return { rows: [{ id: 'totp-a' }] };
+      if (query.includes('UPDATE webauthn_credentials')) {
+        return { rows: [{ id: 'passkey-a' }, { id: 'passkey-b' }] };
+      }
+      if (query.includes('UPDATE password_recovery_tokens')) {
+        return { rows: [{ id: 'reset-a' }] };
+      }
+      if (query.includes('UPDATE sessions')) {
+        return { rows: [{ id: 'session-a' }, { id: 'session-b' }] };
+      }
+      return { rows: [] };
+    });
+
+    await expect(
+      new PostgresAuthenticationRepository(pool, 'admin.omnireach.test').completeCustomerRecovery({
+        confirmed: true,
+        host: 'admin.alpha.test',
+        now: new Date('2026-10-10T12:00:00.000Z'),
+        recoveryCodeHashes: ['a'.repeat(64), 'b'.repeat(64)],
+        sessionTokenHash: 'c'.repeat(64),
+        traceId: 'trace-customer-recovery',
+        verifyCurrentPassword,
+      }),
+    ).resolves.toBe(true);
+
+    expect(verifyCurrentPassword).toHaveBeenCalledOnce();
+    expect(verifyCurrentPassword).toHaveBeenCalledWith('$argon2id$current');
+    expect(calls.some((query) => query.startsWith('UPDATE mfa_factors'))).toBe(true);
+    expect(calls.some((query) => query.startsWith('UPDATE webauthn_credentials'))).toBe(true);
+    expect(calls.some((query) => query.startsWith('UPDATE password_recovery_tokens'))).toBe(true);
+    expect(
+      calls.some(
+        (query) =>
+          query.startsWith('UPDATE account_authentication_policies') &&
+          query.includes("second_step_requirement = 'optional'") &&
+          query.includes('email_code_enabled = false') &&
+          query.includes('preferred_method = NULL') &&
+          query.includes('auth_state_version = auth_state_version + 1'),
+      ),
+    ).toBe(true);
+    const auditCall = vi
+      .mocked(client.query)
+      .mock.calls.find(([query]) => query.includes('INSERT INTO audit_events'));
+    expect(auditCall?.[1]?.[7]).toContain('"accountWide":true');
+    expect(auditCall?.[1]?.[7]).toContain('"emailCodeDisabled":true');
+    expect(auditCall?.[1]?.[7]).toContain('"emailCodePreviouslyEnabled":true');
+    expect(auditCall?.[1]?.[7]).toContain('"reason":"customer-recovery-lockout-reset"');
+    expect(auditCall?.[1]?.[7]).toContain('"sessionsRevoked":2');
+    expect(auditCall?.[1]?.[7]).toContain('"webauthnCredentialsRevoked":2');
+    expect(calls.at(-1)).toBe('COMMIT');
+  });
+
+  it('does not mutate recovery state when the locked current password is invalid', async () => {
+    const calls: string[] = [];
+    const { pool } = poolFor(async (query) => {
+      calls.push(query.trimStart());
+      if (query.includes('FROM sessions s')) {
+        return { rows: [{ site_id: 'site-a', tenant_id: 'tenant-a', user_id: 'user-a' }] };
+      }
+      if (query.includes('SELECT id FROM users')) return { rows: [{ id: 'user-a' }] };
+      if (query.includes('FROM platform_memberships')) return { rows: [] };
+      if (query.includes('FROM credentials')) {
+        return { rows: [{ password_hash: '$argon2id$current', user_id: 'user-a' }] };
+      }
+      return { rows: [] };
+    });
+
+    await expect(
+      new PostgresAuthenticationRepository(pool, 'admin.omnireach.test').completeCustomerRecovery({
+        confirmed: true,
+        host: 'admin.alpha.test',
+        now: new Date('2026-10-10T12:00:00.000Z'),
+        recoveryCodeHashes: ['a'.repeat(64)],
+        sessionTokenHash: 'c'.repeat(64),
+        traceId: 'trace-customer-recovery-invalid-password',
+        verifyCurrentPassword: vi.fn(async () => false),
+      }),
+    ).resolves.toBe(false);
+
+    expect(calls.some((query) => query.startsWith('UPDATE '))).toBe(false);
+    expect(calls.at(-1)).toBe('COMMIT');
+  });
+
+  it('aborts restricted customer recovery after a concurrent platform promotion', async () => {
+    const calls: string[] = [];
+    const verifyCurrentPassword = vi.fn(async () => true);
+    const { pool } = poolFor(async (query) => {
+      calls.push(query.trimStart());
+      if (query.includes('FROM sessions s')) {
+        return { rows: [{ site_id: 'site-a', tenant_id: 'tenant-a', user_id: 'user-a' }] };
+      }
+      if (query.includes('SELECT id FROM users')) return { rows: [{ id: 'user-a' }] };
+      if (query.includes('FROM platform_memberships')) {
+        return { rows: [{ id: 'platform-membership-a' }] };
+      }
+      return { rows: [] };
+    });
+
+    await expect(
+      new PostgresAuthenticationRepository(pool, 'admin.omnireach.test').completeCustomerRecovery({
+        confirmed: true,
+        host: 'admin.alpha.test',
+        now: new Date('2026-10-10T12:00:00.000Z'),
+        recoveryCodeHashes: ['a'.repeat(64)],
+        sessionTokenHash: 'c'.repeat(64),
+        traceId: 'trace-customer-recovery-promotion-race',
+        verifyCurrentPassword,
+      }),
+    ).resolves.toBe(false);
+
+    expect(verifyCurrentPassword).not.toHaveBeenCalled();
+    expect(calls.some((query) => query.startsWith('UPDATE '))).toBe(false);
+    expect(calls.at(-1)).toBe('COMMIT');
+  });
+
   it('rejects half-scoped sessions before opening a transaction', async () => {
     const { pool } = poolFor(async () => ({ rows: [] }));
     const repository = new PostgresAuthenticationRepository(pool, 'admin.omnireach.test');

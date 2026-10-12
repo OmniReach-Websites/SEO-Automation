@@ -152,6 +152,33 @@ describe('authentication account and network attempt limits', () => {
     });
   });
 
+  it('rejects restricted customer recovery before password work when limited', async () => {
+    const completeCustomerRecovery = vi.fn(async () => true);
+    const repo = repository({ completeCustomerRecovery });
+    const limiter = { consume: vi.fn(async () => false) };
+    const auth = service(repo, limiter);
+
+    await expect(
+      auth.completeCustomerRecovery({
+        currentPassword: 'fictional-password',
+        host: 'admin.example.test',
+        networkIdentifier: '198.51.100.0/24',
+        recoveryConfirmed: true,
+        sessionToken: 'fictional-restricted-session',
+        traceId: 'trace-customer-recovery',
+      }),
+    ).resolves.toBeUndefined();
+    expect(completeCustomerRecovery).not.toHaveBeenCalled();
+    expect(limiter.consume).toHaveBeenCalledWith({
+      accountIdentifier: expect.stringMatching(/^admin\.example\.test\0[a-f0-9]{64}$/u),
+      accountLimit: 3,
+      networkIdentifier: '198.51.100.0/24',
+      networkLimit: 10,
+      scope: 'customer_recovery_completion',
+      windowSeconds: 900,
+    });
+  });
+
   it('fails closed before issuing email when the cross-challenge issuance limit is reached', async () => {
     const passwordHash = await hashPassword('fictional-password');
     const repo = repository({

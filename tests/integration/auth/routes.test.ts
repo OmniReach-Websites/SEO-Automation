@@ -442,6 +442,23 @@ describe('authentication route safety', () => {
     });
     expect(recoveryPage.statusCode).toBe(200);
     expect(recoveryPage.body).toContain('Complete account recovery');
+    expect(recoveryPage.body).toContain('name="currentPassword"');
+    expect(recoveryPage.body).toContain('name="recoveryConfirmed"');
+
+    const unconfirmedRecovery = await server.inject({
+      cookies: { '__Host-omnireach_session': 'restricted-session' },
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        host: 'admin.alpha.test',
+        origin: 'https://admin.alpha.test',
+      },
+      method: 'POST',
+      payload: 'currentPassword=fictional-secure-password',
+      url: '/auth/security/recovery/complete',
+    });
+    expect(unconfirmedRecovery.statusCode).toBe(400);
+    expect(completeCustomerRecovery).not.toHaveBeenCalled();
+
     const recoveryCompleted = await server.inject({
       cookies: { '__Host-omnireach_session': 'restricted-session' },
       headers: {
@@ -450,13 +467,17 @@ describe('authentication route safety', () => {
         origin: 'https://admin.alpha.test',
       },
       method: 'POST',
-      payload: '',
+      payload: 'currentPassword=fictional-secure-password&recoveryConfirmed=true',
       url: '/auth/security/recovery/complete',
     });
     expect(recoveryCompleted.statusCode).toBe(200);
     expect(recoveryCompleted.body).toContain('EEEE-FFFF-0000-1111');
+    expect(String(recoveryCompleted.headers['set-cookie'])).toContain('__Host-omnireach_session=;');
     expect(completeCustomerRecovery).toHaveBeenCalledWith({
+      currentPassword: 'fictional-secure-password',
       host: 'admin.alpha.test',
+      networkIdentifier: '127.0.0.0/24',
+      recoveryConfirmed: true,
       sessionToken: 'restricted-session',
       traceId: expect.any(String),
     });
