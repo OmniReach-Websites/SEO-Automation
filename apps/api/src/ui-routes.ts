@@ -85,13 +85,19 @@ export function registerUiRoutes(
         request.hostname,
       );
       if (!settings) return reply.code(303).redirect('/login');
+      const platformActor = await options.resolvePlatformActor?.(request);
+      const platformView =
+        platformActor !== undefined &&
+        ['platform_owner', 'platform_admin', 'staff'].includes(platformActor.role);
       if (settings.webauthnEnrollmentAvailable) {
         reply.header(
           'Content-Security-Policy',
           "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
         );
       }
-      return reply.type('text/html; charset=utf-8').send(renderSecuritySettings(settings));
+      return reply
+        .type('text/html; charset=utf-8')
+        .send(renderSecuritySettings(settings, platformView));
     });
     server.get<{ Querystring: { action?: string } }>('/security/email', async (request, reply) => {
       const settings = await options.authService?.securitySettings?.(
@@ -276,14 +282,17 @@ function renderMfa(challengeId: string, emailAvailable: boolean): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><title>Verify sign in | OmniReach</title></head><body><a href="#main">Skip to content</a><main id="main"><h1>Verify sign in</h1><p>Enter your 8-digit email code, 6-digit authenticator code, or alphanumeric recovery code.</p><form method="post" action="/auth/mfa/verify"><input name="challengeId" type="hidden" value="${escapeHtml(challengeId)}"><label for="code">Verification or recovery code</label><input id="code" name="code" autocomplete="one-time-code" required autofocus><button type="submit">Verify</button></form>${resend}</main></body></html>`;
 }
 
-function renderSecuritySettings(settings: {
-  emailCodeEnabled: boolean;
-  emailPolicyChangeAllowed: boolean;
-  secondStepRequired: boolean;
-  totpEnabled: boolean;
-  webauthnEnrollmentAvailable: boolean;
-  webauthnEnabled: boolean;
-}): string {
+function renderSecuritySettings(
+  settings: {
+    emailCodeEnabled: boolean;
+    emailPolicyChangeAllowed: boolean;
+    secondStepRequired: boolean;
+    totpEnabled: boolean;
+    webauthnEnrollmentAvailable: boolean;
+    webauthnEnabled: boolean;
+  },
+  platformView = false,
+): string {
   const action = settings.emailCodeEnabled ? 'disable' : 'enable';
   const verb = settings.emailCodeEnabled ? 'Disable' : 'Enable';
   const emailControl = settings.emailPolicyChangeAllowed
@@ -292,7 +301,17 @@ function renderSecuritySettings(settings: {
   const passkeyEnrollment = settings.webauthnEnrollmentAvailable
     ? `<form id="passkey-enrollment" novalidate><label for="credentialName">Passkey name</label><input id="credentialName" name="credentialName" maxlength="80" autocomplete="off" required><label for="passkeyCurrentPassword">Current password</label><input id="passkeyCurrentPassword" name="currentPassword" type="password" maxlength="128" autocomplete="current-password" required><button type="submit">Create passkey</button></form><section id="passkey-recovery" hidden><h3>Save replacement recovery codes</h3><p>These codes are shown once. Store them securely before completing enrollment.</p><ul id="passkey-recovery-codes"></ul><label><input id="passkey-recovery-acknowledged" type="checkbox"> I saved every recovery code.</label><button id="passkey-complete" type="button">Finish passkey enrollment</button></section><p id="passkey-status" role="status" aria-live="polite"></p><script src="/security/passkey.js" defer></script>`
     : '<p>Enrollment remains unavailable until passkey sign-in support is activated in the same release.</p>';
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><title>Security settings | OmniReach</title></head><body><a href="#main">Skip to content</a><main id="main"><h1>Security settings</h1><p>Two-step verification is ${settings.secondStepRequired ? 'required' : 'optional'} for this account.</p><section><h2>Email verification codes</h2><p>Status: ${settings.emailCodeEnabled ? 'enabled' : 'disabled'}.</p>${emailControl}</section><section><h2>Authenticator app</h2><p>${settings.totpEnabled ? 'Enrolled. Management controls are not yet available on this page.' : 'Enrollment is not yet available.'}</p></section><section><h2>Passkeys and Windows Hello</h2><p>${settings.webauthnEnabled ? 'A passkey is enrolled. Management controls are not yet available on this page.' : 'No passkey is enrolled.'}</p>${passkeyEnrollment}</section><p>Changing a verification method signs out every active session.</p><p><a href="/">Return to dashboard</a></p></main></body></html>`;
+  const content = `<p class="lede">Two-step verification is <strong>${settings.secondStepRequired ? 'required' : 'optional'}</strong> for this account.</p><section class="panel"><h2>Email verification codes</h2><p>Status: <span class="badge${settings.emailCodeEnabled ? '' : ' disabled'}">${settings.emailCodeEnabled ? 'enabled' : 'disabled'}</span></p>${emailControl}</section><section class="panel"><h2>Authenticator app</h2><p>${settings.totpEnabled ? 'Enrolled. Management controls are not yet available on this page.' : 'Enrollment is not yet available.'}</p></section><section class="panel"><h2>Passkeys and Windows Hello</h2><p>${settings.webauthnEnabled ? 'A passkey is enrolled. Management controls are not yet available on this page.' : 'No passkey is enrolled.'}</p>${passkeyEnrollment}</section><p class="help">Changing a verification method signs out every active session.</p>`;
+  if (platformView) {
+    return renderOrapShell({
+      content,
+      current: 'security',
+      eyebrow: 'Account protection',
+      heading: 'Security settings',
+      title: 'Security settings',
+    });
+  }
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><link rel="stylesheet" href="/assets/admin.css"><title>Security settings | OmniReach</title></head><body><a class="skip-link" href="#main">Skip to content</a><main class="content" id="main"><div class="page-head"><div><p class="eyebrow">Account protection</p><h1>Security settings</h1></div></div>${content}<p><a class="button secondary" href="/">Return to dashboard</a></p></main></body></html>`;
 }
 
 function renderEmailPolicyVerification(challengeId: string, action: 'disable' | 'enable'): string {

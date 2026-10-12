@@ -502,6 +502,51 @@ describe('authentication route safety', () => {
     );
   });
 
+  it('renders privileged security settings inside the functional ORAP shell', async () => {
+    const server = buildApiServer({
+      authService: {
+        acceptInvitation: vi.fn(async () => ({ kind: 'invalid' as const })),
+        completeOwnerBootstrap: vi.fn(async () => false),
+        completePasswordRecovery: vi.fn(async () => false),
+        listSessions: vi.fn(async () => []),
+        login: vi.fn(async () => ({ kind: 'invalid' as const })),
+        logout: vi.fn(async () => undefined),
+        prepareOwnerBootstrap: vi.fn(async () => undefined),
+        requestPasswordRecovery: vi.fn(async () => undefined),
+        revokeSession: vi.fn(async () => false),
+        securitySettings: vi.fn(async () => ({
+          emailCodeEnabled: true,
+          emailPolicyChangeAllowed: false,
+          secondStepRequired: true,
+          totpEnabled: false,
+          webauthnEnrollmentAvailable: false,
+          webauthnEnabled: false,
+        })),
+        verifyMfa: vi.fn(async () => ({ kind: 'invalid' as const })),
+      },
+      logLevel: 'silent',
+      resolvePlatformActor: vi.fn(async () => ({
+        id: '40000000-0000-4000-8000-000000000001',
+        role: 'platform_owner' as const,
+        traceId: 'privileged-security-page',
+      })),
+    });
+    servers.push(server);
+
+    const page = await server.inject({
+      cookies: { '__Host-omnireach_session': 'platform-session' },
+      headers: { host: 'admin.omnireach.test' },
+      method: 'GET',
+      url: '/security',
+    });
+
+    expect(page.statusCode).toBe(200);
+    expect(page.body).toContain('href="/assets/admin.css"');
+    expect(page.body).toContain('href="/orap/operations"');
+    expect(page.body).toContain('href="/security" aria-current="page"');
+    expect(page.body).toContain('Two-step verification is <strong>required</strong>');
+  });
+
   it('serves exact-origin passkey enrollment UI and revokes the current cookie on completion', async () => {
     const prepareWebAuthnEnrollment = vi.fn(
       async () =>
