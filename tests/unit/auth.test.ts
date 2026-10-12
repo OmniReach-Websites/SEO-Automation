@@ -1,4 +1,6 @@
 import {
+  activeSecretKey,
+  createVersionedSecretKeyring,
   decryptMfaSecret,
   encryptMfaSecret,
   createMfaEnrollment,
@@ -6,7 +8,10 @@ import {
   hasPermission,
   hashPassword,
   normalizeEmail,
+  parseVersionedSecretKeyring,
+  maximumMfaKeyVersion,
   requiresMfa,
+  secretKeyForVersion,
   sessionCookieOptions,
   verifyPassword,
 } from '@omnireach/auth';
@@ -64,5 +69,42 @@ describe('authentication primitives', () => {
     tampered[tampered.length - 1] = (tampered[tampered.length - 1] ?? 0) ^ 1;
     expect(() => decryptMfaSecret(tampered, key)).toThrow('authentication failed');
     expect(() => encryptMfaSecret('secret', 'too-short')).toThrow('too short');
+  });
+
+  it('selects versioned MFA keys without losing legacy decrypt support', () => {
+    const legacy = 'fictional-dedicated-mfa-key-material-0001';
+    const replacement = 'fictional-dedicated-mfa-key-material-0002';
+    const keyring = createVersionedSecretKeyring({
+      activeVersion: 2,
+      keys: { 1: legacy, 2: replacement },
+    });
+    const encryptedWithLegacy = encryptMfaSecret('JBSWY3DPEHPK3PXP', legacy);
+
+    expect(activeSecretKey(keyring)).toEqual({ keyMaterial: replacement, keyVersion: 2 });
+    expect(decryptMfaSecret(encryptedWithLegacy, secretKeyForVersion(keyring, 1) ?? '')).toBe(
+      'JBSWY3DPEHPK3PXP',
+    );
+    expect(parseVersionedSecretKeyring(undefined, legacy).activeVersion).toBe(1);
+    expect(() =>
+      parseVersionedSecretKeyring(JSON.stringify({ activeVersion: 2, keys: { 1: legacy } })),
+    ).toThrow('active version is unavailable');
+    expect(() =>
+      createVersionedSecretKeyring({
+        activeVersion: 2,
+        keys: { 1: legacy, 2: legacy },
+      }),
+    ).toThrow('entries must be unique');
+    expect(() =>
+      createVersionedSecretKeyring({
+        activeVersion: maximumMfaKeyVersion + 1,
+        keys: { [maximumMfaKeyVersion + 1]: replacement },
+      }),
+    ).toThrow('active version is invalid');
+    expect(() =>
+      createVersionedSecretKeyring({
+        activeVersion: 1,
+        keys: { 1: legacy, [maximumMfaKeyVersion + 1]: replacement },
+      }),
+    ).toThrow('entry is invalid');
   });
 });

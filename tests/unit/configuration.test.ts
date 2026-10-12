@@ -31,6 +31,62 @@ describe('configuration and logging safety', () => {
     expect(redacted.DATABASE_URL).not.toContain('local_password');
   });
 
+  it('accepts and redacts a versioned MFA keyring while rejecting unsafe rings', () => {
+    const first = 'fictional-version-one-encryption-key-material';
+    const second = 'fictional-version-two-encryption-key-material';
+    const keyringConfig = {
+      ...validConfig,
+      MFA_ENCRYPTION_KEY: undefined,
+      MFA_ENCRYPTION_KEYRING_JSON: JSON.stringify({
+        activeVersion: 2,
+        keys: { 1: first, 2: second },
+      }),
+    };
+    const parsed = parseConfig(keyringConfig);
+    expect(parsed.MFA_ENCRYPTION_KEY).toBeUndefined();
+    expect(redactConfig(parsed).MFA_ENCRYPTION_KEYRING_JSON).toBe('[REDACTED]');
+    expect(JSON.stringify(redactConfig(parsed))).not.toContain(first);
+    expect(() =>
+      parseConfig({
+        ...keyringConfig,
+        MFA_ENCRYPTION_KEYRING_JSON: JSON.stringify({ activeVersion: 3, keys: { 2: second } }),
+      }),
+    ).toThrow('MFA_ENCRYPTION_KEYRING_JSON');
+    expect(() =>
+      parseConfig({
+        ...keyringConfig,
+        MFA_ENCRYPTION_KEYRING_JSON: JSON.stringify({
+          activeVersion: 2,
+          keys: { 1: first, 2: first },
+        }),
+      }),
+    ).toThrow('MFA_ENCRYPTION_KEYRING_JSON');
+    expect(() =>
+      parseConfig({
+        ...keyringConfig,
+        MFA_ENCRYPTION_KEYRING_JSON: JSON.stringify({
+          activeVersion: 2_147_483_648,
+          keys: { 2_147_483_648: second },
+        }),
+      }),
+    ).toThrow('MFA_ENCRYPTION_KEYRING_JSON');
+    expect(() =>
+      parseConfig({
+        ...keyringConfig,
+        MFA_ENCRYPTION_KEYRING_JSON: JSON.stringify({
+          activeVersion: 2,
+          keys: { 1: first, 2: validConfig.SESSION_SECRET },
+        }),
+      }),
+    ).toThrow('MFA_ENCRYPTION_KEYRING_JSON');
+    expect(() =>
+      parseConfig({
+        ...validConfig,
+        MFA_ENCRYPTION_KEY: validConfig.SESSION_SECRET,
+      }),
+    ).toThrow('MFA_ENCRYPTION_KEY');
+  });
+
   it('keeps contact delivery disabled by default and requires complete provider keys', () => {
     const defaults = parseConfig(validConfig);
     expect(defaults.CONTACT_DELIVERY_ENABLED).toBe(false);

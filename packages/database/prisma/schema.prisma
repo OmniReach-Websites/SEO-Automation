@@ -246,6 +246,15 @@ model MfaFactor {
   @@map("mfa_factors")
 }
 
+model MfaEncryptionKeyRetirement {
+  keyVersion    Int      @id @map("key_version")
+  changeId      String   @map("change_id") @db.VarChar(128)
+  retiredAt     DateTime @default(now()) @map("retired_at") @db.Timestamptz(3)
+  retiredByRole String   @default(dbgenerated("session_user")) @map("retired_by_role") @db.VarChar(63)
+
+  @@map("mfa_encryption_key_retirements")
+}
+
 model MfaRecoveryCode {
   id        String    @id @default(uuid()) @db.Uuid
   factorId  String    @map("factor_id") @db.Uuid
