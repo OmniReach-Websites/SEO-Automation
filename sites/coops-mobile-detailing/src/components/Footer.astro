@@ -1,0 +1,43 @@
+---
+import { CALL_HREF, INSTAGRAM_URL, PHONE_DISPLAY, serviceAreas, TEXT_HREF } from '../data/site';
+const year = new Date().getFullYear();
+---
+
+<footer class="site-footer">
+  <div class="footer-grid shell">
+    <div class="footer-brand">
+      <a class="brand" href="/">
+        <img src="/images/coops-logo.webp" width="64" height="64" alt="" loading="lazy" />
+        <span><strong>Coop's</strong><small>Mobile Detailing</small></span>
+      </a>
+      <p>Mobile automotive detailing based in Aledo, Texas.</p>
+      <a class="footer-phone" href={CALL_HREF}>{PHONE_DISPLAY}</a>
+    </div>
+    <div>
+      <h2>Explore</h2>
+      <ul class="footer-links">
+        <li><a href="/services/">Services</a></li>
+        <li><a href="/our-work/">Our Work</a></li>
+        <li><a href="/about/">About Cooper</a></li>
+        <li><a href="/contact/">Contact</a></li>
+      </ul>
+    </div>
+    <div>
+      <h2>Service area</h2>
+      <p>{serviceAreas.join(' · ')}<br />and surrounding communities.</p>
+    </div>
+    <div>
+      <h2>Get in touch</h2>
+      <ul class="footer-links">
+        <li><a href={CALL_HREF}>Call Cooper</a></li>
+        <li><a href={TEXT_HREF}>Text Cooper</a></li>
+        <li><a href={INSTAGRAM_URL} rel="noopener noreferrer">Instagram</a></li>
+        <li><a href="/privacy/">Privacy</a></li>
+      </ul>
+    </div>
+  </div>
+  <div class="footer-bottom shell">
+    <p>© {year} Coop's Mobile Detailing.</p>
+    <p>Mobile service · Aledo, TX</p>
+  </div>
+</footer>

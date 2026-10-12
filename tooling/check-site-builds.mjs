@@ -2,7 +2,12 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const root = resolve(import.meta.dirname, '..');
-const sitePaths = ['sites/_starter', 'sites/restaurant-example', 'sites/custom-portfolio-example'];
+const sitePaths = [
+  'sites/_starter',
+  'sites/restaurant-example',
+  'sites/custom-portfolio-example',
+  'sites/coops-mobile-detailing',
+];
 
 function filesRecursively(directory) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -58,6 +63,15 @@ export function checkSiteBuilds() {
       }
       const allowedExternalUrls = new Set([
         'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit',
+        'https://coopsmobiledetailingaledo.com',
+        'https://coopsmobiledetailingaledo.com/',
+        'https://coopsmobiledetailingaledo.com/about/',
+        'https://coopsmobiledetailingaledo.com/contact/',
+        'https://coopsmobiledetailingaledo.com/images/social-card.webp',
+        'https://coopsmobiledetailingaledo.com/our-work/',
+        'https://coopsmobiledetailingaledo.com/privacy/',
+        'https://coopsmobiledetailingaledo.com/services/',
+        'https://instagram.com/coops_mobile_detailing',
         'https://schema.org',
       ]);
       const externalUrls = [...html.matchAll(/https:\/\/[^\s"'`<>]+/giu)].map((match) => match[0]);

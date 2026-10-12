@@ -1,0 +1,14 @@
+---
+import { CALL_HREF, TEXT_HREF } from '../data/site';
+---
+
+<aside class="mobile-actions" aria-label="Quick contact actions">
+  <a href={CALL_HREF}>
+    <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6.6 10.8a15.5 15.5 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.24c1.1.37 2.25.56 3.43.56A1.17 1.17 0 0 1 21 16.69v3.48a1.17 1.17 0 0 1-1.17 1.17A17.83 17.83 0 0 1 2 3.5 1.17 1.17 0 0 1 3.17 2.33h3.5A1.17 1.17 0 0 1 7.83 3.5c0 1.2.19 2.35.56 3.43a1 1 0 0 1-.25 1.02L6.6 10.8Z" /></svg>
+    Call
+  </a>
+  <a href={TEXT_HREF}>
+    <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2Zm-2 11H6v-2h12v2Zm0-3H6V8h12v2Zm0-3H6V5h12v2Z" /></svg>
+    Text
+  </a>
+</aside>

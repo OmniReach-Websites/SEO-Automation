@@ -1,0 +1,238 @@
+{
+  "version": "1.0",
+  "site": {
+    "id": "coops-mobile-detailing",
+    "sourcePath": "sites/coops-mobile-detailing"
+  },
+  "locales": ["en-US"],
+  "components": [
+    { "id": "home", "type": "page" },
+    { "id": "home.hero", "type": "section" },
+    { "id": "home.highlights", "type": "section" },
+    { "id": "home.goal", "type": "section" },
+    { "id": "services", "type": "page" },
+    { "id": "services.packages", "type": "collection" },
+    { "id": "services.addons", "type": "collection" },
+    { "id": "portfolio", "type": "page" },
+    { "id": "portfolio.gallery", "type": "collection" },
+    { "id": "about", "type": "page" },
+    { "id": "contact", "type": "page" },
+    { "id": "faq", "type": "collection" },
+    { "id": "privacy", "type": "page" }
+  ],
+  "facts": [
+    { "id": "business.phone", "kind": "contact" },
+    { "id": "business.service-areas", "kind": "address" },
+    { "id": "business.service-policy", "kind": "legal" },
+    { "id": "services.prices", "kind": "price" },
+    { "id": "services.availability", "kind": "legal" },
+    { "id": "about.story", "kind": "legal" },
+    { "id": "goal.financial-progress", "kind": "price" },
+    { "id": "legal.privacy", "kind": "legal" }
+  ],
+  "fields": [
+    {
+      "id": "home.heading",
+      "componentId": "home.hero",
+      "label": "Homepage heading",
+      "type": "text",
+      "editableBy": ["customer_owner", "customer_editor"],
+      "protected": false,
+      "aiMode": "auto"
+    },
+    {
+      "id": "home.intro",
+      "componentId": "home.hero",
+      "label": "Homepage introduction",
+      "type": "richText",
+      "editableBy": ["customer_owner", "customer_editor"],
+      "protected": false,
+      "aiMode": "suggestion"
+    },
+    {
+      "id": "home.hero-image",
+      "componentId": "home.hero",
+      "label": "Hero image",
+      "type": "image",
+      "editableBy": ["customer_owner", "customer_editor"],
+      "protected": false,
+      "aiMode": "disabled"
+    },
+    {
+      "id": "home.primary-cta-label",
+      "componentId": "home.hero",
+      "label": "Primary call to action",
+      "type": "text",
+      "editableBy": ["customer_owner", "customer_editor"],
+      "protected": false,
+      "aiMode": "suggestion"
+    },
+    {
+      "id": "home.highlights.items",
+      "componentId": "home.highlights",
+      "label": "Trust highlights",
+      "type": "cards",
+      "editableBy": ["customer_owner", "customer_editor"],
+      "protected": false,
+      "aiMode": "suggestion"
+    },
+    {
+      "id": "home.section-order",
+      "componentId": "home",
+      "label": "Homepage section order",
+      "type": "sectionOrder",
+      "editableBy": ["customer_owner", "customer_editor"],
+      "protected": false,
+      "aiMode": "disabled"
+    },
+    {
+      "id": "home.goal.visible",
+      "componentId": "home.goal",
+      "label": "Show first-car goal",
+      "type": "visibility",
+      "editableBy": ["customer_owner"],
+      "protected": true,
+      "factRef": "goal.financial-progress",
+      "aiMode": "disabled"
+    },
+    {
+      "id": "home.goal.values",
+      "componentId": "home.goal",
+      "label": "First-car goal amounts",
+      "type": "cards",
+      "editableBy": ["customer_owner"],
+      "protected": true,
+      "factRef": "goal.financial-progress",
+      "aiMode": "disabled"
+    },
+    {
+      "id": "services.descriptions",
+      "componentId": "services.packages",
+      "label": "Service descriptions",
+      "type": "cards",
+      "editableBy": ["customer_owner", "customer_editor"],
+      "protected": false,
+      "aiMode": "suggestion"
+    },
+    {
+      "id": "services.prices",
+      "componentId": "services.packages",
+      "label": "Service starting prices",
+      "type": "cards",
+      "editableBy": ["customer_owner"],
+      "protected": true,
+      "factRef": "services.prices",
+      "aiMode": "disabled"
+    },
+    {
+      "id": "services.addons",
+      "componentId": "services.addons",
+      "label": "Available add-ons",
+      "type": "cards",
+      "editableBy": ["customer_owner"],
+      "protected": true,
+      "factRef": "services.availability",
+      "aiMode": "disabled"
+    },
+    {
+      "id": "portfolio.items",
+      "componentId": "portfolio.gallery",
+      "label": "Gallery titles, captions, alt text, category, order, and visibility",
+      "type": "cards",
+      "editableBy": ["customer_owner", "customer_editor"],
+      "protected": false,
+      "aiMode": "suggestion"
+    },
+    {
+      "id": "portfolio.images",
+      "componentId": "portfolio.gallery",
+      "label": "Gallery images and before/after pairs",
+      "type": "image",
+      "editableBy": ["customer_owner", "customer_editor"],
+      "protected": false,
+      "aiMode": "disabled"
+    },
+    {
+      "id": "about.story",
+      "componentId": "about",
+      "label": "Cooper's story",
+      "type": "richText",
+      "editableBy": ["customer_owner"],
+      "protected": true,
+      "factRef": "about.story",
+      "aiMode": "disabled"
+    },
+    {
+      "id": "faq.items",
+      "componentId": "faq",
+      "label": "Frequently asked questions",
+      "type": "cards",
+      "editableBy": ["customer_owner"],
+      "protected": true,
+      "factRef": "business.service-policy",
+      "aiMode": "disabled"
+    },
+    {
+      "id": "contact.phone",
+      "componentId": "contact",
+      "label": "Phone and text number",
+      "type": "link",
+      "editableBy": ["customer_owner"],
+      "protected": true,
+      "factRef": "business.phone",
+      "aiMode": "disabled"
+    },
+    {
+      "id": "contact.service-areas",
+      "componentId": "contact",
+      "label": "Confirmed service areas",
+      "type": "cards",
+      "editableBy": ["customer_owner"],
+      "protected": true,
+      "factRef": "business.service-areas",
+      "aiMode": "disabled"
+    },
+    {
+      "id": "privacy.content",
+      "componentId": "privacy",
+      "label": "Approved privacy notice",
+      "type": "richText",
+      "editableBy": ["customer_owner"],
+      "protected": true,
+      "factRef": "legal.privacy",
+      "aiMode": "disabled"
+    },
+    {
+      "id": "site.metadata",
+      "componentId": "home",
+      "label": "Search and social metadata",
+      "type": "metadata",
+      "editableBy": ["customer_owner", "customer_editor"],
+      "protected": false,
+      "aiMode": "suggestion"
+    },
+    {
+      "id": "site.theme",
+      "componentId": "home",
+      "label": "Site theme",
+      "type": "theme",
+      "editableBy": ["customer_owner"],
+      "protected": false,
+      "aiMode": "disabled"
+    }
+  ],
+  "routes": [
+    { "id": "home", "path": "/", "componentId": "home" },
+    { "id": "services", "path": "/services/", "componentId": "services" },
+    { "id": "our-work", "path": "/our-work/", "componentId": "portfolio" },
+    { "id": "about", "path": "/about/", "componentId": "about" },
+    { "id": "contact", "path": "/contact/", "componentId": "contact" },
+    { "id": "privacy", "path": "/privacy/", "componentId": "privacy" }
+  ],
+  "preview": { "entryRoute": "home" },
+  "build": {
+    "workspace": "@omnireach/site-coops-mobile-detailing",
+    "outputDirectory": "dist"
+  },
+  "contactForms": []
+}

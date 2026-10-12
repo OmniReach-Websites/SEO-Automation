@@ -1,0 +1,13 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { CALL_HREF } from '../data/site';
+---
+
+<Layout title="Page Not Found" description="The requested page could not be found." canonicalPath="/" noindex>
+  <section class="not-found">
+    <div class="shell not-found-grid">
+      <div><p class="error-code">404</p><p class="eyebrow">Wrong turn</p><h1>This page missed the driveway.</h1><p>The page may have moved, but Cooper's mobile detailing services are still one tap away.</p><div class="button-row"><a class="button button-primary" href="/">Back home</a><a class="button button-secondary" href={CALL_HREF}>Call Cooper</a></div></div>
+      <img src="/images/work-3.webp" width="756" height="1008" alt="Glossy blue Ford Mustang front end" />
+    </div>
+  </section>
+</Layout>
