@@ -44,6 +44,15 @@ export function checkWorkflows(directory = workflowsDirectory) {
     if (isReusableDeploy && !Object.hasOwn(workflow?.on ?? {}, 'workflow_call')) {
       errors.push(`${file}: inert deploy foundation must be reusable only`);
     }
+    if (isReusableDeploy) {
+      const activation = workflow?.on?.workflow_call?.inputs?.production_deployment_enabled;
+      if (activation?.required !== true || activation?.type !== 'boolean') {
+        errors.push(`${file}: reusable production transfer must require explicit activation`);
+      }
+      if (workflow?.jobs?.transfer?.if !== '${{ inputs.production_deployment_enabled == true }}') {
+        errors.push(`${file}: reusable production transfer must default off`);
+      }
+    }
     if (!isBranchCi && !isReusableDeploy && !isProductionDeploy)
       errors.push(`${file}: workflow is not registered by policy`);
     if (workflow?.pull_request_target) errors.push(`${file}: pull_request_target is forbidden`);
@@ -67,9 +76,29 @@ export function checkWorkflows(directory = workflowsDirectory) {
       if (workflow?.on?.push?.branches?.length !== 1 || workflow.on.push.branches[0] !== 'main') {
         errors.push(`${file}: production deployment must trigger only from main`);
       }
-      const jobs = Object.values(workflow?.jobs ?? {});
-      if (jobs.length !== 1 || jobs[0]?.environment !== 'production') {
-        errors.push(`${file}: production deployment must bind the production environment`);
+      if (!Object.hasOwn(workflow?.on ?? {}, 'workflow_dispatch')) {
+        errors.push(`${file}: production recovery must expose an explicit manual dispatch`);
+      }
+      const jobs = workflow?.jobs ?? {};
+      if (
+        Object.keys(jobs).sort().join(',') !== 'deploy,rollback' ||
+        jobs.deploy?.environment !== 'production' ||
+        jobs.rollback?.environment !== 'production'
+      ) {
+        errors.push(`${file}: deploy and rollback must bind the production environment`);
+      }
+      if (
+        jobs.deploy?.if !==
+        "${{ github.event_name == 'push' && vars.PRODUCTION_DEPLOYMENT_ENABLED == 'true' }}"
+      ) {
+        errors.push(`${file}: production deployment must default off behind explicit activation`);
+      }
+      if (
+        jobs.rollback?.if !==
+          "${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'rollback' }}" ||
+        !source.includes('omnireach-release rollback')
+      ) {
+        errors.push(`${file}: rollback must be an environment-reviewed manual operation`);
       }
       if (!source.includes('omnireach-release deploy ${GITHUB_SHA}')) {
         errors.push(`${file}: production deployment must activate the exact pushed SHA`);
@@ -105,6 +134,19 @@ export function checkWorkflows(directory = workflowsDirectory) {
         errors.push(
           `${file}: full release verification must manage its disposable dependency stack`,
         );
+      }
+      const activationIndex = source.indexOf('omnireach-release deploy ${GITHUB_SHA}');
+      for (const goal of ['G05', 'G06', 'G30']) {
+        const goalIndex = source.indexOf(`npm run verify:goal -- ${goal}`);
+        if (goalIndex < 0 || activationIndex < 0 || goalIndex > activationIndex) {
+          errors.push(`${file}: ${goal} must pass before production activation`);
+        }
+      }
+      if (
+        !source.includes('node infrastructure/deploy/create-release-metadata.mjs') ||
+        !source.includes('omnireach-images.tar.gz.sha256 omnireach-release.meta')
+      ) {
+        errors.push(`${file}: immutable release metadata must be generated and packaged`);
       }
     }
 

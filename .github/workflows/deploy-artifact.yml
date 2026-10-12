@@ -3,6 +3,10 @@ name: Reusable immutable artifact transfer
 on:
   workflow_call:
     inputs:
+      production_deployment_enabled:
+        description: Explicit caller activation for a production transfer
+        required: true
+        type: boolean
       commit_sha:
         description: Exact verified source commit
         required: true
@@ -26,6 +30,7 @@ permissions:
 
 jobs:
   transfer:
+    if: ${{ inputs.production_deployment_enabled == true }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -58,6 +63,8 @@ jobs:
           npx playwright install --with-deps chromium
           docker compose --file infrastructure/compose/dev.compose.yml up --detach --wait
           npm run verify:local-stack
+          npm run verify:goal -- G05
+          npm run verify:goal -- G06
           npm run verify:goal -- G30
           npm run verify:production-compose
           npm run scan:secrets -- --full-history
@@ -74,9 +81,11 @@ jobs:
 
       - name: Package immutable release
         run: |
+          node infrastructure/deploy/create-release-metadata.mjs "${GITHUB_SHA}" omnireach-release.meta
           tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 -czf "${GITHUB_SHA}.tgz" \
             .dockerignore .nvmrc apps infrastructure/compose infrastructure/deploy packages sites workers \
-            omnireach-images.tar.gz omnireach-images.tar.gz.sha256 package.json package-lock.json \
+            omnireach-images.tar.gz omnireach-images.tar.gz.sha256 omnireach-release.meta \
+            package.json package-lock.json \
             prisma.config.ts tsconfig.base.json tsconfig.json
           sha256sum "${GITHUB_SHA}.tgz" > "${GITHUB_SHA}.tgz.sha256"
 

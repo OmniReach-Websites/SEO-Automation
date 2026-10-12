@@ -11,6 +11,11 @@ import {
   verifyMigrationCompatibility,
   withReleaseLock,
 } from '../infrastructure/deploy/release.mjs';
+import {
+  assertReleaseMetadataSupports,
+  parseReleaseMetadata,
+  renderReleaseMetadata,
+} from '../infrastructure/deploy/create-release-metadata.mjs';
 
 const root = await mkdtemp(join(tmpdir(), 'omnireach-deploy-fixture-'));
 try {
@@ -24,6 +29,34 @@ try {
   await writeFile(checksumPath, `${checksum}  artifact.tgz\n`);
   const first = 'a'.repeat(40);
   const second = 'b'.repeat(40);
+  const metadata = parseReleaseMetadata(
+    renderReleaseMetadata({
+      migrationCount: 1,
+      migrationHead: '20261010250000_g05_account_authentication_policy',
+      releaseId: first,
+    }),
+    first,
+  );
+  assertReleaseMetadataSupports(metadata, { authContract: 2, schemaContract: 2 });
+  let incompatibleRollbackRejected = false;
+  try {
+    assertReleaseMetadataSupports(metadata, { authContract: 2, schemaContract: 3 });
+  } catch {
+    incompatibleRollbackRejected = true;
+  }
+  let metadataIdentityRejected = false;
+  try {
+    parseReleaseMetadata(
+      renderReleaseMetadata({
+        migrationCount: 1,
+        migrationHead: '20261010250000_g05_account_authentication_policy',
+        releaseId: first,
+      }),
+      second,
+    );
+  } catch {
+    metadataIdentityRejected = true;
+  }
   await stageRelease({ archivePath, checksumPath, releaseId: first, root });
   await activateRelease({ healthCheck: async () => true, releaseId: first, root });
   await stageRelease({ archivePath, checksumPath, releaseId: second, root });
@@ -60,6 +93,8 @@ try {
     !restored ||
     !badChecksumRejected ||
     !migrationRejected ||
+    !incompatibleRollbackRejected ||
+    !metadataIdentityRejected ||
     !releaseLockRejected ||
     current.releaseId !== first ||
     rolledBack.releaseId !== first
@@ -70,6 +105,8 @@ try {
     JSON.stringify({
       badChecksumRejected,
       check: 'deploy-harness',
+      incompatibleRollbackRejected,
+      metadataIdentityRejected,
       migrationRejected,
       ok: true,
       releaseId: current.releaseId,

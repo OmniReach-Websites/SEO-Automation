@@ -17,8 +17,11 @@ install -d -m 0750 -o omnireach-deploy -g omnireach-deploy "$deploy_root/incomin
 install -d -m 0750 -o root -g root "$deploy_root/releases"
 install -d -m 0750 -o root -g root "$deploy_root/shared" "$deploy_root/shared/config"
 install -d -m 0700 -o root -g root "$deploy_root/shared/secrets"
+install -d -m 0755 -o root -g root /usr/local/libexec
 
 install -m 0755 -o root -g root "$source_root/target-release.sh" /usr/local/sbin/omnireach-release-root
+install -m 0755 -o root -g root "$source_root/validate-release-metadata.sh" \
+  /usr/local/libexec/omnireach-validate-release-metadata
 cat >/usr/local/bin/omnireach-release <<'EOF'
 #!/bin/sh
 exec sudo -n /usr/local/sbin/omnireach-release-root "$@"
