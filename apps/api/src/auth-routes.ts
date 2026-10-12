@@ -1,19 +1,33 @@
-import { normalizeEmail, sessionCookieOptions } from '@omnireach/auth';
+import {
+  normalizeEmail,
+  sessionCookieOptions,
+  type AccountSecuritySettings,
+  type EmailCodePolicyChangeResult,
+} from '@omnireach/auth';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 
 import { requireSameOrigin } from './request-security.ts';
 import { readCookie } from './request-auth.ts';
+import { clientNetworkIdentifier } from './client-network.ts';
 
 export type LoginResult =
-  | { kind: 'authenticated'; sessionToken: string }
-  | { challengeId: string; kind: 'mfa-required' }
+  | {
+      audience?: 'customer' | 'platform';
+      kind: 'authenticated';
+      recoveryRestricted?: true;
+      sessionToken: string;
+    }
+  | { challengeId: string; kind: 'mfa-required'; methods?: string[] }
   | { kind: 'invalid' };
+
+const challengeCookieName = '__Host-omnireach_challenge';
 
 export interface AuthEndpointService {
   acceptInvitation(input: {
     displayName: string;
     host: string;
+    networkIdentifier?: string;
     password: string;
     token: string;
     traceId: string;
@@ -21,12 +35,17 @@ export interface AuthEndpointService {
   completeOwnerBootstrap(input: {
     code: string;
     displayName: string;
+    host: string;
+    networkIdentifier?: string;
     newPassword: string;
+    recoveryCodesAcknowledged: boolean;
     setupId: string;
     traceId: string;
     token: string;
   }): Promise<boolean>;
   completePasswordRecovery(input: {
+    host: string;
+    networkIdentifier?: string;
     newPassword: string;
     token: string;
     traceId: string;
@@ -34,30 +53,76 @@ export interface AuthEndpointService {
   login(input: {
     email: string;
     host: string;
+    networkIdentifier?: string;
     password: string;
     traceId: string;
   }): Promise<LoginResult>;
-  listSessions(sessionToken: string | undefined): Promise<unknown[]>;
-  logout(sessionToken: string | undefined, traceId: string): Promise<void>;
+  listSessions(sessionToken: string | undefined, host: string): Promise<unknown[]>;
+  logout(sessionToken: string | undefined, host: string, traceId: string): Promise<void>;
   prepareOwnerBootstrap(input: {
+    host: string;
+    method?: 'email_code' | 'totp';
+    networkIdentifier?: string;
     normalizedEmail: string;
     traceId: string;
     token: string;
-  }): Promise<{ recoveryCodes: string[]; setupId: string; uri: string } | undefined>;
+  }): Promise<
+    | {
+        method: 'email_code' | 'totp';
+        recoveryCodes: string[];
+        setupId: string;
+        uri?: string;
+      }
+    | undefined
+  >;
+  prepareCustomerEmailCodePolicyChange?(input: {
+    currentPassword: string;
+    enabled: boolean;
+    host: string;
+    networkIdentifier?: string;
+    sessionToken: string | undefined;
+    traceId: string;
+  }): Promise<{ challengeId: string } | undefined>;
   requestPasswordRecovery(input: {
     host: string;
+    networkIdentifier?: string;
     normalizedEmail: string;
     traceId: string;
   }): Promise<void>;
   revokeSession(input: {
     currentToken: string | undefined;
+    host: string;
     sessionId: string;
     traceId: string;
   }): Promise<boolean>;
+  completeCustomerEmailCodePolicyChange?(input: {
+    challengeId: string;
+    code: string;
+    host: string;
+    networkIdentifier?: string;
+    sessionToken: string | undefined;
+    traceId: string;
+  }): Promise<EmailCodePolicyChangeResult>;
+  completeCustomerRecovery?(input: {
+    host: string;
+    sessionToken: string | undefined;
+    traceId: string;
+  }): Promise<{ recoveryCodes: string[]; sessionsRevoked: true } | undefined>;
+  resendEmailCode?(input: {
+    challengeId: string;
+    host: string;
+    networkIdentifier?: string;
+    sessionToken?: string;
+  }): Promise<'cooldown' | 'sent' | 'unavailable'>;
+  securitySettings?(
+    sessionToken: string | undefined,
+    host: string,
+  ): Promise<AccountSecuritySettings | undefined>;
   verifyMfa(input: {
     challengeId: string;
     code: string;
     host: string;
+    networkIdentifier?: string;
     traceId: string;
   }): Promise<LoginResult>;
 }
@@ -82,17 +147,31 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
       const result = await service.acceptInvitation({
         displayName: body.displayName,
         host: request.hostname,
+        networkIdentifier: clientNetworkIdentifier(request.ip),
         password: body.password,
         token: body.token,
         traceId: String(request.id),
       });
-      if (result.kind !== 'authenticated') {
+      if (result.kind === 'invalid') {
         return reply.code(400).send({ error: 'invalid_or_expired_invitation' });
       }
-      return reply
-        .setCookie('__Host-omnireach_session', result.sessionToken, sessionCookieOptions())
-        .code(201)
-        .send({ status: 'accepted' });
+      if (result.kind === 'mfa-required') {
+        if (isFormSubmission(request)) {
+          return reply
+            .setCookie(challengeCookieName, result.challengeId, sessionCookieOptions(300))
+            .code(303)
+            .redirect(mfaLocation(result.methods));
+        }
+        return reply.code(202).send({ challengeId: result.challengeId, status: result.kind });
+      }
+      const authenticated = reply.setCookie(
+        '__Host-omnireach_session',
+        result.sessionToken,
+        sessionCookieOptions(),
+      );
+      return isFormSubmission(request)
+        ? authenticated.code(303).redirect('/')
+        : authenticated.code(201).send({ status: 'accepted' });
     },
   );
 
@@ -112,6 +191,7 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
       const result = await service.login({
         email,
         host: request.hostname,
+        networkIdentifier: clientNetworkIdentifier(request.ip),
         password: request.body.password,
         traceId: String(request.id),
       });
@@ -119,8 +199,9 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
       if (result.kind === 'mfa-required') {
         if (isFormSubmission(request)) {
           return reply
+            .setCookie(challengeCookieName, result.challengeId, sessionCookieOptions(300))
             .code(303)
-            .redirect(`/mfa?challengeId=${encodeURIComponent(result.challengeId)}`);
+            .redirect(mfaLocation(result.methods));
         }
         return reply.code(202).send({ challengeId: result.challengeId, status: result.kind });
       }
@@ -129,13 +210,16 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
         result.sessionToken,
         sessionCookieOptions(),
       );
+      if (isFormSubmission(request)) {
+        authenticated.clearCookie(challengeCookieName, sessionCookieOptions(300));
+      }
       return isFormSubmission(request)
         ? authenticated.code(303).redirect('/')
         : authenticated.code(200).send({ status: result.kind });
     },
   );
 
-  server.post<{ Body: { email?: string; token?: string } }>(
+  server.post<{ Body: { email?: string; method?: string; token?: string } }>(
     '/auth/owner-bootstrap/prepare',
     { config: { rateLimit: { max: 3, timeWindow: '15 minutes' } }, preHandler: requireSameOrigin },
     async (request, reply) => {
@@ -143,7 +227,14 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
         return reply.code(400).send({ error: 'invalid_request' });
       }
       try {
+        const method = request.body.method ?? 'totp';
+        if (method !== 'email_code' && method !== 'totp') {
+          return reply.code(400).send({ error: 'invalid_request' });
+        }
         const prepared = await service.prepareOwnerBootstrap({
+          host: request.hostname,
+          method,
+          networkIdentifier: clientNetworkIdentifier(request.ip),
           normalizedEmail: normalizeEmail(request.body.email),
           traceId: String(request.id),
           token: request.body.token,
@@ -162,6 +253,7 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
       code?: string;
       displayName?: string;
       newPassword?: string;
+      recoveryCodesAcknowledged?: boolean;
       setupId?: string;
       token?: string;
     };
@@ -176,6 +268,7 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
         !body.displayName.trim() ||
         body.displayName.length > 160 ||
         typeof body.newPassword !== 'string' ||
+        body.recoveryCodesAcknowledged !== true ||
         typeof body.setupId !== 'string' ||
         typeof body.token !== 'string'
       ) {
@@ -185,7 +278,10 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
         const completed = await service.completeOwnerBootstrap({
           code: body.code,
           displayName: body.displayName,
+          host: request.hostname,
+          networkIdentifier: clientNetworkIdentifier(request.ip),
           newPassword: body.newPassword,
+          recoveryCodesAcknowledged: body.recoveryCodesAcknowledged,
           setupId: body.setupId,
           traceId: String(request.id),
           token: body.token,
@@ -203,7 +299,7 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
     '/auth/logout',
     { preHandler: requireSameOrigin },
     async (request: FastifyRequest, reply) => {
-      await service.logout(sessionToken(request), String(request.id));
+      await service.logout(sessionToken(request), request.hostname, String(request.id));
       return reply.clearCookie('__Host-omnireach_session', sessionCookieOptions()).code(204).send();
     },
   );
@@ -219,6 +315,7 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
         challengeId: request.body.challengeId,
         code: request.body.code,
         host: request.hostname,
+        networkIdentifier: clientNetworkIdentifier(request.ip),
         traceId: String(request.id),
       });
       if (result.kind !== 'authenticated') {
@@ -230,8 +327,135 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
         sessionCookieOptions(),
       );
       return isFormSubmission(request)
-        ? authenticated.code(303).redirect('/orap/sites')
+        ? authenticated
+            .code(303)
+            .redirect(
+              result.recoveryRestricted
+                ? '/security/recovery'
+                : result.audience === 'platform'
+                  ? '/orap/sites'
+                  : '/',
+            )
         : authenticated.code(200).send({ status: 'authenticated' });
+    },
+  );
+
+  server.post(
+    '/auth/security/recovery/complete',
+    { config: { rateLimit: { max: 3, timeWindow: '15 minutes' } }, preHandler: requireSameOrigin },
+    async (request, reply) => {
+      if (!service.completeCustomerRecovery) {
+        return reply.code(404).send({ error: 'not_found' });
+      }
+      const result = await service.completeCustomerRecovery({
+        host: request.hostname,
+        sessionToken: sessionToken(request),
+        traceId: String(request.id),
+      });
+      if (!result) return reply.code(403).send({ error: 'recovery_not_allowed' });
+      const cleared = reply.clearCookie('__Host-omnireach_session', sessionCookieOptions());
+      return isFormSubmission(request)
+        ? cleared
+            .type('text/html; charset=utf-8')
+            .code(200)
+            .send(renderCustomerRecoveryCompletion(result.recoveryCodes))
+        : cleared.code(200).send(result);
+    },
+  );
+
+  server.post<{ Body: { challengeId?: string } }>(
+    '/auth/mfa/email/resend',
+    { config: { rateLimit: { max: 3, timeWindow: '15 minutes' } }, preHandler: requireSameOrigin },
+    async (request, reply) => {
+      if (typeof request.body?.challengeId !== 'string' || !service.resendEmailCode) {
+        return reply.code(400).send({ error: 'invalid_request' });
+      }
+      const currentSessionToken = sessionToken(request);
+      const result = await service.resendEmailCode({
+        challengeId: request.body.challengeId,
+        host: request.hostname,
+        networkIdentifier: clientNetworkIdentifier(request.ip),
+        ...(currentSessionToken ? { sessionToken: currentSessionToken } : {}),
+      });
+      if (result === 'cooldown') return reply.code(429).send({ error: 'resend_limited' });
+      return result === 'sent'
+        ? reply.code(202).send({ status: 'accepted' })
+        : reply.code(400).send({ error: 'invalid_challenge' });
+    },
+  );
+
+  server.get('/auth/security', async (request, reply) => {
+    if (!service.securitySettings) return reply.code(404).send({ error: 'not_found' });
+    const settings = await service.securitySettings(sessionToken(request), request.hostname);
+    return settings
+      ? reply.code(200).send({ settings })
+      : reply.code(401).send({ error: 'authentication_required' });
+  });
+
+  server.post<{
+    Body: { action?: string; currentPassword?: string; enabled?: boolean | string };
+  }>(
+    '/auth/security/email/prepare',
+    { config: { rateLimit: { max: 5, timeWindow: '15 minutes' } }, preHandler: requireSameOrigin },
+    async (request, reply) => {
+      if (!service.prepareCustomerEmailCodePolicyChange) {
+        return reply.code(404).send({ error: 'not_found' });
+      }
+      const enabled = parseEmailPolicyChoice(request.body);
+      if (enabled === undefined || typeof request.body?.currentPassword !== 'string') {
+        return reply.code(400).send({ error: 'invalid_request' });
+      }
+      const prepared = await service.prepareCustomerEmailCodePolicyChange({
+        currentPassword: request.body.currentPassword,
+        enabled,
+        host: request.hostname,
+        networkIdentifier: clientNetworkIdentifier(request.ip),
+        sessionToken: sessionToken(request),
+        traceId: String(request.id),
+      });
+      if (!prepared) return reply.code(400).send({ error: 'verification_not_started' });
+      if (isFormSubmission(request)) {
+        const action = enabled ? 'enable' : 'disable';
+        return reply
+          .setCookie(challengeCookieName, prepared.challengeId, sessionCookieOptions(300))
+          .code(303)
+          .redirect(`/security/email?action=${action}`);
+      }
+      return reply
+        .code(202)
+        .send({ challengeId: prepared.challengeId, status: 'verification_sent' });
+    },
+  );
+
+  server.post<{ Body: { challengeId?: string; code?: string } }>(
+    '/auth/security/email/complete',
+    { config: { rateLimit: { max: 5, timeWindow: '15 minutes' } }, preHandler: requireSameOrigin },
+    async (request, reply) => {
+      if (
+        !service.completeCustomerEmailCodePolicyChange ||
+        typeof request.body?.challengeId !== 'string' ||
+        typeof request.body.code !== 'string'
+      ) {
+        return reply.code(400).send({ error: 'invalid_request' });
+      }
+      const result = await service.completeCustomerEmailCodePolicyChange({
+        challengeId: request.body.challengeId,
+        code: request.body.code,
+        host: request.hostname,
+        networkIdentifier: clientNetworkIdentifier(request.ip),
+        sessionToken: sessionToken(request),
+        traceId: String(request.id),
+      });
+      if (!result) return reply.code(400).send({ error: 'invalid_or_expired_verification' });
+      const cleared = reply
+        .clearCookie('__Host-omnireach_session', sessionCookieOptions())
+        .clearCookie(challengeCookieName, sessionCookieOptions(300));
+      return isFormSubmission(request)
+        ? cleared
+            .type('text/html; charset=utf-8')
+            .code(200)
+            .send(renderEmailPolicyChangeCompletion(result.recoveryCodes))
+        : cleared.code(200).send(result);
     },
   );
 
@@ -243,6 +467,7 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
         if (typeof request.body?.email === 'string') {
           await service.requestPasswordRecovery({
             host: request.hostname,
+            networkIdentifier: clientNetworkIdentifier(request.ip),
             normalizedEmail: normalizeEmail(request.body.email),
             traceId: String(request.id),
           });
@@ -262,6 +487,8 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
         return reply.code(400).send({ error: 'invalid_request' });
       }
       const completed = await service.completePasswordRecovery({
+        host: request.hostname,
+        networkIdentifier: clientNetworkIdentifier(request.ip),
         newPassword: request.body.newPassword,
         token: request.body.token,
         traceId: String(request.id),
@@ -273,7 +500,7 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
   );
 
   server.get('/auth/sessions', async (request, reply) => {
-    const sessions = await service.listSessions(sessionToken(request));
+    const sessions = await service.listSessions(sessionToken(request), request.hostname);
     return reply.code(200).send({ sessions });
   });
 
@@ -287,6 +514,7 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
       }
       const revoked = await service.revokeSession({
         currentToken: sessionToken(request),
+        host: request.hostname,
         sessionId: sessionId.data,
         traceId: String(request.id),
       });
@@ -303,4 +531,41 @@ function isFormSubmission(request: FastifyRequest): boolean {
 
 function sessionToken(request: FastifyRequest): string | undefined {
   return readCookie(request, '__Host-omnireach_session');
+}
+
+function mfaLocation(methods: string[] | undefined): string {
+  const parameters = new URLSearchParams();
+  if (methods?.includes('email_code')) parameters.set('email', '1');
+  const query = parameters.toString();
+  return query ? `/mfa?${query}` : '/mfa';
+}
+
+function parseEmailPolicyChoice(
+  body: { action?: string; enabled?: boolean | string } | undefined,
+): boolean | undefined {
+  if (body?.action === 'enable') return true;
+  if (body?.action === 'disable') return false;
+  if (body?.enabled === true || body?.enabled === 'true') return true;
+  if (body?.enabled === false || body?.enabled === 'false') return false;
+  return undefined;
+}
+
+function renderEmailPolicyChangeCompletion(recoveryCodes: string[]): string {
+  const result = recoveryCodes.length
+    ? `<p>Email verification is enabled. Save these recovery codes now. They will not be shown again.</p><ul>${recoveryCodes.map((code) => `<li><code>${escapeHtml(code)}</code></li>`).join('')}</ul>`
+    : '<p>Email verification is disabled. Your other sessions have been signed out.</p>';
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><title>Security updated | OmniReach</title></head><body><main><h1>Security updated</h1>${result}<p><a href="/login">Sign in again</a></p></main></body></html>`;
+}
+
+function renderCustomerRecoveryCompletion(recoveryCodes: string[]): string {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><title>Recovery completed | OmniReach</title></head><body><main><h1>Recovery completed</h1><p>Every active session has been signed out. Save these replacement recovery codes now. They will not be shown again.</p><ul>${recoveryCodes.map((code) => `<li><code>${escapeHtml(code)}</code></li>`).join('')}</ul><p><a href="/login">Sign in again</a></p></main></body></html>`;
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(
+    /[&<>"']/gu,
+    (character) =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character] ??
+      character,
+  );
 }

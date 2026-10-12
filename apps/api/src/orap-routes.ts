@@ -2,6 +2,7 @@ import type { AdminActor, CustomerRole } from '@omnireach/tenant';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 
+import { clientNetworkIdentifier } from './client-network.ts';
 import { requireSameOrigin } from './request-security.ts';
 
 const reason = z.string().trim().min(3).max(500);
@@ -66,7 +67,7 @@ export interface OrapAdministrationEndpointService {
   listOperations?(actor: AdminActor): Promise<unknown>;
   requestCustomerReset(
     actor: AdminActor,
-    input: { reason: string; siteId: string; userId: string },
+    input: { networkIdentifier: string; reason: string; siteId: string; userId: string },
   ): Promise<unknown>;
   replayJob?(actor: AdminActor, input: { jobId: string; reason: string }): Promise<unknown>;
   resolveAlert?(actor: AdminActor, input: { alertId: string; reason: string }): Promise<unknown>;
@@ -364,9 +365,13 @@ export function registerOrapRoutes(
       );
       const body = parse(z.object({ reason }), request.body, reply);
       if (!params || !body) return;
-      return reply
-        .code(202)
-        .send(await service.requestCustomerReset(actor, { ...params, ...body }));
+      return reply.code(202).send(
+        await service.requestCustomerReset(actor, {
+          ...params,
+          ...body,
+          networkIdentifier: clientNetworkIdentifier(request.ip),
+        }),
+      );
     },
   );
 

@@ -37,6 +37,7 @@ describe('configuration and logging safety', () => {
     expect(defaults.AUTH_EMAIL_DELIVERY_ENABLED).toBe(false);
     expect(defaults.ALERT_EMAIL_DELIVERY_ENABLED).toBe(false);
     expect(defaults.OPENAI_PROVIDER_ENABLED).toBe(false);
+    expect(defaults.TRUSTED_PROXY_CIDRS).toEqual([]);
     expect(() => parseConfig({ ...validConfig, CONTACT_DELIVERY_ENABLED: 'true' })).toThrow(
       'RESEND_API_KEY',
     );
@@ -76,6 +77,61 @@ describe('configuration and logging safety', () => {
         OPENAI_PROVIDER_ENABLED: 'true',
       }).OPENAI_PROVIDER_ENABLED,
     ).toBe(true);
+    expect(
+      parseConfig({
+        ...validConfig,
+        TRUSTED_PROXY_CIDRS: '172.20.0.2/32, 2400:cb00::/32',
+      }).TRUSTED_PROXY_CIDRS,
+    ).toEqual(['172.20.0.2/32', '2400:cb00::/32']);
+    expect(() =>
+      parseConfig({ ...validConfig, TRUSTED_PROXY_CIDRS: 'private_ranges, arbitrary-proxy' }),
+    ).toThrow('TRUSTED_PROXY_CIDRS');
+    expect(() => parseConfig({ ...validConfig, OMNIREACH_ENV: 'production' })).toThrow(
+      'TRUSTED_PROXY_CIDRS',
+    );
+    expect(
+      parseConfig({
+        ...validConfig,
+        OMNIREACH_ENV: 'production',
+        TRUSTED_PROXY_CIDRS: '172.20.0.2/32',
+      }).OMNIREACH_ENV,
+    ).toBe('production');
+  });
+
+  it('accepts exact proxy IPs and narrowly scoped private or public CIDRs', () => {
+    const trustedProxyCidrs = [
+      '172.20.0.2',
+      '2001:db8::1',
+      '172.20.0.0/24',
+      'fd12:3456:789a:1::/64',
+      '8.0.0.0/12',
+      '104.16.0.0/13',
+      '2400:cb00::/32',
+    ];
+
+    expect(
+      parseConfig({ ...validConfig, TRUSTED_PROXY_CIDRS: trustedProxyCidrs.join(',') })
+        .TRUSTED_PROXY_CIDRS,
+    ).toEqual(trustedProxyCidrs);
+  });
+
+  it.each([
+    '0.0.0.0/0',
+    '::/0',
+    '8.0.0.0/11',
+    '2400::/31',
+    '10.0.0.0/8',
+    '172.16.0.0/12',
+    '192.168.0.0/16',
+    '172.20.0.0/23',
+    'fd12:3456:789a:1::/63',
+    '::ffff:0.0.0.0/96',
+    '0:0:0:0:0:ffff:0:0/96',
+    '::ffff:8.0.0.0/107',
+  ])('rejects an overly broad trusted proxy CIDR: %s', (trustedProxyCidr) => {
+    expect(() => parseConfig({ ...validConfig, TRUSTED_PROXY_CIDRS: trustedProxyCidr })).toThrow(
+      'TRUSTED_PROXY_CIDRS',
+    );
   });
 
   it('redacts common secret fields and accepts only safe trace IDs', async () => {

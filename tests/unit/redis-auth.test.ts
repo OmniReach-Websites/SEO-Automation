@@ -6,6 +6,7 @@ import {
   RedisOwnerBootstrapPendingStore,
   type AuthRedisClient,
 } from '@omnireach/api/redis-auth';
+import type { MfaChallenge } from '@omnireach/auth';
 import { describe, expect, it, vi } from 'vitest';
 
 function redisClient(): AuthRedisClient & { values: Map<string, string> } {
@@ -30,21 +31,20 @@ describe('Redis authentication boundaries', () => {
   it('stores challenge data under a digest and consumes it once', async () => {
     const redis = redisClient();
     const store = new RedisMfaChallengeStore(redis);
-    const id = await store.create(
-      { host: 'admin.omnireach.test', traceId: 'trace-mfa', userId: 'staff-a' },
-      300,
-    );
+    const challenge: MfaChallenge = {
+      authStateDigest: 'c'.repeat(64),
+      host: 'admin.omnireach.test',
+      methods: ['totp'],
+      normalizedEmail: 'staff@example.test',
+      purpose: 'login' as const,
+      traceId: 'trace-mfa',
+      userId: 'staff-a',
+    };
+    const id = await store.create(challenge, 300);
+    expect([...redis.values.keys()][0]).toMatch(/^omnireach:auth:mfa:v2:/u);
     expect([...redis.values.keys()][0]).not.toContain(id);
-    await expect(store.read(id)).resolves.toEqual({
-      host: 'admin.omnireach.test',
-      traceId: 'trace-mfa',
-      userId: 'staff-a',
-    });
-    await expect(store.consume(id)).resolves.toEqual({
-      host: 'admin.omnireach.test',
-      traceId: 'trace-mfa',
-      userId: 'staff-a',
-    });
+    await expect(store.read(id)).resolves.toEqual(challenge);
+    await expect(store.consume(id)).resolves.toEqual(challenge);
     await expect(store.consume(id)).resolves.toBeUndefined();
   });
 
@@ -66,6 +66,7 @@ describe('Redis authentication boundaries', () => {
     const store = new RedisOwnerBootstrapPendingStore(redis);
     const value = {
       encryptedMfaSecret: new Uint8Array(40).fill(7),
+      method: 'totp' as const,
       normalizedEmail: 'owner@example.test',
       recoveryCodeHashes: ['a'.repeat(64)],
       tokenHash: 'b'.repeat(64),

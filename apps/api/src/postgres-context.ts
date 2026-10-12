@@ -45,20 +45,35 @@ export class PostgresRequestContextResolver {
     const token = readCookie(request, '__Host-omnireach_session');
     if (!token) return undefined;
     const hostname = normalizeHostname(request.hostname);
-    const result = await this.authQuery<CustomerContextRow>(
+    if (hostname === this.#orapHostname) return undefined;
+    const result = await this.authSessionQuery<CustomerContextRow>(
       `SELECT s.user_id, s.tenant_id, s.site_id, m.role,
               COALESCE((m.permissions ->> 'content.publish')::boolean, false) AS editor_publish_grant
          FROM sessions s
          JOIN users u ON u.id = s.user_id AND u.status = 'active'
          JOIN memberships m
            ON m.user_id = s.user_id AND m.tenant_id = s.tenant_id AND m.site_id = s.site_id AND m.active
+         LEFT JOIN account_authentication_policies ap ON ap.user_id = s.user_id
          JOIN domains d
            ON d.tenant_id = s.tenant_id AND d.site_id = s.site_id
           AND d.kind = 'admin' AND d.active AND d.verification_status = 'verified'
         WHERE s.token_hash = $1 AND s.host = $2 AND d.hostname = $2
+          AND NOT s.recovery_restricted
+          AND (
+            COALESCE(ap.second_step_requirement, 'optional') = 'optional'
+            OR (
+              s.authentication_assurance IN ('baseline', 'strong')
+              AND s.verified_at IS NOT NULL
+            )
+          )
           AND s.revoked_at IS NULL AND s.expires_at > now()
+          AND s.last_seen_at > now() - interval '30 minutes'
         LIMIT 2`,
       [digestToken(token), hostname],
+      (rows) => {
+        const role = parseRole(rows[0]?.role);
+        return rows.length === 1 && Boolean(role?.startsWith('customer_'));
+      },
     );
     if (result.rows.length !== 1) return undefined;
     const row = result.rows[0];
@@ -95,16 +110,27 @@ export class PostgresRequestContextResolver {
   async platform(request: FastifyRequest): Promise<AdminActor | undefined> {
     const token = readCookie(request, '__Host-omnireach_session');
     if (!token || normalizeHostname(request.hostname) !== this.#orapHostname) return undefined;
-    const result = await this.authQuery<PlatformContextRow>(
+    const result = await this.authSessionQuery<PlatformContextRow>(
       `SELECT s.user_id, pm.role
          FROM sessions s
          JOIN users u ON u.id = s.user_id AND u.status = 'active'
          JOIN platform_memberships pm ON pm.user_id = s.user_id AND pm.active
         WHERE s.token_hash = $1 AND s.host = $2
           AND s.tenant_id IS NULL AND s.site_id IS NULL
+          AND NOT s.recovery_restricted
+          AND s.authentication_assurance IN ('baseline', 'strong')
+          AND s.verified_at IS NOT NULL
           AND s.revoked_at IS NULL AND s.expires_at > now()
+          AND s.last_seen_at > now() - interval '30 minutes'
         LIMIT 2`,
       [digestToken(token), this.#orapHostname],
+      (rows) => {
+        const role = parseRole(rows[0]?.role);
+        return (
+          rows.length === 1 &&
+          Boolean(role && ['platform_owner', 'platform_admin', 'staff'].includes(role))
+        );
+      },
     );
     if (result.rows.length !== 1) return undefined;
     const row = result.rows[0];
@@ -121,6 +147,28 @@ export class PostgresRequestContextResolver {
   ): Promise<{ rows: T[] }> {
     return withAuthTransaction(this.pool as TenantTransactionPool, async (client) => {
       return (await client.query(text, values)) as { rows: T[] };
+    });
+  }
+
+  private async authSessionQuery<T extends Record<string, unknown>>(
+    text: string,
+    values: unknown[],
+    isValid: (rows: T[]) => boolean,
+  ): Promise<{ rows: T[] }> {
+    return withAuthTransaction(this.pool as TenantTransactionPool, async (client) => {
+      const result = (await client.query(text, values)) as { rows: T[] };
+      if (!isValid(result.rows)) return result;
+      const refreshed = (await client.query(
+        `UPDATE sessions
+            SET last_seen_at = now()
+          WHERE token_hash = $1 AND host = $2
+            AND revoked_at IS NULL AND expires_at > now()
+            AND last_seen_at > now() - interval '30 minutes'
+            AND NOT recovery_restricted
+          RETURNING id`,
+        [values[0], values[1]],
+      )) as { rows: { id: string }[] };
+      return refreshed.rows.length === 1 ? result : { rows: [] };
     });
   }
 }

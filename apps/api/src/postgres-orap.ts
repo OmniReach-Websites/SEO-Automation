@@ -23,6 +23,7 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
     private readonly invitations: InvitationNotifier,
     private readonly requestRecovery: (input: {
       host: string;
+      networkIdentifier: string;
       normalizedEmail: string;
       traceId: string;
     }) => Promise<void>,
@@ -381,9 +382,15 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
         ).rows[0],
         'Membership was not found',
       );
+      const revoked = await query<{ id: string }>(
+        client,
+        `UPDATE sessions SET revoked_at = now(), revoke_reason = 'membership-role-changed'
+          WHERE site_id = $1 AND user_id = $2 AND revoked_at IS NULL RETURNING id`,
+        [input.siteId, after.user_id],
+      );
       await audit(client, actor, {
         action: 'membership.role_changed',
-        after,
+        after: { membership: after, revokedSessions: revoked.rows.length },
         before,
         reason: input.reason,
         siteId: input.siteId,
@@ -391,7 +398,7 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
         targetType: 'membership',
         tenantId: String(after.tenant_id),
       });
-      return after;
+      return { membership: after, revokedSessions: revoked.rows.length };
     });
   }
 
@@ -435,7 +442,7 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
 
   async requestCustomerReset(
     actor: AdminActor,
-    input: { reason: string; siteId: string; userId: string },
+    input: { networkIdentifier: string; reason: string; siteId: string; userId: string },
   ): Promise<unknown> {
     const customer = await this.transaction(actor, async (client) => {
       const result = await query<{
@@ -471,6 +478,7 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
     });
     await this.requestRecovery({
       host: customer.hostname,
+      networkIdentifier: input.networkIdentifier,
       normalizedEmail: customer.normalized_email,
       traceId: actor.traceId,
     });

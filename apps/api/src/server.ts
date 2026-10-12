@@ -64,6 +64,7 @@ export interface ApiServerOptions {
   resolvePlatformActor?: ResolvePlatformActor;
   resolveCustomerPrincipal?: ResolveCustomerPrincipal;
   resolveContactSite?: ResolveContactSite;
+  trustedProxyCidrs?: string[];
 }
 
 export function buildApiServer(options: ApiServerOptions = {}) {
@@ -77,6 +78,8 @@ export function buildApiServer(options: ApiServerOptions = {}) {
         'req.headers.authorization',
         'req.headers.cookie',
         'req.body.code',
+        'req.body.challengeId',
+        'req.body.currentPassword',
         'req.body.newPassword',
         'req.body.password',
         'req.body.token',
@@ -86,7 +89,10 @@ export function buildApiServer(options: ApiServerOptions = {}) {
         'res.headers.set-cookie',
       ],
     },
-    trustProxy: false,
+    trustProxy:
+      options.trustedProxyCidrs && options.trustedProxyCidrs.length > 0
+        ? options.trustedProxyCidrs
+        : false,
   });
 
   void server.register(cookie);
@@ -146,9 +152,11 @@ export function buildApiServer(options: ApiServerOptions = {}) {
     if (failed.length > 0) {
       return reply.code(503).send({ failed, status: 'degraded' });
     }
-    return reply
-      .code(200)
-      .send({ dependencies: dependencies.map(({ name }) => name), status: 'ready' });
+    return reply.code(200).send({
+      authContract: 2,
+      dependencies: dependencies.map(({ name }) => name),
+      status: 'ready',
+    });
   });
 
   if (options.authService) registerAuthRoutes(server, options.authService);

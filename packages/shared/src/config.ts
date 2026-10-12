@@ -1,9 +1,65 @@
+import { isIP } from 'node:net';
+
 import { z } from 'zod';
+
+type IpFamily = 4 | 6;
+
+interface NumericIpRange {
+  end: bigint;
+  start: bigint;
+}
+
+const addressBits = { 4: 32, 6: 128 } as const;
+const minimumPublicPrefix = { 4: 12, 6: 32 } as const;
+const minimumPrivateOrSpecialPrefix = { 4: 24, 6: 64 } as const;
+const ipv4Mask = (1n << 32n) - 1n;
+
+const privateOrSpecialRanges: Record<IpFamily, readonly NumericIpRange[]> = {
+  4: [
+    ['0.0.0.0', 8],
+    ['10.0.0.0', 8],
+    ['100.64.0.0', 10],
+    ['127.0.0.0', 8],
+    ['169.254.0.0', 16],
+    ['172.16.0.0', 12],
+    ['192.0.0.0', 24],
+    ['192.0.2.0', 24],
+    ['192.168.0.0', 16],
+    ['198.18.0.0', 15],
+    ['198.51.100.0', 24],
+    ['203.0.113.0', 24],
+    ['224.0.0.0', 4],
+    ['240.0.0.0', 4],
+  ].map(([address, prefix]) => numericIpRange(address as string, prefix as number, 4)),
+  6: [
+    ['::', 128],
+    ['::1', 128],
+    ['64:ff9b::', 96],
+    ['64:ff9b:1::', 48],
+    ['100::', 64],
+    ['2001::', 23],
+    ['2002::', 16],
+    ['fc00::', 7],
+    ['fe80::', 10],
+    ['ff00::', 8],
+  ].map(([address, prefix]) => numericIpRange(address as string, prefix as number, 6)),
+};
 
 const optionalNonempty = z.preprocess(
   (value) => (value === '' ? undefined : value),
   z.string().trim().min(1).optional(),
 );
+
+const trustedProxyCidrs = z
+  .string()
+  .default('')
+  .transform((value) =>
+    value
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter(Boolean),
+  )
+  .refine((values) => values.every(validIpOrCidr), 'Trusted proxy entries must be IPs or CIDRs');
 
 const configSchema = z
   .object({
@@ -52,6 +108,7 @@ const configSchema = z
     SOURCE_COMMIT_SHA: z.string().regex(/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/u),
     TURNSTILE_SECRET_KEY: optionalNonempty,
     TURNSTILE_SITE_KEY: optionalNonempty,
+    TRUSTED_PROXY_CIDRS: trustedProxyCidrs,
   })
   .superRefine((config, context) => {
     let modelAliases: Record<string, string> | undefined;
@@ -143,6 +200,13 @@ const configSchema = z
         path: ['TURNSTILE_SITE_KEY'],
       });
     }
+    if (config.OMNIREACH_ENV === 'production' && config.TRUSTED_PROXY_CIDRS.length === 0) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Production requires an explicit trusted proxy IP/CIDR allowlist',
+        path: ['TRUSTED_PROXY_CIDRS'],
+      });
+    }
   });
 
 export type AppConfig = z.infer<typeof configSchema>;
@@ -177,6 +241,7 @@ export function redactConfig(config: AppConfig): Record<string, string | number>
     ...(config.RESEND_API_KEY ? { RESEND_API_KEY: '[REDACTED]' } : {}),
     SESSION_SECRET: '[REDACTED]',
     ...(config.TURNSTILE_SECRET_KEY ? { TURNSTILE_SECRET_KEY: '[REDACTED]' } : {}),
+    TRUSTED_PROXY_CIDRS: config.TRUSTED_PROXY_CIDRS.join(','),
   };
   return Object.fromEntries(
     Object.entries(redacted).filter(
@@ -190,4 +255,76 @@ function redactUrl(value: string): string {
   if (url.username) url.username = '[REDACTED]';
   if (url.password) url.password = '[REDACTED]';
   return url.toString();
+}
+
+function validIpOrCidr(value: string): boolean {
+  const [address, prefix, ...extra] = value.split('/');
+  if (!address || extra.length > 0) return false;
+  const family = isIP(address) as IpFamily | 0;
+  if (family === 0) return false;
+  if (prefix === undefined) return true;
+  if (!/^\d{1,3}$/u.test(prefix)) return false;
+  const bits = Number(prefix);
+  const maximumBits = addressBits[family];
+  if (bits < 1 || bits > maximumBits) return false;
+
+  const numericAddress = ipToBigInt(address, family);
+  if (family === 6 && isIpv4MappedAddress(numericAddress)) {
+    if (bits < 96) return false;
+    return cidrPrefixIsSafe(numericAddress & ipv4Mask, bits - 96, 4);
+  }
+  return cidrPrefixIsSafe(numericAddress, bits, family);
+}
+
+function cidrPrefixIsSafe(address: bigint, prefix: number, family: IpFamily): boolean {
+  const range = numericCidrRange(address, prefix, addressBits[family]);
+  const minimumPrefix = privateOrSpecialRanges[family].some((specialRange) =>
+    rangesIntersect(range, specialRange),
+  )
+    ? minimumPrivateOrSpecialPrefix[family]
+    : minimumPublicPrefix[family];
+  return prefix >= minimumPrefix;
+}
+
+function numericIpRange(address: string, prefix: number, family: IpFamily): NumericIpRange {
+  return numericCidrRange(ipToBigInt(address, family), prefix, addressBits[family]);
+}
+
+function numericCidrRange(address: bigint, prefix: number, bits: number): NumericIpRange {
+  const hostBits = BigInt(bits - prefix);
+  const start = (address >> hostBits) << hostBits;
+  return { start, end: start + (1n << hostBits) - 1n };
+}
+
+function rangesIntersect(left: NumericIpRange, right: NumericIpRange): boolean {
+  return left.start <= right.end && right.start <= left.end;
+}
+
+function isIpv4MappedAddress(address: bigint): boolean {
+  return address >> 32n === 0xffffn;
+}
+
+function ipToBigInt(address: string, family: IpFamily): bigint {
+  if (family === 4) {
+    return address.split('.').reduce((result, octet) => (result << 8n) + BigInt(octet), 0n);
+  }
+
+  let normalized = address.split('%', 1)[0] ?? address;
+  if (normalized.includes('.')) {
+    const lastColon = normalized.lastIndexOf(':');
+    const ipv4 = normalized
+      .slice(lastColon + 1)
+      .split('.')
+      .map(Number);
+    normalized = `${normalized.slice(0, lastColon)}:${((ipv4[0] ?? 0) * 256 + (ipv4[1] ?? 0)).toString(16)}:${((ipv4[2] ?? 0) * 256 + (ipv4[3] ?? 0)).toString(16)}`;
+  }
+
+  const [head = '', tail = ''] = normalized.split('::');
+  const headParts = head ? head.split(':') : [];
+  const tailParts = tail ? tail.split(':') : [];
+  const omittedParts = 8 - headParts.length - tailParts.length;
+  const parts = normalized.includes('::')
+    ? [...headParts, ...Array<string>(omittedParts).fill('0'), ...tailParts]
+    : headParts;
+  return parts.reduce((result, part) => (result << 16n) + BigInt(`0x${part}`), 0n);
 }

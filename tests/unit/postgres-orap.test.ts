@@ -251,6 +251,50 @@ describe('PostgreSQL ORAP service', () => {
     expect(insertValues).not.toContain(delivered?.token);
   });
 
+  it('revokes exact-site sessions in the same transaction as a customer role change', async () => {
+    const before = {
+      active: true,
+      id: 'membership-a',
+      role: 'customer_viewer',
+      site_id: 'site-a',
+      tenant_id: 'tenant-a',
+      user_id: 'user-a',
+    };
+    const after = { ...before, role: 'customer_editor' };
+    const query = vi.fn(async (text: string, values?: unknown[]) => {
+      void values;
+      if (text.includes('FROM memberships WHERE id = $1')) return { rows: [before] };
+      if (text.includes('UPDATE memberships SET role')) return { rows: [after] };
+      if (text.includes("revoke_reason = 'membership-role-changed'")) {
+        return { rows: [{ id: 'session-a' }, { id: 'session-b' }] };
+      }
+      return { rows: [] };
+    });
+    const service = new PostgresOrapService(
+      { connect: vi.fn(async () => ({ query, release: vi.fn() })) },
+      { send: vi.fn() },
+      vi.fn(),
+    );
+
+    await expect(
+      service.changeCustomerRole(actor, {
+        membershipId: before.id,
+        reason: 'Approved access adjustment',
+        role: 'customer_editor',
+        siteId: before.site_id,
+      }),
+    ).resolves.toEqual({ membership: after, revokedSessions: 2 });
+    expect(query.mock.calls.some(([text]) => text.includes('UPDATE sessions'))).toBe(true);
+    const audit = query.mock.calls.find(([text]) => text.includes('INSERT INTO audit_events'));
+    expect(audit?.[1]).toEqual(
+      expect.arrayContaining([
+        'membership.role_changed',
+        'Approved access adjustment',
+        expect.stringContaining('"revokedSessions":2'),
+      ]),
+    );
+  });
+
   it('restricts site budget changes and records an attributable override', async () => {
     const query = vi.fn(async (text: string, values?: unknown[]) => {
       void values;

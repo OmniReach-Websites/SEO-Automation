@@ -87,6 +87,13 @@ is staged and before its public route is activated.
 7. Caddy has no import boundary. Future activation needs a reviewed additive fragment,
    mount/import design, complete validation, prior-file preservation, and separate
    mutation authorization.
+8. The sanitized inventory records the shared proxy network name but not the exact
+   Caddy peer address/CIDR or a verified Cloudflare-to-Caddy forwarding policy. Before
+   production authentication activation, a read-only refresh must collect those
+   nonsecret network facts so `TRUSTED_PROXY_CIDRS` can be narrow. Caddy and the API
+   must then be tested together to show distinct clients do not collapse into one rate
+   bucket and forged forwarding headers are ignored. This is not authorization to edit
+   Caddy or restart either service.
 
 ## Follow-up inputs and release evidence
 

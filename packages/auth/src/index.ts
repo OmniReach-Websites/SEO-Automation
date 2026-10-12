@@ -1,4 +1,11 @@
-export { createMfaEnrollment, verifyTotp, type MfaEnrollment } from './mfa.ts';
+export {
+  createMfaEnrollment,
+  createRecoveryCodes,
+  verifyTotp,
+  type MfaEnrollment,
+  type RecoveryCodeSet,
+} from './mfa.ts';
+export { createEmailVerificationCode, digestEmailVerificationCode } from './email-code.ts';
 export { hashPassword, normalizeEmail, validatePassword, verifyPassword } from './passwords.ts';
 export {
   hasPermission,
@@ -15,11 +22,31 @@ export {
   type OneTimeToken,
   type SessionCookieOptions,
 } from './tokens.ts';
-export { decryptMfaSecret, encryptMfaSecret } from './secrets.ts';
+export {
+  decryptMfaSecret,
+  decryptPasswordRecoveryDeliveryToken,
+  encryptMfaSecret,
+  encryptPasswordRecoveryDeliveryToken,
+} from './secrets.ts';
+export {
+  PostgresPasswordRecoveryOutbox,
+  type PasswordRecoveryOutboxClient,
+  type PasswordRecoveryOutboxPool,
+  type PasswordRecoveryOutboxResult,
+} from './password-recovery-outbox.ts';
 export {
   AuthenticationService,
+  type AccountSecuritySettings,
+  type AccountSecurityTarget,
+  type AuthenticationAssurance,
+  type AuthenticationRateLimiter,
+  type AuthenticationRateLimitScope,
   type AuthenticationRepository,
   type AuthenticationResult,
+  type EmailCodeChallengeStore,
+  type EmailCodeResendResult,
+  type EmailCodePolicyChangeResult,
+  type EmailCodeVerificationResult,
   type LoginTarget,
   type MfaChallenge,
   type MfaChallengeStore,
@@ -27,7 +54,11 @@ export {
   type OwnerBootstrapPendingStore,
   type PendingOwnerBootstrap,
   type PasswordRecoveryNotifier,
+  type SessionAuthenticationMethod,
+  type SessionOwner,
   type SessionRecord,
+  type VerificationCodeNotifier,
+  type VerificationMethod,
 } from './service.ts';
 export {
   PostgresAuthenticationRepository,

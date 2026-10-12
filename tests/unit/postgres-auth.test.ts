@@ -14,6 +14,31 @@ function poolFor(handler: (query: string, values?: unknown[]) => Promise<unknown
 }
 
 describe('PostgreSQL authentication repository', () => {
+  it('atomically rejects reuse of an accepted TOTP counter', async () => {
+    let accepted = false;
+    const { client, pool } = poolFor(async (sql) => {
+      if (sql.includes('UPDATE mfa_factors') && sql.includes('last_used_counter')) {
+        if (accepted) return { rows: [] };
+        accepted = true;
+        return { rows: [{ id: 'factor-a' }] };
+      }
+      return { rows: [] };
+    });
+    const repository = new PostgresAuthenticationRepository(pool, 'admin.omnireach.test');
+
+    await expect(
+      repository.consumeTotpCounter({ counter: 59_700_000, factorId: 'factor-a' }),
+    ).resolves.toBe(true);
+    await expect(
+      repository.consumeTotpCounter({ counter: 59_700_000, factorId: 'factor-a' }),
+    ).resolves.toBe(false);
+    const updates = vi
+      .mocked(client.query)
+      .mock.calls.filter(([sql]) => sql.includes('UPDATE mfa_factors'));
+    expect(updates).toHaveLength(2);
+    expect(updates[0]?.[1]).toEqual([59_700_000, 'factor-a']);
+  });
+
   it('accepts a new-user invitation, membership, and audit in one exact-host transaction', async () => {
     const calls: string[] = [];
     const { pool } = poolFor(async (sql) => {
@@ -46,6 +71,18 @@ describe('PostgreSQL authentication repository', () => {
       if (sql.includes('SELECT id FROM users')) return { rows: [] };
       if (sql.includes('INSERT INTO users')) {
         return { rows: [{ id: '40000000-0000-4000-8000-000000000001' }] };
+      }
+      if (sql.includes('FROM account_authentication_policies policy')) {
+        return {
+          rows: [
+            {
+              email_code_enabled: false,
+              has_recovery_codes: false,
+              preferred_method: null,
+              second_step_requirement: 'optional',
+            },
+          ],
+        };
       }
       return { rows: [] };
     });
@@ -108,6 +145,18 @@ describe('PostgreSQL authentication repository', () => {
               id: '40000000-0000-4000-8000-000000000099',
               password_hash: '$argon2id$existing',
               status: 'active',
+            },
+          ],
+        };
+      }
+      if (sql.includes('FROM account_authentication_policies policy')) {
+        return {
+          rows: [
+            {
+              email_code_enabled: false,
+              has_recovery_codes: false,
+              preferred_method: null,
+              second_step_requirement: 'optional',
             },
           ],
         };
@@ -192,9 +241,14 @@ describe('PostgreSQL authentication repository', () => {
           rows: [
             {
               blocked_until: null,
+              email_code_enabled: false,
+              has_recovery_codes: false,
               host: 'admin.alpha.test',
+              normalized_email: 'owner@example.test',
               password_hash: '$argon2id$fixture',
+              preferred_method: null,
               role: 'customer_owner',
+              second_step_requirement: 'optional',
               site_id: 'site-a',
               tenant_id: 'tenant-a',
               user_id: 'user-a',
@@ -219,10 +273,14 @@ describe('PostgreSQL authentication repository', () => {
     expect(
       vi
         .mocked(client.query)
-        .mock.calls.slice(0, 2)
+        .mock.calls.slice(0, 3)
         .map(([query]) => query),
-    ).toEqual(['BEGIN', 'SET LOCAL ROLE omnireach_auth']);
-    const lookup = vi.mocked(client.query).mock.calls[2];
+    ).toEqual([
+      'BEGIN',
+      'SET LOCAL ROLE omnireach_auth',
+      `SELECT set_config('app.authentication_contract_version', '2', true)`,
+    ]);
+    const lookup = vi.mocked(client.query).mock.calls[3];
     expect(lookup?.[1]).toEqual(['owner@example.test', 'admin.alpha.test', 'admin.omnireach.test']);
     expect(client.release).toHaveBeenCalledOnce();
   });
@@ -255,6 +313,8 @@ describe('PostgreSQL authentication repository', () => {
       if (query.includes('FROM password_recovery_tokens')) {
         return { rows: [{ id: 'recovery-a', user_id: 'user-a' }] };
       }
+      if (query.includes('SELECT id FROM users')) return { rows: [{ id: 'user-a' }] };
+      if (query.includes('FROM platform_memberships')) return { rows: [] };
       if (query.includes('UPDATE credentials')) return { rows: [{ user_id: 'user-a' }] };
       return { rows: [] };
     });
@@ -262,6 +322,7 @@ describe('PostgreSQL authentication repository', () => {
       pool,
       'admin.omnireach.test',
     ).completePasswordRecovery({
+      host: 'admin.alpha.test',
       newPasswordHash: '$argon2id$new',
       now: new Date('2026-10-10T12:00:00.000Z'),
       traceId: 'trace-recovery',
@@ -270,8 +331,69 @@ describe('PostgreSQL authentication repository', () => {
     expect(completed).toBe(true);
     expect(calls.some((query) => query.startsWith('UPDATE sessions'))).toBe(true);
     expect(calls.some((query) => query.startsWith('INSERT INTO audit_events'))).toBe(true);
+    expect(calls.findIndex((query) => query.includes('SELECT id FROM users'))).toBeLessThan(
+      calls.findIndex((query) => query.includes('SELECT id\n           FROM platform_memberships')),
+    );
     expect(calls.at(-1)).toBe('COMMIT');
     expect(client.release).toHaveBeenCalledOnce();
+  });
+
+  it('aborts password recovery when privileged membership appears before the user lock is held', async () => {
+    const calls: string[] = [];
+    const { pool } = poolFor(async (query) => {
+      calls.push(query.trimStart());
+      if (query.includes('FROM password_recovery_tokens')) {
+        return { rows: [{ id: 'recovery-a', user_id: 'user-a' }] };
+      }
+      if (query.includes('SELECT id FROM users')) return { rows: [{ id: 'user-a' }] };
+      if (query.includes('SELECT id\n           FROM platform_memberships')) {
+        return { rows: [{ id: 'platform-membership-a' }] };
+      }
+      return { rows: [] };
+    });
+
+    await expect(
+      new PostgresAuthenticationRepository(pool, 'admin.omnireach.test').completePasswordRecovery({
+        host: 'admin.alpha.test',
+        newPasswordHash: '$argon2id$new',
+        now: new Date('2026-10-10T12:00:00.000Z'),
+        traceId: 'trace-recovery-race',
+        tokenHash: 'a'.repeat(64),
+      }),
+    ).resolves.toBe(false);
+    expect(calls.some((query) => query.startsWith('UPDATE credentials'))).toBe(false);
+    expect(calls.at(-1)).toBe('COMMIT');
+  });
+
+  it('aborts customer email-policy changes after a concurrent privileged promotion', async () => {
+    const calls: string[] = [];
+    const { pool } = poolFor(async (query) => {
+      calls.push(query.trimStart());
+      if (query.includes('SELECT id FROM users')) return { rows: [{ id: 'user-a' }] };
+      if (query.includes('SELECT id\n           FROM platform_memberships')) {
+        return { rows: [{ id: 'platform-membership-a' }] };
+      }
+      return { rows: [] };
+    });
+
+    await expect(
+      new PostgresAuthenticationRepository(
+        pool,
+        'admin.omnireach.test',
+      ).updateCustomerEmailCodePolicy({
+        enabled: true,
+        host: 'admin.alpha.test',
+        now: new Date('2026-10-10T12:00:00.000Z'),
+        recoveryCodeHashes: ['a'.repeat(64)],
+        sessionTokenHash: 'b'.repeat(64),
+        traceId: 'trace-policy-race',
+        userId: 'user-a',
+      }),
+    ).resolves.toBe(false);
+    expect(calls.some((query) => query.includes('FROM credentials'))).toBe(false);
+    expect(
+      calls.some((query) => query.includes('INSERT INTO account_authentication_policies')),
+    ).toBe(false);
   });
 
   it('rejects half-scoped sessions before opening a transaction', async () => {
@@ -279,10 +401,15 @@ describe('PostgreSQL authentication repository', () => {
     const repository = new PostgresAuthenticationRepository(pool, 'admin.omnireach.test');
     await expect(
       repository.createSession({
+        assuranceLevel: 'basic',
+        authenticationMethod: 'password',
+        expectedAuthStateVersion: '1',
+        expectedPasswordHash: '$argon2id$old',
         expiresAt: new Date('2026-10-10T20:00:00.000Z'),
         host: 'admin.alpha.test',
+        recoveryRestricted: false,
+        role: 'customer_owner',
         siteId: 'site-a',
-        authenticationMethod: 'password',
         tokenHash: 'a'.repeat(64),
         traceId: 'trace-session',
         userId: 'user-a',
