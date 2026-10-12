@@ -57,7 +57,7 @@ export interface CustomerEndpointService {
   ): Promise<{ body: Uint8Array; contentType: string }>;
   publish(
     principal: CustomerPrincipal,
-    input: { draftId: string; idempotencyKey: string; reason: string },
+    input: { draftId: string; expectedVersion: number; idempotencyKey: string; reason: string },
   ): Promise<unknown>;
   restore(
     principal: CustomerPrincipal,
@@ -226,7 +226,11 @@ export function registerCustomerRoutes(
       const principal = await authorize(request, reply, resolvePrincipal, 'content.publish');
       if (!principal) return;
       const params = parse(z.object({ draftId: z.string().uuid() }), request.params, reply);
-      const body = parse(z.object({ reason }), request.body, reply);
+      const body = parse(
+        z.object({ expectedVersion: z.number().int().positive(), reason }),
+        request.body,
+        reply,
+      );
       const idempotencyKey = request.headers['idempotency-key'];
       if (!params || !body || typeof idempotencyKey !== 'string' || !idempotencyKey.trim()) {
         if (!reply.sent) await reply.code(400).send({ error: 'invalid_request' });

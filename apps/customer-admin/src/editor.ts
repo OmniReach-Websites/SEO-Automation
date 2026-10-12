@@ -54,7 +54,7 @@ export function renderEditor(
     options.draftId && options.canEdit !== false
       ? `<section aria-labelledby="draft-actions-heading"><h2 id="draft-actions-heading">Draft actions</h2><form method="post" action="/editor/preview"><input type="hidden" name="draftId" value="${escapeHtml(options.draftId)}"><button type="submit">Preview draft</button></form>${
           options.canPublish
-            ? `<form method="post" action="/editor/publish"><input type="hidden" name="draftId" value="${escapeHtml(options.draftId)}">${options.publishIdempotencyKey ? `<input type="hidden" name="idempotencyKey" value="${escapeHtml(options.publishIdempotencyKey)}">` : ''}<label for="publish-reason">Publication reason</label><input id="publish-reason" name="reason" minlength="3" maxlength="500" required><button type="submit">Publish draft</button></form>`
+            ? `<form method="post" action="/editor/publish"><input type="hidden" name="draftId" value="${escapeHtml(options.draftId)}"><input type="hidden" name="expectedVersion" value="${draftVersion}">${options.publishIdempotencyKey ? `<input type="hidden" name="idempotencyKey" value="${escapeHtml(options.publishIdempotencyKey)}">` : ''}<label for="publish-reason">Publication reason</label><input id="publish-reason" name="reason" minlength="3" maxlength="500" required><button type="submit">Publish draft</button></form>`
             : '<p>Publishing is unavailable for this account.</p>'
         }</section>`
       : '';

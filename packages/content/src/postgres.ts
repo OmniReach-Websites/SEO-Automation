@@ -44,6 +44,7 @@ export class PostgresContentRepository {
     return this.transaction(context, async (client) => {
       await assertSiteFeatureEnabled(client, context, 'content.edit');
       await lockContentLifecycle(client, context);
+      await recoverAbandonedPublication(client, context);
       const pending = await pendingPublicationStatus(client, context);
       if (pending) {
         throw new PublicationPendingError('Drafting is paused while publication is in progress');
@@ -92,8 +93,6 @@ export class PostgresContentRepository {
         `INSERT INTO content_drafts
            (tenant_id, site_id, base_revision, content, created_by)
          VALUES ($1, $2, $3, $4::jsonb, $5)
-         ON CONFLICT (tenant_id, site_id) WHERE state = 'active' DO UPDATE
-           SET updated_at = content_drafts.updated_at
          RETURNING id, base_revision, version, content`,
         [
           context.tenantId,
@@ -157,6 +156,8 @@ export class PostgresContentRepository {
 
   async listHistory(context: ContentActorContext): Promise<unknown[]> {
     return this.transaction(context, async (client) => {
+      await lockContentLifecycle(client, context);
+      await recoverAbandonedPublication(client, context);
       const history = await query<{
         active: boolean;
         created_at: Date;
@@ -165,6 +166,7 @@ export class PostgresContentRepository {
         origin: string;
         publication_pending: boolean;
         publication_status: 'building' | 'failed' | 'published' | 'queued' | null;
+        restore_eligible: boolean;
         restored_from: number | null;
         revision: number;
       }>(
@@ -177,6 +179,29 @@ export class PostgresContentRepository {
                 END AS publication_status,
                 COALESCE(active.content_revision = revision.revision, false) AS active,
                 COALESCE(request.status IN ('queued', 'building'), false) AS publication_pending,
+                (
+                  COALESCE(active.content_revision = revision.revision, false)
+                  OR EXISTS (
+                    SELECT 1
+                      FROM publication_requests published
+                     WHERE published.tenant_id = revision.tenant_id
+                       AND published.site_id = revision.site_id
+                       AND published.content_revision = revision.revision
+                       AND published.status = 'published'
+                  )
+                  OR (
+                    revision.origin = 'seed'
+                    AND revision.revision = (
+                      SELECT seed.revision
+                        FROM content_revisions seed
+                       WHERE seed.tenant_id = revision.tenant_id
+                         AND seed.site_id = revision.site_id
+                         AND seed.origin = 'seed'
+                       ORDER BY seed.revision DESC
+                       LIMIT 1
+                    )
+                  )
+                ) AS restore_eligible,
                 request.error_code
            FROM content_revisions revision
            LEFT JOIN LATERAL (
@@ -208,6 +233,7 @@ export class PostgresContentRepository {
         origin: revision.origin,
         publicationPending: revision.publication_pending,
         publicationStatus: revision.publication_status ?? 'unpublished',
+        restoreEligible: revision.restore_eligible,
         ...(revision.restored_from ? { restoredFrom: revision.restored_from } : {}),
         revision: revision.revision,
       }));
@@ -216,6 +242,8 @@ export class PostgresContentRepository {
 
   async listDrafts(context: ContentActorContext): Promise<DraftRecord[]> {
     return this.transaction(context, async (client) => {
+      await lockContentLifecycle(client, context);
+      await recoverAbandonedPublication(client, context);
       const drafts = await query<{
         base_revision: number;
         content: ContentRecord;
@@ -270,6 +298,7 @@ export class PostgresContentRepository {
     return this.transaction(context, async (client) => {
       await assertSiteFeatureEnabled(client, context, 'content.edit');
       await lockContentLifecycle(client, context);
+      await recoverAbandonedPublication(client, context);
       if (await pendingPublicationStatus(client, context)) {
         throw new PublicationPendingError('Drafting is paused while publication is in progress');
       }
@@ -372,7 +401,7 @@ export class PostgresContentRepository {
 
   async prepareDraftPublication(
     context: ContentActorContext,
-    input: { draftId: string; idempotencyKey: string; reason: string },
+    input: { draftId: string; expectedVersion: number; idempotencyKey: string; reason: string },
   ): Promise<PreparedPublication> {
     return this.preparePublication(
       context,
@@ -383,15 +412,19 @@ export class PostgresContentRepository {
           base_revision: number;
           content: ContentRecord;
           id: string;
+          version: number;
         }>(
           client,
-          `SELECT id, base_revision, content
+          `SELECT id, base_revision, version, content
            FROM content_drafts
           WHERE tenant_id = $1 AND site_id = $2 AND id = $3 AND state = 'active'
           FOR UPDATE`,
           [context.tenantId, context.siteId, input.draftId],
         );
         const draft = required(draftResult.rows[0], 'Draft was not found');
+        if (draft.version !== input.expectedVersion) {
+          throw new RevisionConflictError('Draft revision is stale');
+        }
         const base = await editableBaseRevision(client, context);
         if (draft.base_revision !== base.revision) {
           throw new RevisionConflictError('Draft base revision is stale');
@@ -421,7 +454,12 @@ export class PostgresContentRepository {
         });
         await audit(client, context, {
           action: 'content.publication_queued',
-          metadata: { draftId: input.draftId, idempotencyKey: input.idempotencyKey, revision },
+          metadata: {
+            draftId: input.draftId,
+            draftVersion: draft.version,
+            idempotencyKey: input.idempotencyKey,
+            revision,
+          },
           targetId: input.draftId,
           targetType: 'content_draft',
         });
@@ -468,6 +506,18 @@ export class PostgresContentRepository {
                    WHERE active.tenant_id = target.tenant_id
                      AND active.site_id = target.site_id
                      AND artifact.content_revision = target.revision
+                )
+                OR (
+                  target.origin = 'seed'
+                  AND target.revision = (
+                    SELECT seed.revision
+                      FROM content_revisions seed
+                     WHERE seed.tenant_id = target.tenant_id
+                       AND seed.site_id = target.site_id
+                       AND seed.origin = 'seed'
+                     ORDER BY seed.revision DESC
+                     LIMIT 1
+                  )
                 )
               )`,
           [context.tenantId, context.siteId, input.revision],
@@ -523,6 +573,7 @@ export class PostgresContentRepository {
     return this.transaction(context, async (client) => {
       await assertSiteFeatureEnabled(client, context, featureKey);
       await lockContentLifecycle(client, context);
+      await recoverAbandonedPublication(client, context);
       const existing = await query<{
         content_revision: number;
         status: PreparedPublication['status'];
@@ -629,6 +680,64 @@ async function pendingPublicationStatus(
     [context.tenantId, context.siteId],
   );
   return result.rows[0]?.status;
+}
+
+async function recoverAbandonedPublication(
+  client: TenantTransactionClient,
+  context: ContentActorContext,
+): Promise<void> {
+  const stale = await query<{ stale: boolean }>(
+    client,
+    `SELECT EXISTS (
+       SELECT 1
+         FROM publication_requests
+        WHERE tenant_id = $1 AND site_id = $2
+          AND status IN ('queued', 'building')
+          AND created_at <= now() - interval '30 minutes'
+     ) AS stale`,
+    [context.tenantId, context.siteId],
+  );
+  if (!stale.rows[0]?.stale) return;
+
+  const publicationLock = await query<{ acquired: boolean }>(
+    client,
+    `SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0)) AS acquired`,
+    [`${context.tenantId}:${context.siteId}:publication`],
+  );
+  if (!publicationLock.rows[0]?.acquired) return;
+
+  const recovered = await query<{
+    content_revision: number;
+    id: string;
+    prior_status: 'building' | 'queued';
+  }>(
+    client,
+    `WITH abandoned AS (
+       SELECT id, status AS prior_status
+         FROM publication_requests
+        WHERE tenant_id = $1 AND site_id = $2
+          AND status IN ('queued', 'building')
+          AND created_at <= now() - interval '30 minutes'
+        FOR UPDATE
+     )
+     UPDATE publication_requests request
+        SET status = 'failed', completed_at = now(), error_code = 'publication_lease_expired'
+       FROM abandoned
+      WHERE request.id = abandoned.id
+      RETURNING request.id, request.content_revision, abandoned.prior_status`,
+    [context.tenantId, context.siteId],
+  );
+  const request = recovered.rows[0];
+  if (!request) return;
+  await audit(client, context, {
+    action: 'content.publication_lease_expired',
+    metadata: {
+      contentRevision: request.content_revision,
+      priorStatus: request.prior_status,
+    },
+    targetId: request.id,
+    targetType: 'publication',
+  });
 }
 
 async function lockContentLifecycle(

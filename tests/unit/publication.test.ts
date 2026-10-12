@@ -72,9 +72,15 @@ describe('publication orchestration', () => {
     const deps = dependencies({ findResult: vi.fn(async () => existing) });
     await expect(new PublicationOrchestrator(deps).publish(request)).resolves.toBe(existing);
     expect(deps.build).not.toHaveBeenCalled();
+    const revoked = dependencies();
     await expect(
-      new PublicationOrchestrator(dependencies()).publish({ ...request, role: 'customer_viewer' }),
+      new PublicationOrchestrator(revoked).publish({ ...request, role: 'customer_viewer' }),
     ).rejects.toThrow('permission');
+    expect(revoked.record).toHaveBeenCalledWith(
+      expect.objectContaining({ role: 'customer_viewer' }),
+      expect.objectContaining({ status: 'failed' }),
+    );
+    expect(revoked.build).not.toHaveBeenCalled();
     await expect(
       new PublicationOrchestrator(
         dependencies({ lock: vi.fn(async () => false as const) }),

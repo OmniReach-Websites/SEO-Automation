@@ -24,7 +24,13 @@ test('agency onboarding and customer edit-to-restore flow stays host scoped', as
     draftVersion: 1,
     liveRevision: 1,
     revisions: [
-      { actorLabel: 'Seed', createdAt: new Date(0).toISOString(), number: 1, origin: 'seed' },
+      {
+        actorLabel: 'Seed',
+        createdAt: new Date(0).toISOString(),
+        number: 1,
+        origin: 'seed',
+        restoreEligible: true,
+      },
     ],
     sites: [] as { id: string; name: string; tenantId: string; tenantName: string }[],
   };
@@ -80,6 +86,7 @@ test('agency onboarding and customer edit-to-restore flow stays host scoped', as
           createdAt: new Date(state.liveRevision * 1000).toISOString(),
           number: state.liveRevision,
           origin: 'customer',
+          restoreEligible: true,
         });
         return { idempotencyKey: input.idempotencyKey, revision: state.liveRevision };
       },
@@ -93,6 +100,7 @@ test('agency onboarding and customer edit-to-restore flow stays host scoped', as
           createdAt: new Date(state.liveRevision * 1000).toISOString(),
           number: state.liveRevision,
           origin: 'restore',
+          restoreEligible: true,
         });
         return { restoredFrom: input.revision, revision: state.liveRevision };
       },
@@ -212,7 +220,7 @@ test('agency onboarding and customer edit-to-restore flow stays host scoped', as
     const published = await request.post(
       `${base}/v1/customer/drafts/80000000-0000-4000-8000-000000000001/publish`,
       {
-        data: { reason: 'Owner approved fictional update' },
+        data: { expectedVersion: 2, reason: 'Owner approved fictional update' },
         headers: { ...customerHeaders, 'idempotency-key': 'e2e-publish-1' },
       },
     );

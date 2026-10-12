@@ -38,17 +38,18 @@ export class PublicationOrchestrator {
   constructor(private readonly dependencies: PublicationDependencies) {}
 
   async publish(request: PublishRequest): Promise<PublishResult> {
-    authorizePublish(request);
-    if (!request.reason.trim()) throw new Error('Publication reason is required');
     const existing = await this.dependencies.findResult(request);
     if (existing) return existing;
     const release = await this.dependencies.lock(request);
     if (!release) throw new Error('A publication is already running for this site');
-    const previousArtifact = await this.dependencies.activeArtifact(request);
+    let previousArtifact: string | undefined;
     let activated = false;
     try {
+      previousArtifact = await this.dependencies.activeArtifact(request);
       const raced = await this.dependencies.begin(request, previousArtifact);
       if (raced) return raced;
+      authorizePublish(request);
+      if (!request.reason.trim()) throw new Error('Publication reason is required');
       await this.dependencies.revalidate(request);
       const build = await this.dependencies.build(request);
       await this.dependencies.healthCheck(request, build.artifactHash);

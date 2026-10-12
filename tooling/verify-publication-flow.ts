@@ -77,6 +77,7 @@ try {
   const publishKey = `verification-publish-${randomUUID()}`;
   const prepared = await content.prepareDraftPublication(context, {
     draftId: draft.id,
+    expectedVersion: updated.version,
     idempotencyKey: publishKey,
     reason: 'Local database-backed publication verification',
   });
@@ -115,6 +116,7 @@ try {
   const failureKey = `verification-failure-${randomUUID()}`;
   await content.prepareDraftPublication(context, {
     draftId: failureDraft.id,
+    expectedVersion: failureDraft.version,
     idempotencyKey: failureKey,
     reason: 'Injected health-check failure verification',
   });

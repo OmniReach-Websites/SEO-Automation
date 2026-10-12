@@ -276,14 +276,21 @@ export function registerCustomerUiRoutes(
     if (!principal) return;
     const body = formBody(request.body);
     const draftId = draftIdSchema.safeParse(body?.draftId);
+    const expectedVersion = positiveInteger.safeParse(body?.expectedVersion);
     const idempotencyKey = draftIdSchema.safeParse(body?.idempotencyKey);
     const reason = reasonSchema.safeParse(body?.reason);
-    if (!draftId.success || !idempotencyKey.success || !reason.success) {
+    if (
+      !draftId.success ||
+      !expectedVersion.success ||
+      !idempotencyKey.success ||
+      !reason.success
+    ) {
       return invalidUiRequest(reply, 'The publication request is invalid.', 'editor');
     }
     try {
       await service.publish(principal, {
         draftId: draftId.data,
+        expectedVersion: expectedVersion.data,
         idempotencyKey: idempotencyKey.data,
         reason: reason.data,
       });
@@ -293,7 +300,7 @@ export function registerCustomerUiRoutes(
           reply,
           error instanceof PublicationPendingError
             ? 'Another publication is already in progress.'
-            : 'This draft is no longer based on the active published revision. Reconcile it before publishing.',
+            : 'This draft changed after the editor was loaded or is no longer based on the active published revision. Reload and reconcile it before publishing.',
           'editor',
           409,
         );
@@ -312,7 +319,7 @@ export function registerCustomerUiRoutes(
       canRestore: canPerform(principal, 'content.publish') && !publicationPending,
       restoreIdempotencyKeys: Object.fromEntries(
         entries
-          .filter((entry) => entry.publicationStatus === 'published')
+          .filter((entry) => entry.restoreEligible)
           .map((entry) => [entry.number, randomUUID()]),
       ),
     });
@@ -467,7 +474,8 @@ function parseHistory(value: unknown): RevisionHistoryEntry[] {
       !origin ||
       !publicationStatus ||
       typeof entry.active !== 'boolean' ||
-      typeof entry.publicationPending !== 'boolean'
+      typeof entry.publicationPending !== 'boolean' ||
+      typeof entry.restoreEligible !== 'boolean'
     ) {
       return [];
     }
@@ -480,6 +488,7 @@ function parseHistory(value: unknown): RevisionHistoryEntry[] {
         origin,
         publicationPending: entry.publicationPending,
         publicationStatus,
+        restoreEligible: entry.restoreEligible,
         ...(restoredFrom.success ? { restoredFrom: restoredFrom.data } : {}),
         summary: historySummary(publicationStatus, origin, revision.data),
       },

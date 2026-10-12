@@ -291,7 +291,7 @@ export class PostgresCustomerService implements CustomerEndpointService {
 
   publish(
     principal: CustomerPrincipal,
-    input: { draftId: string; idempotencyKey: string; reason: string },
+    input: { draftId: string; expectedVersion: number; idempotencyKey: string; reason: string },
   ): Promise<unknown> {
     return this.content.prepareDraftPublication(actorContext(principal), input);
   }

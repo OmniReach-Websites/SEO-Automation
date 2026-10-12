@@ -53,7 +53,7 @@ describe('PostgreSQL queued publication loader', () => {
     ]);
   });
 
-  it('fails closed when the actor has no single current publishing role', async () => {
+  it('loads a revoked actor as unauthorized so orchestration can record the terminal failure', async () => {
     const query = vi.fn(async (text: string) => {
       if (text.includes('SELECT requested_by')) {
         return {
@@ -74,9 +74,18 @@ describe('PostgreSQL queued publication loader', () => {
     const pool: TenantTransactionPool = {
       connect: vi.fn(async () => ({ query, release: vi.fn() })),
     };
-    await expect(new PostgresPublicationRequestRepository(pool).load(input)).rejects.toThrow(
-      'no longer authorized',
-    );
-    expect(query).toHaveBeenCalledWith('ROLLBACK');
+    await expect(new PostgresPublicationRequestRepository(pool).load(input)).resolves.toEqual({
+      actorId: '40000000-0000-4000-8000-000000000001',
+      contentRevision: 1,
+      editorPublishGrant: false,
+      idempotencyKey: input.idempotencyKey,
+      origin: 'customer',
+      reason: 'Update',
+      role: '',
+      siteId: input.siteId,
+      tenantId: input.tenantId,
+      traceId: input.traceId,
+    });
+    expect(query).toHaveBeenCalledWith('COMMIT');
   });
 });
