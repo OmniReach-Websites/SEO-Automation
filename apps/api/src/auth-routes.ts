@@ -232,7 +232,9 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
       try {
         email = normalizeEmail(request.body.email);
       } catch {
-        return reply.code(401).send({ error: 'invalid_credentials' });
+        return isFormSubmission(request)
+          ? reply.code(303).redirect('/login?error=credentials')
+          : reply.code(401).send({ error: 'invalid_credentials' });
       }
       const result = await service.login({
         email,
@@ -241,7 +243,11 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
         password: request.body.password,
         traceId: String(request.id),
       });
-      if (result.kind === 'invalid') return reply.code(401).send({ error: 'invalid_credentials' });
+      if (result.kind === 'invalid') {
+        return isFormSubmission(request)
+          ? reply.code(303).redirect('/login?error=credentials')
+          : reply.code(401).send({ error: 'invalid_credentials' });
+      }
       if (result.kind === 'mfa-required') {
         if (isFormSubmission(request)) {
           return reply

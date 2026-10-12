@@ -45,15 +45,19 @@ export function renderDomainOperations(domains: readonly DomainRow[], csrfToken:
 
 export function renderOperationsCenter(input: {
   readonly alerts: readonly AlertRow[];
-  readonly budget: BudgetView;
+  readonly budget: BudgetView | null;
+  readonly canAcknowledgeAlerts?: boolean;
+  readonly canCancelJobs?: boolean;
+  readonly canReplayJobs?: boolean;
+  readonly canResolveAlerts?: boolean;
   readonly jobs: readonly JobRow[];
 }): string {
   const jobs = input.jobs
     .map((job) => {
       const action =
-        job.state === 'queued'
+        job.state === 'queued' && input.canCancelJobs !== false
           ? `<form class="operation-form" method="post" action="/orap/operations/jobs/${escapeHtml(job.id)}/cancel"><div class="field"><label>Reason<input name="reason" required minlength="3" maxlength="500"></label></div><button class="danger" type="submit">Cancel job</button></form>`
-          : ['cancelled', 'failed', 'skipped'].includes(job.state)
+          : ['cancelled', 'failed', 'skipped'].includes(job.state) && input.canReplayJobs !== false
             ? `<form class="operation-form" method="post" action="/orap/operations/jobs/${escapeHtml(job.id)}/replay"><div class="field"><label>Reason<input name="reason" required minlength="3" maxlength="500"></label></div><button type="submit">Replay job</button></form>`
             : '';
       return `<tr><th scope="row">${escapeHtml(job.category)}</th><td>${escapeHtml(job.state)}</td><td>${escapeHtml(job.updatedAt)}</td><td>${escapeHtml(job.traceId)}</td><td>${action}</td></tr>`;
@@ -61,14 +65,24 @@ export function renderOperationsCenter(input: {
     .join('');
   const alerts = input.alerts
     .map((alert) => {
-      const actions =
-        alert.id && alert.state !== 'resolved'
-          ? `<div class="actions"><form class="operation-form" method="post" action="/orap/operations/alerts/${escapeHtml(alert.id)}/acknowledge"><div class="field"><label>Reason<input name="reason" required minlength="3" maxlength="500"></label></div><button class="secondary" type="submit">Acknowledge</button></form><form class="operation-form" method="post" action="/orap/operations/alerts/${escapeHtml(alert.id)}/resolve"><div class="field"><label>Resolution<input name="reason" required minlength="3" maxlength="500"></label></div><button type="submit">Resolve</button></form></div>`
+      const acknowledge =
+        alert.id && alert.state !== 'resolved' && input.canAcknowledgeAlerts !== false
+          ? `<form class="operation-form" method="post" action="/orap/operations/alerts/${escapeHtml(alert.id)}/acknowledge"><div class="field"><label>Reason<input name="reason" required minlength="3" maxlength="500"></label></div><button class="secondary" type="submit">Acknowledge</button></form>`
           : '';
+      const resolve =
+        alert.id && alert.state !== 'resolved' && input.canResolveAlerts !== false
+          ? `<form class="operation-form" method="post" action="/orap/operations/alerts/${escapeHtml(alert.id)}/resolve"><div class="field"><label>Resolution<input name="reason" required minlength="3" maxlength="500"></label></div><button type="submit">Resolve</button></form>`
+          : '';
+      const actions =
+        acknowledge || resolve ? `<div class="actions">${acknowledge}${resolve}</div>` : '';
       return `<li class="alert-card"><span class="badge${alert.severity === 'critical' ? ' disabled' : ''}">${escapeHtml(alert.severity)}</span><p><strong>${escapeHtml(alert.message)}</strong> · ${alert.occurrences} occurrence${alert.occurrences === 1 ? '' : 's'} · ${escapeHtml(alert.state)}</p>${actions}</li>`;
     })
     .join('');
-  return `<dl class="stats"><div class="stat"><dt>Monthly AI cap</dt><dd>${formatUsd(input.budget.capUsdMicros)}</dd></div><div class="stat"><dt>Used</dt><dd>${formatUsd(input.budget.usedUsdMicros)}</dd></div><div class="stat"><dt>Reserved</dt><dd>${formatUsd(input.budget.reservedUsdMicros)}</dd></div></dl><section class="panel flush" aria-labelledby="jobs-heading"><div class="panel-header"><div><h2 id="jobs-heading">Jobs</h2><p class="help">Tenant-scoped work · UTC period ${escapeHtml(input.budget.periodStart)}</p></div></div><table><caption>Tenant-scoped job activity</caption><thead><tr><th>Type</th><th>State</th><th>Updated</th><th>Trace</th><th>Action</th></tr></thead><tbody>${jobs || '<tr><td colspan="5"><div class="empty"><strong>No jobs</strong>Queued and recent automation work will appear here.</div></td></tr>'}</tbody></table></section><section class="panel" aria-labelledby="alerts-heading"><h2 id="alerts-heading">Alerts</h2><ul class="alert-list">${alerts || '<li class="empty"><strong>No open alerts</strong>The platform has no active operational incidents.</li>'}</ul></section>`;
+  const budget = input.budget
+    ? `<dl class="stats"><div class="stat"><dt>Monthly AI cap</dt><dd>${formatUsd(input.budget.capUsdMicros)}</dd><small>UTC monthly limit</small></div><div class="stat"><dt>Used</dt><dd>${formatUsd(input.budget.usedUsdMicros)}</dd><small>Committed spend</small></div><div class="stat"><dt>Reserved</dt><dd>${formatUsd(input.budget.reservedUsdMicros)}</dd><small>Queued work</small></div><div class="stat"><dt>Available</dt><dd>${formatUsd(Math.max(0, input.budget.capUsdMicros - input.budget.usedUsdMicros - input.budget.reservedUsdMicros))}</dd><small>Remaining budget</small></div></dl>`
+    : '<div class="surface-note">Platform AI budget details are hidden because this account does not have financial visibility.</div>';
+  const period = input.budget ? ` · UTC period ${escapeHtml(input.budget.periodStart)}` : '';
+  return `${budget}<p class="page-subtitle">Review authorized automation work and respond to operational incidents.</p><section class="panel flush" aria-labelledby="jobs-heading"><div class="panel-header"><div><h2 id="jobs-heading">Automation jobs</h2><p class="help">Recent work in your assigned scope${period}</p></div></div><table><caption>Scoped job activity</caption><thead><tr><th>Type</th><th>State</th><th>Updated</th><th>Trace</th><th>Action</th></tr></thead><tbody>${jobs || '<tr><td colspan="5"><div class="empty"><strong>No jobs</strong>Queued and recent automation work will appear here.</div></td></tr>'}</tbody></table></section><section class="panel" aria-labelledby="alerts-heading"><h2 id="alerts-heading">Alerts</h2><ul class="alert-list">${alerts || '<li class="empty"><strong>No open alerts</strong>The platform has no active operational incidents in your scope.</li>'}</ul></section>`;
 }
 
 export function renderIntegrationHealth(connections: readonly IntegrationRow[]): string {

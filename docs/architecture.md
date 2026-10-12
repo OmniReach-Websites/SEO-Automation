@@ -141,6 +141,12 @@ No process writes runtime content to `main`. Optional future sanitized exports u
 ## 6. Identity, tenancy, subscriptions, and policy
 
 - Identities are global; authorization comes from Platform Owner, Platform Admin, Staff, Customer Owner, Customer Editor, or Customer Viewer grants.
+- Internal ORAP authority uses the normalized, versioned capability and resource-scope
+  model in [ADR 0010](adr/0010-orap-staff-authorization.md). Platform Owner is a
+  non-grantable identity invariant; Platform Admin is a staff-grade template, and Staff
+  access is the deny-by-default intersection of assigned roles, customer/site scopes,
+  current session assurance, and platform/site safeguards. Only a current Platform Owner
+  can provision internal staff or change internal roles and assignments.
 - Authentication policy is account-level and evaluated with the exact resolved login
   host and membership. Platform Owner, Platform Admin, and Staff accounts require two
   steps. Their routine second step may be a five-minute, single-use, hash-only email code

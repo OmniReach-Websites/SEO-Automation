@@ -209,6 +209,17 @@ AND current resource belongs to resolved site
 - Composite foreign keys prevent cross-site page, field, asset, proposal, job, metric, and artifact references.
 - Worker identities receive only their registered job capability and rehydrate scope from opaque identifiers.
 - Platform bypass capabilities are enumerated, minimized, MFA-protected, and audited. There is no ambient application superuser.
+- Internal staff provisioning and authority administration are direct Platform Owner
+  identity checks and are never grantable capabilities. Platform Admin and custom Staff
+  roles cannot invite/create employees, change staff status or credentials, edit roles,
+  change role/scope assignments, or assign ownership. The last active Owner is protected.
+- Every ORAP route registers a stable capability and resource-scope resolver. Unknown or
+  newly registered capabilities are denied to non-owners until deliberately assigned;
+  owner-only catalog entries cannot be added to a role. Lists, counts, search, exports,
+  caches, and worker execution use the same scope as detail/mutation checks.
+- Staff role, permission, or scope changes atomically advance authentication state,
+  revoke platform sessions, invalidate authorization caches, and append non-secret
+  before/after audit evidence. UI visibility is not an authorization boundary.
 - Unknown/forbidden resources return non-enumerating errors.
 
 ## 6. Content, protected facts, and AI controls

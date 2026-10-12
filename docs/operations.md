@@ -427,6 +427,12 @@ destructive schema/data changes, backup key/provider changes, MFA key
 rotation/retirement, customer/legal policy, contact-form destination,
 plan/pricing/grace policy, and real pilot onboarding.
 
+Internal ORAP employee provisioning and staff-authority changes additionally require a
+currently authenticated Platform Owner and the strong step-up safeguards defined in ADR
+0003/0010. Platform Admin or a custom employee role cannot approve or perform these
+actions. Repository implementation and fictional tests do not authorize creating a real
+employee or changing a production owner's authority.
+
 ## 12. Completion evidence by goal
 
 Each goal report includes files changed, migration/environment changes, commands/tests, manual review, observability/rollback behavior, known risks, and next unblocked goal. A live claim requires direct evidence; scaffolding, a dry run, or an unexecuted runbook is not production proof.

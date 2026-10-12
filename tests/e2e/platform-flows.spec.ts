@@ -3,6 +3,19 @@ import type { AdminActor } from '@omnireach/tenant';
 import { expect, test } from '@playwright/test';
 
 const staff: AdminActor = {
+  authorization: {
+    grants: [
+      {
+        assignmentId: 'e2e-platform-admin-assignment',
+        permissionKeys: ['customers.create', 'customers.users.manage', 'websites.create'],
+        portfolio: true,
+        siteIds: [],
+        tenantIds: [],
+      },
+    ],
+    membershipId: '60000000-0000-4000-8000-000000000010',
+    version: 1,
+  },
   id: '40000000-0000-4000-8000-000000000010',
   role: 'staff',
   traceId: 'e2e-trace-staff',

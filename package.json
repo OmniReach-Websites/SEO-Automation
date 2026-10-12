@@ -38,6 +38,7 @@
     "db:generate": "prisma generate --config prisma.config.ts",
     "db:migrate": "prisma migrate deploy --config prisma.config.ts",
     "db:seed": "node --experimental-transform-types packages/database/src/seed.ts",
+    "db:sync-orap-catalog": "node --experimental-transform-types tooling/sync-orap-authorization.ts",
     "db:create-owner-bootstrap": "node --experimental-transform-types packages/database/src/create-owner-bootstrap.ts",
     "auth:rotate-mfa-key": "node --experimental-transform-types --env-file-if-exists=.env.local tooling/rotate-mfa-encryption.ts",
     "publisher:run-request": "node --experimental-transform-types --env-file-if-exists=.env.local workers/publisher/src/run-publication.ts",

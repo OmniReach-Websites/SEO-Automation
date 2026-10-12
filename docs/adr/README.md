@@ -21,6 +21,7 @@ ADRs record approved architecture decisions. Accepted ADRs are not reopened casu
 | [0007 — AI policy, budgets, and AIO measurement](0007-ai-policy-budgets-and-aio-measurement.md)                 | Accepted | D-008, D-015, D-022        |
 | [0008 — Media storage, backup, and retention](0008-media-storage-backup-and-retention.md)                       | Accepted | D-011, D-016, D-017, D-023 |
 | [0009 — Privacy, Google integrations, and alerts](0009-privacy-google-integrations-and-alerts.md)               | Accepted | D-018, D-019, D-021, D-022 |
+| [0010 — ORAP staff authorization and owner-only administration](0010-orap-staff-authorization.md)               | Accepted | D-006 refinement           |
 
 ## Decision disposition and ownership
 

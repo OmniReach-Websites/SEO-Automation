@@ -6,8 +6,14 @@ import { OrapResourceNotFoundError } from '../../../apps/api/src/orap-errors.ts'
 
 const actor: AdminActor = {
   id: '00000000-0000-4000-8000-000000000001',
-  role: 'staff',
+  role: 'platform_owner',
   traceId: 'trace-000000000001',
+};
+const deniedStaff: AdminActor = { ...actor, role: 'staff' };
+const strongOwner: AdminActor = {
+  ...actor,
+  authenticationAssurance: 'strong',
+  verifiedAt: new Date(),
 };
 
 function service() {
@@ -22,6 +28,7 @@ function service() {
     })),
     createPlan: vi.fn(async () => ({ id: 'plan-a' })),
     disableCustomer: vi.fn(),
+    disableStaff: vi.fn(async () => ({ status: 'disabled' })),
     inviteCustomer: vi.fn(async () => ({ invitationId: 'invitation-a', status: 'pending' })),
     listCustomerSessions: vi.fn(async () => ({
       sessions: [
@@ -45,9 +52,12 @@ function service() {
       },
       jobs: [],
     })),
+    listStaff: vi.fn(async () => []),
     requestCustomerReset: vi.fn(async () => ({ status: 'accepted' })),
+    requestStaffReset: vi.fn(async () => ({ status: 'accepted' })),
     revokeAllCustomerSessions: vi.fn(async () => ({ revokedSessions: 2 })),
     revokeCustomerSession: vi.fn(async () => ({ revokedSessions: 1 })),
+    revokeStaffSessions: vi.fn(async () => ({ revokedSessions: 2 })),
     replayJob: vi.fn(async () => ({ state: 'queued' })),
     resolveAlert: vi.fn(async () => ({ state: 'resolved' })),
     setContactForm: vi.fn(async () => ({ status: 'updated' })),
@@ -67,6 +77,76 @@ afterEach(async () => {
 });
 
 describe('ORAP administration routes', () => {
+  it('keeps the internal staff directory restricted to the Platform Owner identity', async () => {
+    const administration = service();
+    const ownerServer = buildApiServer({
+      logLevel: 'silent',
+      orapService: administration,
+      resolvePlatformActor: async () => actor,
+    });
+    const deniedServer = buildApiServer({
+      logLevel: 'silent',
+      orapService: administration,
+      resolvePlatformActor: async () => deniedStaff,
+    });
+    servers.push(ownerServer, deniedServer);
+
+    const allowed = await ownerServer.inject({ method: 'GET', url: '/v1/orap/staff' });
+    const denied = await deniedServer.inject({ method: 'GET', url: '/v1/orap/staff' });
+
+    expect(allowed.statusCode).toBe(200);
+    expect(allowed.json()).toEqual([]);
+    expect(denied.statusCode).toBe(403);
+    expect(denied.json()).toEqual({ error: 'orap_owner_identity_required' });
+    expect(administration.listStaff).toHaveBeenCalledTimes(1);
+  });
+
+  it('requires recent strong owner verification for staff security mutations', async () => {
+    const administration = service();
+    const baselineServer = buildApiServer({
+      logLevel: 'silent',
+      orapService: administration,
+      resolvePlatformActor: async () => actor,
+    });
+    const strongServer = buildApiServer({
+      logLevel: 'silent',
+      orapService: administration,
+      resolvePlatformActor: async () => strongOwner,
+    });
+    const staffServer = buildApiServer({
+      logLevel: 'silent',
+      orapService: administration,
+      resolvePlatformActor: async () => ({
+        ...deniedStaff,
+        authenticationAssurance: 'strong',
+        verifiedAt: new Date(),
+      }),
+    });
+    servers.push(baselineServer, strongServer, staffServer);
+    const userId = '40000000-0000-4000-8000-000000000099';
+    const request = {
+      headers: { host: 'admin.omnireach.test', origin: 'https://admin.omnireach.test' },
+      method: 'POST' as const,
+      payload: { reason: 'Approved fictional staff security action' },
+      url: `/v1/orap/staff/${userId}/sessions/revoke-all`,
+    };
+
+    const baseline = await baselineServer.inject(request);
+    const allowed = await strongServer.inject(request);
+    const denied = await staffServer.inject(request);
+
+    expect(baseline.statusCode).toBe(403);
+    expect(baseline.json()).toEqual({ error: 'orap_strong_step_up_required' });
+    expect(allowed.statusCode).toBe(200);
+    expect(denied.statusCode).toBe(403);
+    expect(denied.json()).toEqual({ error: 'orap_owner_identity_required' });
+    expect(administration.revokeStaffSessions).toHaveBeenCalledTimes(1);
+    expect(administration.revokeStaffSessions).toHaveBeenCalledWith(strongOwner, {
+      reason: 'Approved fictional staff security action',
+      userId,
+    });
+  });
+
   it('lists operations and forwards same-origin audited alert transitions', async () => {
     const administration = service();
     const server = buildApiServer({
@@ -373,12 +453,12 @@ describe('ORAP administration routes', () => {
     );
   });
 
-  it('restricts audited AI budget controls to platform owners and admins', async () => {
+  it('restricts audited AI budget controls to capability-bearing staff', async () => {
     const administration = service();
     const staffServer = buildApiServer({
       logLevel: 'silent',
       orapService: administration,
-      resolvePlatformActor: async () => actor,
+      resolvePlatformActor: async () => deniedStaff,
     });
     const ownerActor: AdminActor = { ...actor, role: 'platform_owner' };
     const ownerServer = buildApiServer({
@@ -474,7 +554,7 @@ describe('ORAP administration routes', () => {
     );
   });
 
-  it('limits exact-site customer session administration to platform owners and admins', async () => {
+  it('limits exact-site customer session administration to capability-bearing staff', async () => {
     const administration = service();
     const ownerActor: AdminActor = { ...actor, role: 'platform_owner' };
     const ownerServer = buildApiServer({
@@ -485,7 +565,7 @@ describe('ORAP administration routes', () => {
     const staffServer = buildApiServer({
       logLevel: 'silent',
       orapService: administration,
-      resolvePlatformActor: async () => actor,
+      resolvePlatformActor: async () => deniedStaff,
     });
     servers.push(ownerServer, staffServer);
     const tenantId = '10000000-0000-4000-8000-000000000001';
@@ -558,7 +638,7 @@ describe('ORAP administration routes', () => {
 
   it('rejects invalid reasons and cross-origin customer session revocation', async () => {
     const administration = service();
-    const ownerActor: AdminActor = { ...actor, role: 'platform_admin' };
+    const ownerActor = actor;
     const server = buildApiServer({
       logLevel: 'silent',
       orapService: administration,
@@ -593,7 +673,7 @@ describe('ORAP administration routes', () => {
 
   it('returns one generic not-found result for missing scopes and unmatched sessions', async () => {
     const administration = service();
-    const ownerActor: AdminActor = { ...actor, role: 'platform_admin' };
+    const ownerActor = actor;
     administration.listCustomerSessions.mockRejectedValueOnce(
       new OrapResourceNotFoundError('Active customer site membership was not found'),
     );

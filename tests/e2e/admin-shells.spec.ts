@@ -3,9 +3,11 @@ import type { AdminActor } from '@omnireach/tenant';
 import { expect, test } from '@playwright/test';
 
 const staff: AdminActor = {
+  authenticationAssurance: 'strong',
   id: '40000000-0000-4000-8000-000000000010',
-  role: 'staff',
+  role: 'platform_owner',
   traceId: 'browser-staff-trace',
+  verifiedAt: new Date(),
 };
 const customer: CustomerPrincipal = {
   editorPublishGrant: false,
@@ -17,6 +19,7 @@ const customer: CustomerPrincipal = {
 };
 
 test('served ORAP and customer shells remain accessible and host isolated', async ({ browser }) => {
+  test.setTimeout(45_000);
   const server = buildApiServer({
     customerService: {
       assetDownload: async () => ({
@@ -93,12 +96,14 @@ test('served ORAP and customer shells remain accessible and host isolated', asyn
     },
     logLevel: 'silent',
     orapService: {
+      acknowledgeAlert: async () => ({}),
       assignPlan: async () => ({}),
       cancelJob: async () => ({}),
       changeCustomerRole: async () => ({}),
       createPlan: async () => ({}),
       createTenantAndSite: async () => ({}),
       disableCustomer: async () => ({}),
+      disableStaff: async () => ({}),
       inviteCustomer: async () => ({}),
       listOperations: async () => ({
         alerts: [
@@ -125,6 +130,13 @@ test('served ORAP and customer shells remain accessible and host isolated', asyn
             traceId: 'trace-fixture-job-1',
             updatedAt: '2026-10-10T00:00:00.000Z',
           },
+          {
+            category: 'seo_audit',
+            id: '70000000-0000-4000-8000-000000000002',
+            state: 'queued',
+            traceId: 'trace-fixture-job-2',
+            updatedAt: '2026-10-10T00:05:00.000Z',
+          },
         ],
       }),
       listSites: async () => [
@@ -136,8 +148,42 @@ test('served ORAP and customer shells remain accessible and host isolated', asyn
           tenantName: 'Fictional Group',
         },
       ],
+      listStaff: async () => [
+        {
+          activeSessions: 1,
+          authorizationVersion: 1,
+          createdAt: '2026-10-10T00:00:00.000Z',
+          displayName: 'Fictional Owner',
+          emailCodeEnabled: true,
+          identityKind: 'platform_owner',
+          lastLoginAt: '2026-10-12T00:00:00.000Z',
+          membershipId: '90000000-0000-4000-8000-000000000001',
+          normalizedEmail: 'owner@example.test',
+          status: 'active',
+          strongFactorEnrolled: true,
+          userId: staff.id,
+        },
+        {
+          activeSessions: 2,
+          authorizationVersion: 1,
+          createdAt: '2026-10-11T00:00:00.000Z',
+          displayName: 'Fictional Employee',
+          emailCodeEnabled: true,
+          identityKind: 'staff',
+          jobTitle: 'Operations Specialist',
+          lastLoginAt: '2026-10-12T00:10:00.000Z',
+          membershipId: '90000000-0000-4000-8000-000000000002',
+          normalizedEmail: 'employee@example.test',
+          status: 'active',
+          strongFactorEnrolled: false,
+          userId: '40000000-0000-4000-8000-000000000012',
+        },
+      ],
       requestCustomerReset: async () => ({}),
+      requestStaffReset: async () => ({}),
       replayJob: async () => ({}),
+      resolveAlert: async () => ({}),
+      revokeStaffSessions: async () => ({}),
       setContactForm: async () => ({}),
       setContactSubmissionHold: async () => ({}),
       setEmergencyControls: async () => ({}),
@@ -217,13 +263,65 @@ test('served ORAP and customer shells remain accessible and host isolated', asyn
     await expect(customerPage.locator('input[name="token"]')).toHaveValue('A'.repeat(43));
 
     const staffPage = await staffContext.newPage();
-    await staffPage.goto(`${staffBase}/orap/sites`);
+    await staffPage.goto(staffBase);
+    await expect(staffPage).toHaveURL(`${staffBase}/orap`);
+    await expect(staffPage.getByRole('heading', { level: 1 })).toHaveText('Overview');
+    await expect(staffPage.getByText('Fictional worker unavailable')).toBeVisible();
+    await staffPage.getByRole('link', { exact: true, name: 'Customer sites' }).click();
     await expect(staffPage.getByRole('heading', { level: 1 })).toHaveText('Customer sites');
     await expect(staffPage.getByRole('table')).toContainText('Fictional Group');
     await expect(staffPage.getByRole('link', { name: 'Skip to content' })).toBeVisible();
-    await expect(staffPage.locator('html')).toHaveCSS('background-color', 'rgb(244, 246, 244)');
+    await expect(staffPage.locator('html')).toHaveCSS('background-color', 'rgb(246, 247, 250)');
     await expect(staffPage.getByRole('link', { name: 'Users' })).toHaveCount(0);
     await expect(staffPage.getByRole('link', { name: 'Audit' })).toHaveCount(0);
+    for (const width of [360, 768, 1024, 1440]) {
+      await staffPage.setViewportSize({ height: 900, width });
+      const dimensions = await staffPage.evaluate(() => ({
+        documentWidth: document.documentElement.scrollWidth,
+        offenders: [...document.querySelectorAll<HTMLElement>('body *')]
+          .filter((element) => element.getBoundingClientRect().right > innerWidth + 1)
+          .slice(0, 8)
+          .map((element) => ({
+            className: element.className,
+            right: Math.round(element.getBoundingClientRect().right),
+            tag: element.tagName,
+          })),
+      }));
+      expect(
+        dimensions.documentWidth,
+        `document width at ${width}px viewport; offenders=${JSON.stringify(dimensions.offenders)}`,
+      ).toBeLessThanOrEqual(width);
+    }
+
+    await staffPage.getByRole('link', { name: 'Team & access' }).click();
+    await expect(staffPage.getByRole('heading', { level: 1 })).toHaveText('Team & access');
+    await expect(staffPage.getByRole('table')).toContainText('Fictional Owner');
+    const employeeRow = staffPage.getByRole('row').filter({ hasText: 'Fictional Employee' });
+    await employeeRow.getByRole('link', { name: 'Open' }).click();
+    await expect(staffPage.getByRole('heading', { level: 1 })).toHaveText('Fictional Employee');
+
+    const resetStaff = staffPage.locator(
+      'form[action="/orap/security/staff/40000000-0000-4000-8000-000000000012/reset"]',
+    );
+    await resetStaff.getByLabel('Audit reason').fill('Approved fictional recovery request');
+    await resetStaff.getByRole('button', { name: 'Send reset instructions' }).click();
+    await expect(staffPage.getByRole('status')).toContainText('reset instructions were requested');
+
+    const revokeStaff = staffPage.locator(
+      'form[action="/orap/security/staff/40000000-0000-4000-8000-000000000012/sessions/revoke-all"]',
+    );
+    await revokeStaff.getByLabel('Audit reason').fill('Approved fictional session revocation');
+    await revokeStaff.getByRole('button', { name: 'Revoke all sessions' }).click();
+    await expect(staffPage.getByRole('status')).toContainText('sessions were revoked');
+
+    const disableStaff = staffPage.locator(
+      'form[action="/orap/security/staff/40000000-0000-4000-8000-000000000012/disable"]',
+    );
+    await disableStaff.getByLabel('Audit reason').fill('Approved fictional staff departure');
+    await disableStaff.getByRole('button', { name: 'Disable staff access' }).click();
+    await expect(staffPage.getByRole('status')).toContainText('Staff access was disabled');
+
+    await staffPage.getByRole('link', { exact: true, name: 'Customer sites' }).click();
 
     await staffPage.getByRole('link', { name: 'Add customer site' }).click();
     await expect(staffPage.getByRole('heading', { level: 1 })).toHaveText('Add customer site');
@@ -235,11 +333,11 @@ test('served ORAP and customer shells remain accessible and host isolated', asyn
     await expect(staffPage).toHaveURL(/\/orap\/sites\?notice=created$/u);
     await expect(staffPage.getByRole('status')).toContainText('Site record created');
 
-    await staffPage.getByRole('link', { name: 'Manage' }).click();
+    await staffPage.getByRole('link', { name: 'Open site' }).click();
     await expect(staffPage.getByRole('heading', { level: 1 })).toHaveText('Fictional Alpha');
     await expect(staffPage.getByText(customer.siteId, { exact: true })).toBeVisible();
 
-    await staffPage.getByRole('link', { name: 'Operations' }).click();
+    await staffPage.getByRole('link', { name: 'Jobs & alerts' }).click();
     await expect(staffPage.getByRole('heading', { level: 1 })).toHaveText('Operations');
     await expect(
       staffPage.getByText('Fictional worker unavailable', { exact: false }),
@@ -248,6 +346,29 @@ test('served ORAP and customer shells remain accessible and host isolated', asyn
     await expect(staffPage.getByRole('button', { name: 'Acknowledge' })).toBeVisible();
     await expect(staffPage.getByRole('button', { name: 'Resolve' })).toBeVisible();
     await expect(staffPage.getByRole('button', { name: 'Replay job' })).toBeVisible();
+    await expect(staffPage.getByRole('button', { name: 'Cancel job' })).toBeVisible();
+
+    const acknowledge = staffPage.locator(
+      'form[action="/orap/operations/alerts/80000000-0000-4000-8000-000000000001/acknowledge"]',
+    );
+    await acknowledge.getByLabel('Reason').fill('Owner reviewed the fictional incident');
+    await acknowledge.getByRole('button', { name: 'Acknowledge' }).click();
+    await expect(staffPage).toHaveURL(/\/orap\/operations\?notice=updated$/u);
+
+    const resolve = staffPage.locator(
+      'form[action="/orap/operations/alerts/80000000-0000-4000-8000-000000000001/resolve"]',
+    );
+    await resolve.getByLabel('Resolution').fill('Fictional incident resolved after verification');
+    await resolve.getByRole('button', { name: 'Resolve' }).click();
+    await expect(staffPage).toHaveURL(/\/orap\/operations\?notice=updated$/u);
+
+    const cancel = staffPage.locator(
+      'form[action="/orap/operations/jobs/70000000-0000-4000-8000-000000000002/cancel"]',
+    );
+    await cancel.getByLabel('Reason').fill('Fictional queued job is no longer required');
+    await cancel.getByRole('button', { name: 'Cancel job' }).click();
+    await expect(staffPage).toHaveURL(/\/orap\/operations\?notice=updated$/u);
+
     const replay = staffPage.locator(
       'form[action="/orap/operations/jobs/70000000-0000-4000-8000-000000000001/replay"]',
     );

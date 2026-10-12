@@ -1,11 +1,20 @@
-import { platformRoles, type Role } from '@omnireach/auth';
+import {
+  assertOrapCapability,
+  type OrapAuthorizationState,
+  type OrapCapabilityKey,
+  type OrapResourceTarget,
+  type Role,
+} from '@omnireach/auth';
 
 export type CustomerRole = Extract<Role, 'customer_owner' | 'customer_editor' | 'customer_viewer'>;
 
 export interface AdminActor {
+  authenticationAssurance?: string;
+  authorization?: OrapAuthorizationState;
   id: string;
   role: Role;
   traceId: string;
+  verifiedAt?: Date;
 }
 export interface AdminAuditEvent {
   action: string;
@@ -75,7 +84,8 @@ export class TenantAdministrationService {
     actor: AdminActor,
     input: { reason: string; siteName: string; tenantName: string },
   ) {
-    authorize(actor, input.reason);
+    authorize(actor, input.reason, 'customers.create');
+    authorize(actor, input.reason, 'websites.create');
     return this.store.transaction(async (commands) => {
       const tenant = await commands.createTenant({ name: input.tenantName.trim() });
       const site = await commands.createSite({ name: input.siteName.trim(), tenantId: tenant.id });
@@ -93,7 +103,7 @@ export class TenantAdministrationService {
   }
 
   async disableSite(actor: AdminActor, siteId: string, reason: string) {
-    authorize(actor, reason);
+    authorize(actor, reason, 'websites.disable', { siteId });
     return this.store.transaction(async (commands) => {
       const site = await commands.disableSite(siteId);
       await commands.audit({
@@ -123,7 +133,7 @@ export class CustomerAccessAdministrationService {
       tenantId: string;
     },
   ) {
-    authorize(actor, input.reason);
+    authorize(actor, input.reason, 'customers.users.manage', input);
     const email = input.email.trim().toLowerCase();
     if (!email || !email.includes('@')) throw new Error('A valid customer email is required');
     return this.store.transaction(async (commands) => {
@@ -150,7 +160,7 @@ export class CustomerAccessAdministrationService {
     actor: AdminActor,
     input: { membershipId: string; reason: string; role: CustomerRole; siteId: string },
   ) {
-    authorize(actor, input.reason);
+    authorize(actor, input.reason, 'customers.users.manage', input);
     return this.store.transaction(async (commands) => {
       const result = await commands.changeMembershipRole(input);
       assertSameSite(input.siteId, result.before, result.after);
@@ -175,7 +185,7 @@ export class CustomerAccessAdministrationService {
     actor: AdminActor,
     input: { membershipId: string; reason: string; siteId: string },
   ) {
-    authorize(actor, input.reason);
+    authorize(actor, input.reason, 'customers.users.manage', input);
     return this.store.transaction(async (commands) => {
       const result = await commands.disableMembership(input);
       assertSameSite(input.siteId, result.before, result.after);
@@ -200,7 +210,7 @@ export class CustomerAccessAdministrationService {
     actor: AdminActor,
     input: { reason: string; siteId: string; userId: string },
   ) {
-    authorize(actor, input.reason);
+    authorize(actor, input.reason, 'security.customer_access.manage', input);
     return this.store.transaction(async (commands) => {
       const reset = await commands.initiatePasswordReset(input.userId);
       await commands.audit({
@@ -217,8 +227,13 @@ export class CustomerAccessAdministrationService {
   }
 }
 
-function authorize(actor: AdminActor, reason: string): void {
-  if (!platformRoles.has(actor.role)) throw new Error('Platform staff authorization required');
+function authorize(
+  actor: AdminActor,
+  reason: string,
+  capability: OrapCapabilityKey,
+  target: OrapResourceTarget = {},
+): void {
+  assertOrapCapability(actor, capability, target);
   if (!reason.trim()) throw new Error('Administrative mutations require a reason');
 }
 

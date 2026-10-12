@@ -1,3 +1,9 @@
+import {
+  assertOrapCapability,
+  type OrapAuthorizationState,
+  type OrapCapabilityKey,
+} from '@omnireach/auth';
+
 export type FeatureKey = string;
 
 export interface PolicyInputs {
@@ -70,6 +76,7 @@ export function subscriptionEffects(input: {
 }
 
 export interface SitePolicyActor {
+  authorization?: OrapAuthorizationState;
   id: string;
   role: 'platform_admin' | 'platform_owner' | 'staff';
   traceId: string;
@@ -133,7 +140,7 @@ export class SitePolicyAdministrationService {
     actor: SitePolicyActor,
     input: FeatureOverrideChange & { overrideable: boolean },
   ): Promise<unknown> {
-    assertPolicyMutation(actor, input.reason);
+    assertPolicyMutation(actor, input.reason, 'entitlements.override', input);
     if (!input.overrideable || input.featureKey === 'content.ai.protected-facts') {
       throw new Error('Feature is protected by a nonoverrideable system rule');
     }
@@ -150,7 +157,7 @@ export class SitePolicyAdministrationService {
     actor: SitePolicyActor,
     input: EmergencyControlChange,
   ): Promise<unknown> {
-    assertPolicyMutation(actor, input.reason);
+    assertPolicyMutation(actor, input.reason, 'automation.emergency_controls.manage', input);
     return this.mutate(
       actor,
       'site.emergency_controls_changed',
@@ -164,7 +171,7 @@ export class SitePolicyAdministrationService {
     actor: SitePolicyActor,
     input: SubscriptionStateChange,
   ): Promise<unknown> {
-    assertPolicyMutation(actor, input.reason);
+    assertPolicyMutation(actor, input.reason, 'subscriptions.edit', input);
     const effectiveInput =
       input.status === 'past_due' && !input.graceEndsAt
         ? { ...input, graceEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1_000) }
@@ -201,9 +208,12 @@ export class SitePolicyAdministrationService {
   }
 }
 
-function assertPolicyMutation(actor: SitePolicyActor, reasonValue: string): void {
-  if (!['platform_owner', 'platform_admin', 'staff'].includes(actor.role)) {
-    throw new Error('Platform staff authorization required');
-  }
+function assertPolicyMutation(
+  actor: SitePolicyActor,
+  reasonValue: string,
+  capability: OrapCapabilityKey,
+  target: { siteId: string; tenantId: string },
+): void {
+  assertOrapCapability(actor, capability, target);
   if (!reasonValue.trim()) throw new Error('Policy mutations require a reason');
 }

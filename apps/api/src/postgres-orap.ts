@@ -1,6 +1,16 @@
 import { randomUUID } from 'node:crypto';
 
-import { createOneTimeToken, normalizeEmail } from '@omnireach/auth';
+import {
+  assertOrapCapability,
+  assertPlatformOwnerIdentity,
+  assertRecentStrongOrapStepUp,
+  canOrap,
+  createOneTimeToken,
+  normalizeEmail,
+  OrapAuthorizationDeniedError,
+  orapVisibleScope,
+  type OrapResourceTarget,
+} from '@omnireach/auth';
 import {
   assertPlanFeatureAllowed,
   defaultGraceEndsAt,
@@ -55,6 +65,7 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
       version: number;
     },
   ): Promise<unknown> {
+    assertOrapCapability(actor, 'plans.edit');
     for (const feature of input.features) assertPlanFeatureAllowed(feature.key);
     return this.transaction(actor, async (client) => {
       for (const requested of input.features) {
@@ -125,10 +136,237 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
     });
   }
 
+  listStaff(actor: AdminActor): Promise<unknown> {
+    assertPlatformOwnerIdentity(actor);
+    return this.transaction(actor, async (client) => {
+      const result = await query<{
+        active_sessions: number;
+        authorization_version: number;
+        created_at: Date;
+        display_name: string;
+        email_code_enabled: boolean;
+        identity_kind: string;
+        job_title: string | null;
+        last_login_at: Date | null;
+        membership_id: string;
+        normalized_email: string;
+        status: string;
+        strong_factor_enrolled: boolean;
+        user_id: string;
+      }>(
+        client,
+        `SELECT membership.id AS membership_id,
+                membership.user_id,
+                membership.identity_kind,
+                membership.status,
+                membership.job_title,
+                membership.authorization_version,
+                membership.created_at,
+                user_account.normalized_email,
+                user_account.display_name,
+                authentication.email_code_enabled,
+                authentication.strong_factor_enrolled,
+                (SELECT max(session.created_at) FROM sessions session
+                  WHERE session.user_id = membership.user_id
+                    AND session.tenant_id IS NULL AND session.site_id IS NULL)
+                  AS last_login_at,
+                (SELECT count(*)::integer FROM sessions session
+                  WHERE session.user_id = membership.user_id
+                    AND session.tenant_id IS NULL AND session.site_id IS NULL
+                    AND session.revoked_at IS NULL AND session.expires_at > now())
+                  AS active_sessions
+           FROM orap_staff_memberships membership
+           JOIN users user_account ON user_account.id = membership.user_id
+           JOIN orap_staff_directory_auth_status authentication
+             ON authentication.user_id = membership.user_id
+          WHERE membership.status <> 'archived'
+          ORDER BY CASE membership.identity_kind
+                     WHEN 'platform_owner' THEN 0
+                     WHEN 'platform_admin' THEN 1
+                     ELSE 2
+                   END,
+                   lower(user_account.display_name), membership.id`,
+        [],
+      );
+      return result.rows.map((row) => ({
+        activeSessions: row.active_sessions,
+        authorizationVersion: row.authorization_version,
+        createdAt: row.created_at.toISOString(),
+        displayName: row.display_name,
+        emailCodeEnabled: row.email_code_enabled,
+        identityKind: row.identity_kind,
+        ...(row.job_title ? { jobTitle: row.job_title } : {}),
+        ...(row.last_login_at ? { lastLoginAt: row.last_login_at.toISOString() } : {}),
+        membershipId: row.membership_id,
+        normalizedEmail: row.normalized_email,
+        status: row.status,
+        strongFactorEnrolled: row.strong_factor_enrolled,
+        userId: row.user_id,
+      }));
+    });
+  }
+
+  disableStaff(actor: AdminActor, input: { reason: string; userId: string }): Promise<unknown> {
+    assertStaffAuthorityMutation(actor, input.reason);
+    if (input.userId === actor.id) {
+      throw new Error('The current Platform Owner cannot disable their own account');
+    }
+    return this.transaction(actor, async (client) => {
+      const before = required(
+        (
+          await query<{
+            identity_kind: string;
+            membership_id: string;
+            status: string;
+            user_id: string;
+          }>(
+            client,
+            `SELECT membership.id AS membership_id, membership.user_id,
+                    membership.identity_kind, membership.status
+               FROM orap_staff_memberships membership
+               JOIN platform_memberships legacy
+                 ON legacy.user_id = membership.user_id
+              WHERE membership.user_id = $1
+              FOR UPDATE OF membership, legacy`,
+            [input.userId],
+          )
+        ).rows[0],
+        'Staff account was not found',
+      );
+      if (before.status !== 'active') throw new OrapResourceNotFoundError();
+      if (before.identity_kind === 'platform_owner') {
+        const owners = await query<{ id: string }>(
+          client,
+          `SELECT id
+             FROM orap_staff_memberships
+            WHERE identity_kind = 'platform_owner' AND status = 'active'
+            FOR UPDATE`,
+          [],
+        );
+        if (owners.rows.length <= 1) {
+          throw new Error('The last active Platform Owner cannot be disabled');
+        }
+      }
+      const after = required(
+        (
+          await query<{
+            authorization_version: number;
+            identity_kind: string;
+            status: string;
+            user_id: string;
+          }>(
+            client,
+            `UPDATE orap_staff_memberships
+                SET status = 'disabled', disabled_at = now(), updated_at = now(),
+                    authorization_version = authorization_version + 1
+              WHERE user_id = $1 AND status = 'active'
+              RETURNING user_id, identity_kind, status, authorization_version`,
+            [input.userId],
+          )
+        ).rows[0],
+        'Staff account disable failed',
+      );
+      await client.query(
+        `UPDATE platform_memberships SET active = false, updated_at = now()
+          WHERE user_id = $1 AND active`,
+        [input.userId],
+      );
+      const revoked = await query<{ id: string }>(
+        client,
+        `UPDATE sessions
+            SET revoked_at = now(), revoke_reason = 'orap_staff_disabled'
+          WHERE user_id = $1 AND tenant_id IS NULL AND site_id IS NULL
+            AND revoked_at IS NULL
+          RETURNING id`,
+        [input.userId],
+      );
+      await staffAccessAudit(client, actor, {
+        action: 'staff.disabled',
+        after: { ...after, revokedSessions: revoked.rows.length },
+        before,
+        reason: input.reason,
+        targetUserId: input.userId,
+      });
+      return { ...after, revokedSessions: revoked.rows.length };
+    });
+  }
+
+  revokeStaffSessions(
+    actor: AdminActor,
+    input: { reason: string; userId: string },
+  ): Promise<unknown> {
+    assertStaffAuthorityMutation(actor, input.reason);
+    return this.transaction(actor, async (client) => {
+      const target = await query<{ user_id: string }>(
+        client,
+        `SELECT user_id FROM orap_staff_memberships
+          WHERE user_id = $1 AND status = 'active' FOR SHARE`,
+        [input.userId],
+      );
+      if (target.rows.length !== 1) throw new OrapResourceNotFoundError();
+      const revoked = await query<{ id: string }>(
+        client,
+        `UPDATE sessions
+            SET revoked_at = now(), revoke_reason = 'orap_owner_revocation'
+          WHERE user_id = $1 AND tenant_id IS NULL AND site_id IS NULL
+            AND revoked_at IS NULL
+          RETURNING id`,
+        [input.userId],
+      );
+      await staffAccessAudit(client, actor, {
+        action: 'staff.sessions_revoked',
+        after: { revokedSessions: revoked.rows.length },
+        before: null,
+        reason: input.reason,
+        targetUserId: input.userId,
+      });
+      return { revokedSessions: revoked.rows.length };
+    });
+  }
+
+  async requestStaffReset(
+    actor: AdminActor,
+    input: { host: string; networkIdentifier: string; reason: string; userId: string },
+  ): Promise<unknown> {
+    assertStaffAuthorityMutation(actor, input.reason);
+    const target = await this.transaction(actor, async (client) => {
+      const row = required(
+        (
+          await query<{ normalized_email: string; user_id: string }>(
+            client,
+            `SELECT membership.user_id, user_account.normalized_email
+               FROM orap_staff_memberships membership
+               JOIN users user_account ON user_account.id = membership.user_id
+              WHERE membership.user_id = $1 AND membership.status = 'active'
+              FOR SHARE OF membership, user_account`,
+            [input.userId],
+          )
+        ).rows[0],
+        'Staff account was not found',
+      );
+      await staffAccessAudit(client, actor, {
+        action: 'staff.password_reset_requested',
+        after: { delivery: 'requested' },
+        before: null,
+        reason: input.reason,
+        targetUserId: input.userId,
+      });
+      return row;
+    });
+    await this.requestRecovery({
+      host: input.host,
+      networkIdentifier: input.networkIdentifier,
+      normalizedEmail: target.normalized_email,
+      traceId: actor.traceId,
+    });
+    return { status: 'accepted' };
+  }
+
   assignPlan(
     actor: AdminActor,
     input: { planId: string; reason: string; siteId: string; tenantId: string },
   ): Promise<unknown> {
+    assertOrapCapability(actor, 'subscriptions.edit', input);
     return this.transaction(actor, async (client) => {
       await assertSite(client, input.tenantId, input.siteId);
       const plan = await query<{
@@ -197,6 +435,8 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
   }
 
   listSites(actor: AdminActor): Promise<unknown> {
+    assertOrapCapability(actor, 'websites.list');
+    const scope = orapVisibleScope(actor, 'websites.list');
     return this.transaction(actor, async (client) => {
       const result = await query<{
         id: string;
@@ -208,8 +448,11 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
         client,
         `SELECT s.id, s.tenant_id, s.name, s.status, t.name AS tenant_name
            FROM sites s JOIN tenants t ON t.id = s.tenant_id
+          WHERE $1::boolean
+             OR s.tenant_id = ANY($2::uuid[])
+             OR s.id = ANY($3::uuid[])
           ORDER BY t.name, s.name`,
-        [],
+        [scope.portfolio, [...scope.tenantIds], [...scope.siteIds]],
       );
       return result.rows.map((site) => ({
         id: site.id,
@@ -225,6 +468,8 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
     actor: AdminActor,
     input: { reason: string; siteName: string; sourcePath: string; tenantName: string },
   ): Promise<unknown> {
+    assertOrapCapability(actor, 'customers.create');
+    assertOrapCapability(actor, 'websites.create');
     const contract = this.siteContracts.get(input.sourcePath);
     if (!contract) throw new Error('Site source package is not registered');
     return this.transaction(actor, async (client) => {
@@ -284,6 +529,7 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
       tenantId: string;
     },
   ): Promise<unknown> {
+    assertOrapCapability(actor, 'customers.users.manage', input);
     const normalizedEmail = normalizeEmail(input.email);
     const token = createOneTimeToken();
     const invitation = await this.transaction(actor, async (client) => {
@@ -371,6 +617,7 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
   ): Promise<unknown> {
     return this.transaction(actor, async (client) => {
       const before = await membership(client, input.membershipId, input.siteId);
+      assertOrapCapability(actor, 'customers.users.manage', resourceTarget(before));
       const after = required(
         (
           await query<Record<string, unknown>>(
@@ -409,6 +656,7 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
   ): Promise<unknown> {
     return this.transaction(actor, async (client) => {
       const before = await membership(client, input.membershipId, input.siteId);
+      assertOrapCapability(actor, 'customers.users.manage', resourceTarget(before));
       const after = required(
         (
           await query<Record<string, unknown>>(
@@ -465,6 +713,10 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
         throw new Error('Customer or verified admin domain was not found');
       }
       const row = result.rows[0];
+      assertOrapCapability(actor, 'security.customer_access.manage', {
+        siteId: input.siteId,
+        tenantId: row.tenant_id,
+      });
       await audit(client, actor, {
         action: 'customer.password_reset_requested',
         after: { status: 'requested' },
@@ -490,7 +742,7 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
     actor: AdminActor,
     input: { siteId: string; tenantId: string; userId: string },
   ): Promise<unknown> {
-    assertCustomerSessionAdministrator(actor);
+    assertOrapCapability(actor, 'security.sessions.view', input);
     return this.transaction(actor, async (client) => {
       await lockCustomerSessionScope(client, input);
       const result = await query<{
@@ -531,7 +783,7 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
       userId: string;
     },
   ): Promise<unknown> {
-    assertCustomerSessionAdministrator(actor);
+    assertOrapCapability(actor, 'security.sessions.revoke', input);
     assertBoundedAdministrativeReason(input.reason);
     return this.transaction(actor, async (client) => {
       await lockCustomerSessionScope(client, input);
@@ -565,7 +817,7 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
     actor: AdminActor,
     input: { reason: string; siteId: string; tenantId: string; userId: string },
   ): Promise<unknown> {
-    assertCustomerSessionAdministrator(actor);
+    assertOrapCapability(actor, 'security.sessions.revoke', input);
     assertBoundedAdministrativeReason(input.reason);
     return this.transaction(actor, async (client) => {
       await lockCustomerSessionScope(client, input);
@@ -604,6 +856,7 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
       tenantId: string;
     },
   ): Promise<unknown> {
+    assertOrapCapability(actor, 'entitlements.override', input);
     assertPlanFeatureAllowed(input.featureKey);
     return this.transaction(actor, async (client) => {
       const feature = required(
@@ -694,6 +947,7 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
       tenantId: string;
     },
   ): Promise<unknown> {
+    assertOrapCapability(actor, 'contact_forms.manage', input);
     if (input.enabled && !input.recipientVerified) {
       throw new Error('An enabled contact form requires a verified recipient');
     }
@@ -796,7 +1050,7 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
       tenantId: string;
     },
   ): Promise<unknown> {
-    assertBudgetAdministrator(actor);
+    assertOrapCapability(actor, 'contact_forms.submissions.hold', input);
     return this.transaction(actor, async (client) => {
       const before = required(
         (
@@ -854,6 +1108,7 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
       tenantId: string;
     },
   ): Promise<unknown> {
+    assertOrapCapability(actor, 'entitlements.override', input);
     return this.transaction(actor, async (client) => {
       await assertSite(client, input.tenantId, input.siteId);
       const before =
@@ -914,7 +1169,7 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
       tenantId: string;
     },
   ): Promise<unknown> {
-    assertBudgetAdministrator(actor);
+    assertOrapCapability(actor, 'ai_budget.site.edit', input);
     return this.transaction(actor, async (client) => {
       await assertSite(client, input.tenantId, input.siteId);
       const before =
@@ -976,7 +1231,7 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
     actor: AdminActor,
     input: { capUsdMicros: number; policyVersion: number; reason: string },
   ): Promise<unknown> {
-    assertBudgetAdministrator(actor);
+    assertOrapCapability(actor, 'ai_budget.platform.edit');
     return this.transaction(actor, async (client) => {
       const before = required(
         (
@@ -1031,6 +1286,7 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
       tenantId: string;
     },
   ): Promise<unknown> {
+    assertOrapCapability(actor, 'automation.emergency_controls.manage', input);
     return this.transaction(actor, async (client) => {
       await assertSite(client, input.tenantId, input.siteId);
       const before =
@@ -1094,6 +1350,7 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
       tenantId: string;
     },
   ): Promise<unknown> {
+    assertOrapCapability(actor, 'subscriptions.edit', input);
     const graceEndsAt =
       input.status === 'past_due'
         ? (input.graceEndsAt ?? defaultGraceEndsAt(new Date()))
@@ -1136,65 +1393,86 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
   }
 
   listOperations(actor: AdminActor): Promise<unknown> {
+    assertOrapCapability(actor, 'dashboard.view');
+    const alertAllowed = canOrap(actor, 'alerts.view');
+    const alertScope = orapVisibleScope(actor, 'alerts.view');
+    const jobAllowed = canOrap(actor, 'automation.jobs.view');
+    const jobScope = orapVisibleScope(actor, 'automation.jobs.view');
+    const budgetAllowed = canOrap(actor, 'ai_budget.platform.view');
     return this.transaction(actor, async (client) => {
-      const alerts = await query<{
-        fingerprint: string;
-        id: string;
-        message: string;
-        occurrences: number;
-        severity: string;
-        state: string;
-      }>(
-        client,
-        `SELECT id, fingerprint, severity, state, safe_message AS message, occurrences
-           FROM alerts
-          ORDER BY CASE state WHEN 'open' THEN 0 WHEN 'acknowledged' THEN 1 ELSE 2 END,
-                   last_seen_at DESC
-          LIMIT 100`,
-        [],
-      );
-      const jobs = await query<{
-        category: string;
-        id: string;
-        state: string;
-        trace_id: string;
-        updated_at: Date;
-      }>(
-        client,
-        `SELECT id, category, state, trace_id, updated_at
-           FROM jobs ORDER BY updated_at DESC LIMIT 100`,
-        [],
-      );
-      const budget = required(
-        (
-          await query<{
-            cap_usd_micros: string;
-            period_start: Date;
-            reserved_usd_micros: string;
-            used_usd_micros: string;
+      const alerts = alertAllowed
+        ? await query<{
+            fingerprint: string;
+            id: string;
+            message: string;
+            occurrences: number;
+            severity: string;
+            state: string;
           }>(
             client,
-            `SELECT COALESCE(p.cap_usd_micros, b.cap_usd_micros)::text AS cap_usd_micros,
-                    date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS period_start,
-                    COALESCE(p.reserved_usd_micros, 0)::text AS reserved_usd_micros,
-                    COALESCE(p.used_usd_micros, 0)::text AS used_usd_micros
+            `SELECT id, fingerprint, severity, state, safe_message AS message, occurrences
+               FROM alerts
+              WHERE $1::boolean
+                 OR tenant_id = ANY($2::uuid[])
+                 OR site_id = ANY($3::uuid[])
+              ORDER BY CASE state WHEN 'open' THEN 0 WHEN 'acknowledged' THEN 1 ELSE 2 END,
+                       last_seen_at DESC
+              LIMIT 100`,
+            [alertScope.portfolio, [...alertScope.tenantIds], [...alertScope.siteIds]],
+          )
+        : { rows: [] };
+      const jobs = jobAllowed
+        ? await query<{
+            category: string;
+            id: string;
+            state: string;
+            trace_id: string;
+            updated_at: Date;
+          }>(
+            client,
+            `SELECT id, category, state, trace_id, updated_at
+               FROM jobs
+              WHERE $1::boolean
+                 OR tenant_id = ANY($2::uuid[])
+                 OR site_id = ANY($3::uuid[])
+              ORDER BY updated_at DESC LIMIT 100`,
+            [jobScope.portfolio, [...jobScope.tenantIds], [...jobScope.siteIds]],
+          )
+        : { rows: [] };
+      const budget = budgetAllowed
+        ? required(
+            (
+              await query<{
+                cap_usd_micros: string;
+                period_start: Date;
+                reserved_usd_micros: string;
+                used_usd_micros: string;
+              }>(
+                client,
+                `SELECT COALESCE(p.cap_usd_micros, b.cap_usd_micros)::text AS cap_usd_micros,
+                     date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS period_start,
+                     COALESCE(p.reserved_usd_micros, 0)::text AS reserved_usd_micros,
+                     COALESCE(p.used_usd_micros, 0)::text AS used_usd_micros
                FROM platform_ai_budget b
                LEFT JOIN platform_ai_budget_periods p
                  ON p.period_start = date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
               WHERE b.singleton = true`,
-            [],
+                [],
+              )
+            ).rows[0],
+            'Platform AI budget is not configured',
           )
-        ).rows[0],
-        'Platform AI budget is not configured',
-      );
+        : null;
       return {
         alerts: alerts.rows,
-        budget: {
-          capUsdMicros: Number(budget.cap_usd_micros),
-          periodStart: budget.period_start.toISOString(),
-          reservedUsdMicros: Number(budget.reserved_usd_micros),
-          usedUsdMicros: Number(budget.used_usd_micros),
-        },
+        budget: budget
+          ? {
+              capUsdMicros: Number(budget.cap_usd_micros),
+              periodStart: budget.period_start.toISOString(),
+              reservedUsdMicros: Number(budget.reserved_usd_micros),
+              usedUsdMicros: Number(budget.used_usd_micros),
+            }
+          : null,
         jobs: jobs.rows.map((job) => ({
           category: job.category,
           id: job.id,
@@ -1219,6 +1497,7 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
         ).rows[0],
         'Job was not found',
       );
+      assertOrapCapability(actor, 'automation.jobs.cancel', resourceTarget(before));
       if (before.state !== 'queued') throw new Error('Only queued jobs can be cancelled');
       const after = required(
         (
@@ -1263,6 +1542,7 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
         ).rows[0],
         'Job was not found',
       );
+      assertOrapCapability(actor, 'automation.jobs.replay', resourceTarget(before));
       if (!['cancelled', 'failed', 'skipped'].includes(String(before.state))) {
         throw new Error('Only cancelled, failed, or skipped jobs can be replayed');
       }
@@ -1325,6 +1605,11 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
         ).rows[0],
         'Alert was not found',
       );
+      assertOrapCapability(
+        actor,
+        state === 'acknowledged' ? 'alerts.acknowledge' : 'alerts.resolve',
+        resourceTarget(before),
+      );
       if (before.state === 'resolved') throw new Error('Resolved alert cannot be transitioned');
       const after = required(
         (
@@ -1361,20 +1646,47 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
     actor: AdminActor,
     operation: (client: TenantTransactionClient) => Promise<T>,
   ): Promise<T> {
-    return withPlatformTransaction(this.pool, { actorId: actor.id }, operation);
+    return withPlatformTransaction(this.pool, { actorId: actor.id }, async (client) => {
+      await assertCurrentOrapAuthorization(client, actor);
+      return operation(client);
+    });
   }
 }
 
-function assertBudgetAdministrator(actor: AdminActor): void {
-  if (actor.role !== 'platform_owner' && actor.role !== 'platform_admin') {
-    throw new Error('AI budget changes require a platform owner or platform admin');
+async function assertCurrentOrapAuthorization(
+  client: TenantTransactionClient,
+  actor: AdminActor,
+): Promise<void> {
+  if (!actor.authorization && actor.role === 'platform_owner') return;
+  if (!actor.authorization) throw new OrapAuthorizationDeniedError('authorization.current');
+  const result = await query<{ id: string }>(
+    client,
+    `SELECT membership.id
+       FROM orap_staff_memberships membership
+       JOIN platform_memberships legacy
+         ON legacy.user_id = membership.user_id
+        AND legacy.active
+        AND legacy.role = membership.identity_kind
+      WHERE membership.id = $1
+        AND membership.user_id = $2
+        AND membership.identity_kind = $3
+        AND membership.status = 'active'
+        AND membership.authorization_version = $4
+      LIMIT 2`,
+    [actor.authorization.membershipId, actor.id, actor.role, actor.authorization.version],
+  );
+  if (result.rows.length !== 1) {
+    throw new OrapAuthorizationDeniedError('authorization.current');
   }
 }
 
-function assertCustomerSessionAdministrator(actor: AdminActor): void {
-  if (actor.role !== 'platform_owner' && actor.role !== 'platform_admin') {
-    throw new Error('Customer session administration requires a platform owner or platform admin');
-  }
+function resourceTarget(value: Record<string, unknown>): OrapResourceTarget {
+  const siteId = value.siteId ?? value.site_id;
+  const tenantId = value.tenantId ?? value.tenant_id;
+  return {
+    ...(typeof siteId === 'string' ? { siteId } : {}),
+    ...(typeof tenantId === 'string' ? { tenantId } : {}),
+  };
 }
 
 function assertBoundedAdministrativeReason(reason: string): void {
@@ -1384,6 +1696,42 @@ function assertBoundedAdministrativeReason(reason: string): void {
       'Administrative session revocation requires a reason between 3 and 500 characters',
     );
   }
+}
+
+function assertStaffAuthorityMutation(actor: AdminActor, reason: string): void {
+  assertPlatformOwnerIdentity(actor);
+  assertRecentStrongOrapStepUp(actor);
+  const normalized = reason.trim();
+  if (normalized.length < 3 || normalized.length > 500) {
+    throw new Error('Staff authority changes require a reason between 3 and 500 characters');
+  }
+}
+
+async function staffAccessAudit(
+  client: TenantTransactionClient,
+  actor: AdminActor,
+  event: {
+    action: string;
+    after: unknown;
+    before: unknown;
+    reason: string;
+    targetUserId: string;
+  },
+): Promise<void> {
+  await client.query(
+    `INSERT INTO staff_access_audits
+       (actor_user_id, target_user_id, action, decision, reason, trace_id, before, after)
+     VALUES ($1, $2, $3, 'allowed', $4, $5, $6::jsonb, $7::jsonb)`,
+    [
+      actor.id,
+      event.targetUserId,
+      event.action,
+      event.reason.trim(),
+      actor.traceId,
+      JSON.stringify(event.before),
+      JSON.stringify(event.after),
+    ],
+  );
 }
 
 async function assertSite(

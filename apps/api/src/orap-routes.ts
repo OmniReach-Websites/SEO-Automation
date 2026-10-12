@@ -1,9 +1,17 @@
+import {
+  assertPlatformOwnerIdentity,
+  assertRecentStrongOrapStepUp,
+  canOrap,
+  type OrapCapabilityKey,
+  type OrapResourceTarget,
+} from '@omnireach/auth';
 import type { AdminActor, CustomerRole } from '@omnireach/tenant';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 
 import { clientNetworkIdentifier } from './client-network.ts';
 import { OrapResourceNotFoundError } from './orap-errors.ts';
+import { assertOrapRoutePolicyRegistry } from './orap-route-policy.ts';
 import { requireSameOrigin } from './request-security.ts';
 
 const reason = z.string().trim().min(3).max(500);
@@ -54,6 +62,7 @@ export interface OrapAdministrationEndpointService {
     actor: AdminActor,
     input: { membershipId: string; reason: string; siteId: string },
   ): Promise<unknown>;
+  disableStaff?(actor: AdminActor, input: { reason: string; userId: string }): Promise<unknown>;
   inviteCustomer(
     actor: AdminActor,
     input: {
@@ -70,9 +79,14 @@ export interface OrapAdministrationEndpointService {
   ): Promise<unknown>;
   listSites(actor: AdminActor): Promise<unknown>;
   listOperations?(actor: AdminActor): Promise<unknown>;
+  listStaff?(actor: AdminActor): Promise<unknown>;
   requestCustomerReset(
     actor: AdminActor,
     input: { networkIdentifier: string; reason: string; siteId: string; userId: string },
+  ): Promise<unknown>;
+  requestStaffReset?(
+    actor: AdminActor,
+    input: { host: string; networkIdentifier: string; reason: string; userId: string },
   ): Promise<unknown>;
   revokeAllCustomerSessions?(
     actor: AdminActor,
@@ -87,6 +101,10 @@ export interface OrapAdministrationEndpointService {
       tenantId: string;
       userId: string;
     },
+  ): Promise<unknown>;
+  revokeStaffSessions?(
+    actor: AdminActor,
+    input: { reason: string; userId: string },
   ): Promise<unknown>;
   replayJob?(actor: AdminActor, input: { jobId: string; reason: string }): Promise<unknown>;
   resolveAlert?(actor: AdminActor, input: { alertId: string; reason: string }): Promise<unknown>;
@@ -184,12 +202,78 @@ export function registerOrapRoutes(
   service: OrapAdministrationEndpointService,
   resolveActor: ResolvePlatformActor,
 ): void {
+  assertOrapRoutePolicyRegistry();
   server.get('/v1/orap/operations', async (request, reply) => {
     const actor = await authorizedActor(request, reply, resolveActor);
     if (!actor) return;
+    if (!authorizedCapability(actor, 'dashboard.view', {}, reply)) return;
     if (!service.listOperations) return reply.code(501).send({ error: 'not_available' });
     return service.listOperations(actor);
   });
+
+  server.get('/v1/orap/staff', async (request, reply) => {
+    const actor = await authorizedActor(request, reply, resolveActor);
+    if (!actor) return;
+    try {
+      assertPlatformOwnerIdentity(actor);
+    } catch {
+      return reply.code(403).send({ error: 'orap_owner_identity_required' });
+    }
+    if (!service.listStaff) return reply.code(501).send({ error: 'not_available' });
+    return service.listStaff(actor);
+  });
+
+  server.post(
+    '/v1/orap/staff/:userId/disable',
+    { preHandler: requireSameOrigin },
+    async (request, reply) => {
+      const actor = await authorizedActor(request, reply, resolveActor);
+      if (!actor) return;
+      const params = parse(z.object({ userId: z.string().uuid() }), request.params, reply);
+      const body = parse(z.object({ reason }), request.body, reply);
+      if (!params || !body) return;
+      if (!authorizedOwnerStepUp(actor, reply)) return;
+      if (!service.disableStaff) return reply.code(501).send({ error: 'not_available' });
+      return service.disableStaff(actor, { ...body, ...params });
+    },
+  );
+
+  server.post(
+    '/v1/orap/staff/:userId/sessions/revoke-all',
+    { preHandler: requireSameOrigin },
+    async (request, reply) => {
+      const actor = await authorizedActor(request, reply, resolveActor);
+      if (!actor) return;
+      const params = parse(z.object({ userId: z.string().uuid() }), request.params, reply);
+      const body = parse(z.object({ reason }), request.body, reply);
+      if (!params || !body) return;
+      if (!authorizedOwnerStepUp(actor, reply)) return;
+      if (!service.revokeStaffSessions) return reply.code(501).send({ error: 'not_available' });
+      return service.revokeStaffSessions(actor, { ...body, ...params });
+    },
+  );
+
+  server.post(
+    '/v1/orap/staff/:userId/reset',
+    { preHandler: requireSameOrigin },
+    async (request, reply) => {
+      const actor = await authorizedActor(request, reply, resolveActor);
+      if (!actor) return;
+      const params = parse(z.object({ userId: z.string().uuid() }), request.params, reply);
+      const body = parse(z.object({ reason }), request.body, reply);
+      if (!params || !body) return;
+      if (!authorizedOwnerStepUp(actor, reply)) return;
+      if (!service.requestStaffReset) return reply.code(501).send({ error: 'not_available' });
+      return reply.code(202).send(
+        await service.requestStaffReset(actor, {
+          ...body,
+          ...params,
+          host: request.hostname,
+          networkIdentifier: clientNetworkIdentifier(request.ip),
+        }),
+      );
+    },
+  );
 
   server.post(
     '/v1/orap/alerts/:alertId/acknowledge',
@@ -201,6 +285,7 @@ export function registerOrapRoutes(
       const params = parse(z.object({ alertId: z.string().uuid() }), request.params, reply);
       const body = parse(z.object({ reason }), request.body, reply);
       if (!params || !body) return;
+      if (!authorizedCapability(actor, 'alerts.acknowledge', {}, reply)) return;
       return service.acknowledgeAlert(actor, { ...params, ...body });
     },
   );
@@ -215,6 +300,7 @@ export function registerOrapRoutes(
       const params = parse(z.object({ jobId: z.string().uuid() }), request.params, reply);
       const body = parse(z.object({ reason }), request.body, reply);
       if (!params || !body) return;
+      if (!authorizedCapability(actor, 'automation.jobs.cancel', {}, reply)) return;
       return service.cancelJob(actor, { ...params, ...body });
     },
   );
@@ -229,6 +315,7 @@ export function registerOrapRoutes(
       const params = parse(z.object({ jobId: z.string().uuid() }), request.params, reply);
       const body = parse(z.object({ reason }), request.body, reply);
       if (!params || !body) return;
+      if (!authorizedCapability(actor, 'automation.jobs.replay', {}, reply)) return;
       return reply.code(202).send(await service.replayJob(actor, { ...params, ...body }));
     },
   );
@@ -243,6 +330,7 @@ export function registerOrapRoutes(
       const params = parse(z.object({ alertId: z.string().uuid() }), request.params, reply);
       const body = parse(z.object({ reason }), request.body, reply);
       if (!params || !body) return;
+      if (!authorizedCapability(actor, 'alerts.resolve', {}, reply)) return;
       return service.resolveAlert(actor, { ...params, ...body });
     },
   );
@@ -284,12 +372,14 @@ export function registerOrapRoutes(
       reply,
     );
     if (!input) return;
+    if (!authorizedCapability(actor, 'plans.edit', {}, reply)) return;
     return reply.code(201).send(await service.createPlan(actor, input));
   });
 
   server.get('/v1/orap/sites', async (request, reply) => {
     const actor = await authorizedActor(request, reply, resolveActor);
     if (!actor) return;
+    if (!authorizedCapability(actor, 'websites.list', {}, reply)) return;
     return service.listSites(actor);
   });
 
@@ -311,6 +401,8 @@ export function registerOrapRoutes(
       reply,
     );
     if (!input) return;
+    if (!authorizedCapability(actor, 'customers.create', {}, reply)) return;
+    if (!authorizedCapability(actor, 'websites.create', {}, reply)) return;
     return reply.code(201).send(await service.createTenantAndSite(actor, input));
   });
 
@@ -332,6 +424,9 @@ export function registerOrapRoutes(
         reply,
       );
       if (!params || !body) return;
+      if (!authorizedCapability(actor, 'customers.users.manage', { ...params, ...body }, reply)) {
+        return;
+      }
       const result = await service.inviteCustomer(actor, { ...body, siteId: params.siteId });
       return reply.code(202).send(result);
     },
@@ -350,6 +445,7 @@ export function registerOrapRoutes(
       );
       const body = parse(z.object({ reason, role: customerRole }), request.body, reply);
       if (!params || !body) return;
+      if (!authorizedCapability(actor, 'customers.users.manage', params, reply)) return;
       return service.changeCustomerRole(actor, { ...params, ...body });
     },
   );
@@ -367,6 +463,7 @@ export function registerOrapRoutes(
       );
       const body = parse(z.object({ reason }), request.body, reply);
       if (!params || !body) return;
+      if (!authorizedCapability(actor, 'customers.users.manage', params, reply)) return;
       return service.disableCustomer(actor, { ...params, ...body });
     },
   );
@@ -384,6 +481,7 @@ export function registerOrapRoutes(
       );
       const body = parse(z.object({ reason }), request.body, reply);
       if (!params || !body) return;
+      if (!authorizedCapability(actor, 'security.customer_access.manage', params, reply)) return;
       return reply.code(202).send(
         await service.requestCustomerReset(actor, {
           ...params,
@@ -397,7 +495,7 @@ export function registerOrapRoutes(
   server.get(
     '/v1/orap/tenants/:tenantId/sites/:siteId/users/:userId/sessions',
     async (request, reply) => {
-      const actor = await authorizedCustomerSessionAdministrator(request, reply, resolveActor);
+      const actor = await authorizedActor(request, reply, resolveActor);
       if (!actor) return;
       if (!service.listCustomerSessions) {
         return reply.code(501).send({ error: 'not_available' });
@@ -412,6 +510,7 @@ export function registerOrapRoutes(
         reply,
       );
       if (!params) return;
+      if (!authorizedCapability(actor, 'security.sessions.view', params, reply)) return;
       return respondToOrapOperation(reply, service.listCustomerSessions(actor, params));
     },
   );
@@ -420,7 +519,7 @@ export function registerOrapRoutes(
     '/v1/orap/tenants/:tenantId/sites/:siteId/users/:userId/sessions/:sessionId/revoke',
     { preHandler: requireSameOrigin },
     async (request, reply) => {
-      const actor = await authorizedCustomerSessionAdministrator(request, reply, resolveActor);
+      const actor = await authorizedActor(request, reply, resolveActor);
       if (!actor) return;
       if (!service.revokeCustomerSession) {
         return reply.code(501).send({ error: 'not_available' });
@@ -437,6 +536,7 @@ export function registerOrapRoutes(
       );
       const body = parse(z.object({ reason }), request.body, reply);
       if (!params || !body) return;
+      if (!authorizedCapability(actor, 'security.sessions.revoke', params, reply)) return;
       return respondToOrapOperation(
         reply,
         service.revokeCustomerSession(actor, { ...params, ...body }),
@@ -448,7 +548,7 @@ export function registerOrapRoutes(
     '/v1/orap/tenants/:tenantId/sites/:siteId/users/:userId/sessions/revoke-all',
     { preHandler: requireSameOrigin },
     async (request, reply) => {
-      const actor = await authorizedCustomerSessionAdministrator(request, reply, resolveActor);
+      const actor = await authorizedActor(request, reply, resolveActor);
       if (!actor) return;
       if (!service.revokeAllCustomerSessions) {
         return reply.code(501).send({ error: 'not_available' });
@@ -464,6 +564,7 @@ export function registerOrapRoutes(
       );
       const body = parse(z.object({ reason }), request.body, reply);
       if (!params || !body) return;
+      if (!authorizedCapability(actor, 'security.sessions.revoke', params, reply)) return;
       return respondToOrapOperation(
         reply,
         service.revokeAllCustomerSessions(actor, { ...params, ...body }),
@@ -484,6 +585,7 @@ export function registerOrapRoutes(
         reply,
       );
       if (!params || !body) return;
+      if (!authorizedCapability(actor, 'subscriptions.edit', { ...params, ...body }, reply)) return;
       return service.assignPlan(actor, { ...params, ...body });
     },
   );
@@ -511,6 +613,9 @@ export function registerOrapRoutes(
         reply,
       );
       if (!params || !body) return;
+      if (!authorizedCapability(actor, 'entitlements.override', { ...params, ...body }, reply)) {
+        return;
+      }
       return service.setFeatureOverride(actor, { ...params, ...body });
     },
   );
@@ -535,6 +640,16 @@ export function registerOrapRoutes(
         reply,
       );
       if (!params || !body) return;
+      if (
+        !authorizedCapability(
+          actor,
+          'automation.emergency_controls.manage',
+          { ...params, ...body },
+          reply,
+        )
+      ) {
+        return;
+      }
       return service.setEmergencyControls(actor, { ...params, ...body });
     },
   );
@@ -566,6 +681,9 @@ export function registerOrapRoutes(
         reply,
       );
       if (!params || !body) return;
+      if (!authorizedCapability(actor, 'contact_forms.manage', { ...params, ...body }, reply)) {
+        return;
+      }
       return service.setContactForm(actor, { ...params, ...body });
     },
   );
@@ -576,7 +694,6 @@ export function registerOrapRoutes(
     async (request, reply) => {
       const actor = await authorizedActor(request, reply, resolveActor);
       if (!actor) return;
-      if (!canEditBudgets(actor)) return reply.code(403).send({ error: 'forbidden' });
       const params = parse(
         z.object({ siteId: z.string().uuid(), submissionId: z.string().uuid() }),
         request.params,
@@ -588,6 +705,16 @@ export function registerOrapRoutes(
         reply,
       );
       if (!params || !body) return;
+      if (
+        !authorizedCapability(
+          actor,
+          'contact_forms.submissions.hold',
+          { ...params, ...body },
+          reply,
+        )
+      ) {
+        return;
+      }
       return service.setContactSubmissionHold(actor, { ...params, ...body });
     },
   );
@@ -617,6 +744,9 @@ export function registerOrapRoutes(
         reply,
       );
       if (!params || !body) return;
+      if (!authorizedCapability(actor, 'entitlements.override', { ...params, ...body }, reply)) {
+        return;
+      }
       return service.setQuotaOverride(actor, { ...params, ...body });
     },
   );
@@ -639,6 +769,7 @@ export function registerOrapRoutes(
         reply,
       );
       if (!params || !body) return;
+      if (!authorizedCapability(actor, 'subscriptions.edit', { ...params, ...body }, reply)) return;
       const { graceEndsAt, ...subscription } = body;
       return service.setSubscriptionState(actor, {
         ...params,
@@ -654,7 +785,6 @@ export function registerOrapRoutes(
     async (request, reply) => {
       const actor = await authorizedActor(request, reply, resolveActor);
       if (!actor) return;
-      if (!canEditBudgets(actor)) return reply.code(403).send({ error: 'forbidden' });
       const params = parse(z.object({ siteId: z.string().uuid() }), request.params, reply);
       const body = parse(
         z.object({
@@ -667,6 +797,9 @@ export function registerOrapRoutes(
         reply,
       );
       if (!params || !body) return;
+      if (!authorizedCapability(actor, 'ai_budget.site.edit', { ...params, ...body }, reply)) {
+        return;
+      }
       return service.setSiteAiBudget(actor, { ...params, ...body });
     },
   );
@@ -677,7 +810,6 @@ export function registerOrapRoutes(
     async (request, reply) => {
       const actor = await authorizedActor(request, reply, resolveActor);
       if (!actor) return;
-      if (!canEditBudgets(actor)) return reply.code(403).send({ error: 'forbidden' });
       const body = parse(
         z.object({
           capUsdMicros: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
@@ -688,13 +820,10 @@ export function registerOrapRoutes(
         reply,
       );
       if (!body) return;
+      if (!authorizedCapability(actor, 'ai_budget.platform.edit', {}, reply)) return;
       return service.setPlatformAiBudget(actor, body);
     },
   );
-}
-
-function canEditBudgets(actor: AdminActor): boolean {
-  return actor.role === 'platform_owner' || actor.role === 'platform_admin';
 }
 
 async function authorizedActor(
@@ -710,17 +839,30 @@ async function authorizedActor(
   return actor;
 }
 
-async function authorizedCustomerSessionAdministrator(
-  request: FastifyRequest,
+function authorizedCapability(
+  actor: AdminActor,
+  capabilityKey: OrapCapabilityKey,
+  target: OrapResourceTarget,
   reply: FastifyReply,
-  resolveActor: ResolvePlatformActor,
-): Promise<AdminActor | undefined> {
-  const actor = await resolveActor(request);
-  if (!actor || (actor.role !== 'platform_owner' && actor.role !== 'platform_admin')) {
-    await reply.code(403).send({ error: 'forbidden' });
-    return undefined;
+): boolean {
+  if (canOrap(actor, capabilityKey, target)) return true;
+  void reply.code(403).send({ error: 'orap_authorization_denied' });
+  return false;
+}
+
+function authorizedOwnerStepUp(actor: AdminActor, reply: FastifyReply): boolean {
+  try {
+    assertPlatformOwnerIdentity(actor);
+    assertRecentStrongOrapStepUp(actor);
+    return true;
+  } catch (error) {
+    const code =
+      error instanceof Error && 'code' in error && typeof error.code === 'string'
+        ? error.code
+        : 'orap_owner_identity_required';
+    void reply.code(403).send({ error: code });
+    return false;
   }
-  return actor;
 }
 
 async function respondToOrapOperation(

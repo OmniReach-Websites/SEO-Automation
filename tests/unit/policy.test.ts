@@ -121,7 +121,24 @@ describe('effective site policy', () => {
           setSubscriptionState: vi.fn(),
         }),
     });
-    const actor = { id: 'staff-a', role: 'staff' as const, traceId: 'trace-a' };
+    const actor = {
+      authorization: {
+        grants: [
+          {
+            assignmentId: 'assignment-a',
+            permissionKeys: ['entitlements.override'],
+            portfolio: false,
+            siteIds: ['site-a'],
+            tenantIds: [],
+          },
+        ],
+        membershipId: 'membership-a',
+        version: 1,
+      },
+      id: 'staff-a',
+      role: 'staff' as const,
+      traceId: 'trace-a',
+    };
     await service.setFeatureOverride(actor, {
       cancelQueuedWork: true,
       enabled: true,
