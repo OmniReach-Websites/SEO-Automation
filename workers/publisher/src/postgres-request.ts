@@ -69,17 +69,15 @@ export class PostgresPublicationRequestRepository {
             [input.tenantId, input.siteId, request.requested_by],
           )
         ).rows;
-        if (authorization.length !== 1) {
-          throw new Error('Publication actor is no longer authorized');
-        }
+        const actor = authorization.length === 1 ? authorization[0] : undefined;
         return {
           actorId: request.requested_by,
           contentRevision: request.content_revision,
-          editorPublishGrant: authorization[0]?.editor_publish_grant ?? false,
+          editorPublishGrant: actor?.editor_publish_grant ?? false,
           idempotencyKey: request.idempotency_key,
           origin: request.origin,
           reason: request.reason,
-          role: authorization[0]?.role ?? '',
+          role: actor?.role ?? '',
           siteId: input.siteId,
           tenantId: input.tenantId,
           traceId: input.traceId,

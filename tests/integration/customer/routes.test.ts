@@ -269,7 +269,7 @@ describe('customer content routes', () => {
     const denied = await server.inject({
       headers: { host: 'admin.alpha.test', origin: 'https://admin.alpha.test' },
       method: 'POST',
-      payload: { reason: 'Approved draft' },
+      payload: { expectedVersion: 2, reason: 'Approved draft' },
       url: `/v1/customer/drafts/${draftId}/publish`,
     });
     expect(denied.statusCode).toBe(403);
@@ -288,7 +288,7 @@ describe('customer content routes', () => {
     const missingKey = await grantedServer.inject({
       headers: { host: 'admin.alpha.test', origin: 'https://admin.alpha.test' },
       method: 'POST',
-      payload: { reason: 'Approved draft' },
+      payload: { expectedVersion: 2, reason: 'Approved draft' },
       url: `/v1/customer/drafts/${draftId}/publish`,
     });
     expect(missingKey.statusCode).toBe(400);
@@ -299,10 +299,14 @@ describe('customer content routes', () => {
         origin: 'https://admin.alpha.test',
       },
       method: 'POST',
-      payload: { reason: 'Approved draft' },
+      payload: { expectedVersion: 2, reason: 'Approved draft' },
       url: `/v1/customer/drafts/${draftId}/publish`,
     });
     expect(accepted.statusCode).toBe(202);
+    expect(content.publish).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ draftId, expectedVersion: 2 }),
+    );
   });
 
   it('fails closed when no host-scoped session resolves', async () => {

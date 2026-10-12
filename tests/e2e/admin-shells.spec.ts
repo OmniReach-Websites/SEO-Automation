@@ -54,6 +54,7 @@ test('served ORAP and customer shells remain accessible and host isolated', asyn
           origin: 'human',
           publicationPending: false,
           publicationStatus: 'failed',
+          restoreEligible: false,
           revision: 2,
         },
         {
@@ -63,6 +64,7 @@ test('served ORAP and customer shells remain accessible and host isolated', asyn
           origin: 'human',
           publicationPending: false,
           publicationStatus: 'published',
+          restoreEligible: true,
           revision: 1,
         },
       ],
@@ -188,6 +190,9 @@ test('served ORAP and customer shells remain accessible and host isolated', asyn
     await expect(
       customerPage.locator('form[action="/editor/publish"] input[name="idempotencyKey"]'),
     ).toHaveValue(/^[0-9a-f-]{36}$/u);
+    await expect(
+      customerPage.locator('form[action="/editor/publish"] input[name="expectedVersion"]'),
+    ).toHaveValue('2');
 
     await customerPage.getByRole('link', { name: 'History' }).click();
     await expect(customerPage.getByRole('heading', { level: 1 })).toHaveText('Revision history');

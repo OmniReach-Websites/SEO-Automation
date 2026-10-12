@@ -9,6 +9,7 @@ export interface RevisionHistoryEntry {
   origin: RevisionOrigin;
   publicationPending: boolean;
   publicationStatus: PublicationStatus;
+  restoreEligible: boolean;
   restoredFrom?: number;
   summary: string;
 }
@@ -32,11 +33,11 @@ export function renderRevisionHistory(
         ? `<input type="hidden" name="idempotencyKey" value="${escapeHtml(idempotencyKey)}">`
         : '';
       const restore =
-        options.canRestore && entry.publicationStatus === 'published' && idempotencyKey
+        options.canRestore && entry.restoreEligible && idempotencyKey
           ? `<form method="post" action="/history/${entry.number}/restore">${csrfToken}${idempotency}<label for="restore-reason-${entry.number}">Restore reason</label><input id="restore-reason-${entry.number}" name="reason" minlength="3" maxlength="500" required><button type="submit">Restore revision ${entry.number}</button></form>`
           : `<span>${
-              options.canRestore && entry.publicationStatus !== 'published'
-                ? 'Only published revisions can be restored'
+              options.canRestore && !entry.restoreEligible
+                ? 'Only published revisions and the authoritative initial baseline can be restored'
                 : 'Restore unavailable'
             }</span>`;
       const source = entry.restoredFrom
@@ -47,7 +48,7 @@ export function renderRevisionHistory(
     .join('');
 
   const body = rows || '<tr><td colspan="7">No revisions are available.</td></tr>';
-  return `<section aria-labelledby="revision-history-heading"><h2 id="revision-history-heading">Revision history</h2><p>Restoring creates a new validated revision. After it activates, starting the next draft archives the prior draft and copies the active content without erasing revision, draft, or failed-publication history. Only successfully published revisions can be restored.</p><table><caption>Content revisions, newest first</caption><thead><tr><th scope="col">Revision</th><th scope="col">Created</th><th scope="col">Changed by</th><th scope="col">Origin</th><th scope="col">Publication state</th><th scope="col">Summary</th><th scope="col">Action</th></tr></thead><tbody>${body}</tbody></table></section>`;
+  return `<section aria-labelledby="revision-history-heading"><h2 id="revision-history-heading">Revision history</h2><p>Restoring creates a new validated revision. After it activates, starting the next draft archives the prior draft and copies the active content without erasing revision, draft, or failed-publication history. Successfully published revisions and the authoritative initial baseline can be restored.</p><table><caption>Content revisions, newest first</caption><thead><tr><th scope="col">Revision</th><th scope="col">Created</th><th scope="col">Changed by</th><th scope="col">Origin</th><th scope="col">Publication state</th><th scope="col">Summary</th><th scope="col">Action</th></tr></thead><tbody>${body}</tbody></table></section>`;
 }
 
 function publicationLabel(entry: RevisionHistoryEntry): string {

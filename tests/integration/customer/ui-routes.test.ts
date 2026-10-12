@@ -57,6 +57,7 @@ function service(): CustomerEndpointService & {
         origin: 'human',
         publicationPending: false,
         publicationStatus: 'published',
+        restoreEligible: true,
         revision: 3,
       },
     ]),
@@ -282,6 +283,7 @@ describe('customer editor and history pages', () => {
       method: 'POST',
       payload: new URLSearchParams({
         draftId,
+        expectedVersion: '2',
         idempotencyKey: publishIdempotencyKey,
         reason: 'Approved customer update',
       }).toString(),
@@ -291,6 +293,7 @@ describe('customer editor and history pages', () => {
     expect(published.headers.location).toBe('/history?notice=publication-queued');
     expect(content.publish).toHaveBeenCalledWith(owner, {
       draftId,
+      expectedVersion: 2,
       idempotencyKey: publishIdempotencyKey,
       reason: 'Approved customer update',
     });
@@ -300,6 +303,7 @@ describe('customer editor and history pages', () => {
       method: 'POST',
       payload: new URLSearchParams({
         draftId,
+        expectedVersion: '2',
         idempotencyKey: publishIdempotencyKey,
         reason: 'Approved customer update',
       }).toString(),
@@ -371,6 +375,7 @@ describe('customer editor and history pages', () => {
         origin: 'human',
         publicationPending: true,
         publicationStatus: 'building',
+        restoreEligible: false,
         revision: 4,
       },
     ]);
@@ -418,6 +423,7 @@ describe('customer editor and history pages', () => {
         origin: 'human',
         publicationPending: false,
         publicationStatus: 'failed',
+        restoreEligible: false,
         revision: 4,
       },
     ]);
@@ -504,6 +510,7 @@ describe('customer editor and history pages', () => {
       method: 'POST',
       payload: new URLSearchParams({
         draftId,
+        expectedVersion: '2',
         idempotencyKey: '90000000-0000-4000-8000-000000000001',
         reason: 'Approved publication',
       }).toString(),
@@ -513,6 +520,24 @@ describe('customer editor and history pages', () => {
     expect(publish.headers['content-type']).toContain('text/html');
     expect(publish.body).toContain('Another publication is already in progress');
     expect(publish.body).not.toContain('private');
+
+    vi.mocked(content.publish).mockRejectedValue(
+      new RevisionConflictError('private stale version details'),
+    );
+    const stalePublish = await server.inject({
+      headers,
+      method: 'POST',
+      payload: new URLSearchParams({
+        draftId,
+        expectedVersion: '2',
+        idempotencyKey: '90000000-0000-4000-8000-000000000003',
+        reason: 'Approved stale publication',
+      }).toString(),
+      url: '/editor/publish',
+    });
+    expect(stalePublish.statusCode).toBe(409);
+    expect(stalePublish.body).toContain('draft changed after the editor was loaded');
+    expect(stalePublish.body).not.toContain('private');
 
     const restore = await server.inject({
       headers,
@@ -545,6 +570,7 @@ describe('customer editor and history pages', () => {
         origin: 'human',
         publicationPending: false,
         publicationStatus: 'published',
+        restoreEligible: true,
         revision,
       },
     ];
@@ -580,6 +606,7 @@ describe('customer editor and history pages', () => {
         origin: 'human',
         publicationPending: true,
         publicationStatus: 'queued',
+        restoreEligible: false,
         revision,
       });
       return { contentRevision: revision, status: 'queued' };
@@ -598,6 +625,7 @@ describe('customer editor and history pages', () => {
       method: 'POST',
       payload: new URLSearchParams({
         draftId: activeDraftId,
+        expectedVersion: '2',
         idempotencyKey: firstKey,
         reason: 'First publication',
       }).toString(),
@@ -616,6 +644,7 @@ describe('customer editor and history pages', () => {
       active: true,
       publicationPending: false,
       publicationStatus: 'published',
+      restoreEligible: true,
     };
     const staleEditor = await server.inject({ headers: authenticatedHeaders, url: '/editor' });
     expect(staleEditor.body).toContain('Start from latest published revision');
@@ -637,6 +666,7 @@ describe('customer editor and history pages', () => {
       method: 'POST',
       payload: new URLSearchParams({
         draftId: activeDraftId,
+        expectedVersion: '2',
         idempotencyKey: secondKey,
         reason: 'Second publication',
       }).toString(),
@@ -663,6 +693,7 @@ describe('customer editor and history pages', () => {
         origin: 'human',
         publicationPending: false,
         publicationStatus: 'published',
+        restoreEligible: true,
         revision,
       },
     ];
@@ -694,6 +725,7 @@ describe('customer editor and history pages', () => {
         origin: 'restore',
         publicationPending: true,
         publicationStatus: 'queued',
+        restoreEligible: false,
         revision,
       });
       return { contentRevision: revision, status: 'queued' };
@@ -723,6 +755,7 @@ describe('customer editor and history pages', () => {
       active: true,
       publicationPending: false,
       publicationStatus: 'published',
+      restoreEligible: true,
     };
     current = false;
     const staleEditor = await server.inject({ headers: authenticatedHeaders, url: '/editor' });
@@ -745,6 +778,7 @@ describe('customer editor and history pages', () => {
       method: 'POST',
       payload: new URLSearchParams({
         draftId: activeDraftId,
+        expectedVersion: '2',
         idempotencyKey: publishKey,
         reason: 'Publish edits after restore',
       }).toString(),
@@ -798,6 +832,7 @@ describe('customer editor and history pages', () => {
       method: 'POST',
       payload: new URLSearchParams({
         draftId,
+        expectedVersion: '2',
         idempotencyKey: '90000000-0000-4000-8000-000000000001',
         reason: 'Attempted publication',
       }).toString(),

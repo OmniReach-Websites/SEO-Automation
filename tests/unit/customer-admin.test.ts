@@ -125,6 +125,7 @@ describe('customer dashboard and editor', () => {
         origin: 'restore' as const,
         publicationPending: false,
         publicationStatus: 'published' as const,
+        restoreEligible: true,
         restoredFrom: 1,
         summary: 'Restored homepage copy',
       },
@@ -158,6 +159,7 @@ describe('customer dashboard and editor', () => {
           origin: 'customer',
           publicationPending: false,
           publicationStatus: 'failed',
+          restoreEligible: false,
           summary: 'Publication failed; live content unchanged',
         },
         {
@@ -168,6 +170,7 @@ describe('customer dashboard and editor', () => {
           origin: 'customer',
           publicationPending: true,
           publicationStatus: 'building',
+          restoreEligible: false,
           summary: 'Publication build in progress',
         },
       ],
@@ -175,7 +178,7 @@ describe('customer dashboard and editor', () => {
     );
     expect(html).toContain('Failed');
     expect(html).toContain('Building');
-    expect(html).toContain('Only published revisions can be restored');
+    expect(html).toContain('authoritative initial baseline');
     expect(html).not.toContain('action="/history/4/restore"');
     expect(html).not.toContain('action="/history/3/restore"');
   });
