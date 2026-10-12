@@ -15,7 +15,11 @@ const context = {
 };
 const draftId = '80000000-0000-4000-8000-000000000001';
 
-function repository(field: { ai_mode: 'auto' | 'disabled' | 'suggestion'; protected: boolean }) {
+function repository(field: {
+  ai_mode: 'auto' | 'disabled' | 'suggestion';
+  editable_by?: string[];
+  protected: boolean;
+}) {
   const query = vi.fn(async (text: string, values?: unknown[]) => {
     void values;
     if (text.includes('WITH latest_feature')) return { rows: [allowedPolicy()] };
@@ -36,6 +40,7 @@ function repository(field: { ai_mode: 'auto' | 'disabled' | 'suggestion'; protec
         rows: [
           {
             ...field,
+            editable_by: field.editable_by ?? ['customer_owner'],
             field_type: 'text',
             stable_id: 'home.heading',
           },
@@ -159,6 +164,130 @@ describe('PostgreSQL content repository', () => {
     expect(stale.query.mock.calls.some(([text]) => text.includes('UPDATE content_drafts'))).toBe(
       false,
     );
+  });
+
+  it('enforces persisted field editing roles for direct repository updates', async () => {
+    const editorContext = { ...context, role: 'customer_editor' };
+    const denied = repository({
+      ai_mode: 'disabled',
+      editable_by: ['customer_owner'],
+      protected: false,
+    });
+    await expect(
+      denied.content.updateDraftField(editorContext, {
+        draftId,
+        expectedVersion: 2,
+        fieldId: 'home.heading',
+        value: 'Editor attempt',
+      }),
+    ).rejects.toBeInstanceOf(ProtectedFieldError);
+    expect(denied.query.mock.calls.some(([text]) => text.includes('UPDATE content_drafts'))).toBe(
+      false,
+    );
+
+    const allowed = repository({
+      ai_mode: 'disabled',
+      editable_by: ['customer_owner'],
+      protected: false,
+    });
+    await expect(
+      allowed.content.updateDraftField(context, {
+        draftId,
+        expectedVersion: 2,
+        fieldId: 'home.heading',
+        value: 'Owner update',
+      }),
+    ).resolves.toMatchObject({ id: draftId, version: 3 });
+    expect(allowed.query.mock.calls.some(([text]) => text.includes('UPDATE content_drafts'))).toBe(
+      true,
+    );
+  });
+
+  it('validates and commits a multi-field patch with one version compare-and-swap', async () => {
+    const query = vi.fn(async (text: string, values?: unknown[]) => {
+      if (text.includes('WITH latest_feature')) return { rows: [allowedPolicy()] };
+      if (text.includes('FROM content_drafts')) {
+        return {
+          rows: [
+            {
+              base_revision: 1,
+              content: { 'home.heading': 'Before', 'home.link': 'https://before.test' },
+              id: draftId,
+              version: 2,
+            },
+          ],
+        };
+      }
+      if (text.includes('FROM content_fields')) {
+        return {
+          rows: [
+            {
+              ai_mode: 'auto',
+              editable_by: ['customer_owner', 'customer_editor'],
+              field_type: 'text',
+              protected: false,
+              stable_id: 'home.heading',
+            },
+            {
+              ai_mode: 'disabled',
+              editable_by: ['customer_owner', 'customer_editor'],
+              field_type: 'link',
+              protected: false,
+              stable_id: 'home.link',
+            },
+          ],
+        };
+      }
+      if (text.includes('UPDATE content_drafts')) {
+        return {
+          rows: [
+            {
+              base_revision: 1,
+              content: JSON.parse(String(values?.[0])) as Record<string, unknown>,
+              id: draftId,
+              version: Number(values?.[1]),
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+    const content = new PostgresContentRepository({
+      connect: vi.fn(async () => ({ query, release: vi.fn() })),
+    });
+
+    await expect(
+      content.updateDraftFields(context, {
+        draftId,
+        expectedVersion: 2,
+        patch: {
+          'home.heading': 'After',
+          'home.link': 'https://after.test',
+        },
+      }),
+    ).resolves.toMatchObject({
+      content: { 'home.heading': 'After', 'home.link': 'https://after.test' },
+      version: 3,
+    });
+    expect(
+      query.mock.calls.filter(([text]) => text.includes('UPDATE content_drafts')),
+    ).toHaveLength(1);
+    const update = query.mock.calls.find(([text]) => text.includes('UPDATE content_drafts'));
+    expect(update?.[1]?.[5]).toBe(2);
+
+    query.mockClear();
+    await expect(
+      content.updateDraftFields(context, {
+        draftId,
+        expectedVersion: 2,
+        patch: {
+          'home.heading': 'Would otherwise be valid',
+          'home.link': 'javascript:alert(1)',
+        },
+      }),
+    ).rejects.toThrow(/unsafe URL/u);
+    expect(query.mock.calls.some(([text]) => text.includes('UPDATE content_drafts'))).toBe(false);
+    expect(query.mock.calls.at(-1)?.[0]).toBe('ROLLBACK');
   });
 });
 

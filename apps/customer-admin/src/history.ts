@@ -12,13 +12,24 @@ export interface RevisionHistoryEntry {
 
 export function renderRevisionHistory(
   entries: readonly RevisionHistoryEntry[],
-  options: { canRestore: boolean; csrfToken: string },
+  options: {
+    canRestore: boolean;
+    csrfToken?: string;
+    restoreIdempotencyKeys?: Readonly<Record<number, string>>;
+  },
 ): string {
   const rows = [...entries]
     .sort((left, right) => right.number - left.number)
     .map((entry) => {
+      const csrfToken = options.csrfToken
+        ? `<input type="hidden" name="csrfToken" value="${escapeHtml(options.csrfToken)}">`
+        : '';
+      const idempotencyKey = options.restoreIdempotencyKeys?.[entry.number];
+      const idempotency = idempotencyKey
+        ? `<input type="hidden" name="idempotencyKey" value="${escapeHtml(idempotencyKey)}">`
+        : '';
       const restore = options.canRestore
-        ? `<form method="post" action="/history/${entry.number}/restore"><input type="hidden" name="csrfToken" value="${escapeHtml(options.csrfToken)}"><button type="submit">Restore revision ${entry.number}</button></form>`
+        ? `<form method="post" action="/history/${entry.number}/restore">${csrfToken}${idempotency}<label for="restore-reason-${entry.number}">Restore reason</label><input id="restore-reason-${entry.number}" name="reason" minlength="3" maxlength="500" required><button type="submit">Restore revision ${entry.number}</button></form>`
         : '<span>Restore unavailable</span>';
       const source = entry.restoredFrom
         ? `${entry.origin}; restored from revision ${entry.restoredFrom}`

@@ -484,15 +484,16 @@ model ContentPage {
 }
 
 model ContentField {
-  id        String   @default(uuid()) @db.Uuid
-  tenantId  String   @map("tenant_id") @db.Uuid
-  siteId    String   @map("site_id") @db.Uuid
-  pageId    String   @map("page_id") @db.Uuid
-  stableId  String   @map("stable_id") @db.VarChar(100)
-  fieldType String   @map("field_type") @db.VarChar(40)
-  protected Boolean  @default(false)
-  aiMode    String   @map("ai_mode") @db.VarChar(20)
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  id         String   @default(uuid()) @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  siteId     String   @map("site_id") @db.Uuid
+  pageId     String   @map("page_id") @db.Uuid
+  stableId   String   @map("stable_id") @db.VarChar(100)
+  fieldType  String   @map("field_type") @db.VarChar(40)
+  protected  Boolean  @default(false)
+  aiMode     String   @map("ai_mode") @db.VarChar(20)
+  editableBy String[] @default(["customer_owner"]) @map("editable_by") @db.VarChar(40)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
   @@id([id])
   @@unique([tenantId, siteId, stableId])

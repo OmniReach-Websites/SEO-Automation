@@ -34,10 +34,41 @@ test('served ORAP and customer shells remain accessible and host isolated', asyn
         publication: { status: 'not_published' },
         site: { id: customer.siteId, name: 'Fictional Alpha', status: 'active' },
       }),
-      drafts: async () => [],
+      drafts: async () => [
+        {
+          baseRevision: 1,
+          content: { 'home.heading': 'Welcome to Fictional Alpha' },
+          id: '80000000-0000-4000-8000-000000000001',
+          version: 2,
+        },
+      ],
+      draftUpdate: async () => ({}),
       fieldUpdate: async () => ({}),
-      history: async () => [],
-      pages: async () => [],
+      history: async () => [
+        {
+          createdAt: new Date('2026-10-10T20:00:00.000Z'),
+          createdBy: customer.userId,
+          origin: 'human',
+          revision: 1,
+        },
+      ],
+      pages: async () => [
+        {
+          fields: [
+            {
+              aiMode: 'auto',
+              editableBy: ['customer_owner', 'customer_editor'],
+              id: 'home.heading',
+              protected: false,
+              type: 'text',
+            },
+          ],
+          id: '30000000-0000-4000-8000-000000000001',
+          route: '/',
+          schemaVersion: 1,
+          stableId: 'home',
+        },
+      ],
       preview: async () => ({ previewToken: 'preview' }),
       previewFile: async () => ({ body: new Uint8Array(), contentType: 'text/html' }),
       publish: async () => ({}),
@@ -133,6 +164,24 @@ test('served ORAP and customer shells remain accessible and host isolated', asyn
     await expect(customerPage.getByText('Fictional Alpha', { exact: true })).toBeVisible();
     await expect(customerPage.locator('meta[name="robots"]')).toHaveAttribute('content', 'noindex');
     await expect(customerPage.getByRole('link', { name: 'Skip to content' })).toBeVisible();
+
+    await customerPage.getByRole('link', { name: 'Editor' }).click();
+    await expect(customerPage.getByRole('heading', { level: 1 })).toHaveText('Content editor');
+    await expect(customerPage.getByLabel('Text')).toHaveValue('Welcome to Fictional Alpha');
+    await expect(customerPage.getByRole('button', { name: 'Save draft' })).toBeVisible();
+    await expect(customerPage.getByRole('button', { name: 'Preview draft' })).toBeVisible();
+    await expect(customerPage.getByRole('button', { name: 'Publish draft' })).toBeVisible();
+    await expect(
+      customerPage.locator('form[action="/editor/publish"] input[name="idempotencyKey"]'),
+    ).toHaveValue(/^[0-9a-f-]{36}$/u);
+
+    await customerPage.getByRole('link', { name: 'History' }).click();
+    await expect(customerPage.getByRole('heading', { level: 1 })).toHaveText('Revision history');
+    await expect(customerPage.getByRole('table')).toContainText('Published content revision 1');
+    await expect(customerPage.getByRole('button', { name: 'Restore revision 1' })).toBeVisible();
+    await expect(
+      customerPage.locator('form[action="/history/1/restore"] input[name="idempotencyKey"]'),
+    ).toHaveValue(/^[0-9a-f-]{36}$/u);
 
     const customerOrap = await customerPage.goto(`${customerBase}/orap/sites`);
     expect(customerOrap?.status()).toBe(403);

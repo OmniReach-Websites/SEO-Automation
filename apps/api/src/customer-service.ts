@@ -250,6 +250,13 @@ export class PostgresCustomerService implements CustomerEndpointService {
     return this.content.updateDraftField(actorContext(principal), input);
   }
 
+  draftUpdate(
+    principal: CustomerPrincipal,
+    input: { draftId: string; expectedVersion: number; patch: Record<string, unknown> },
+  ): Promise<unknown> {
+    return this.content.updateDraftFields(actorContext(principal), input);
+  }
+
   history(principal: CustomerPrincipal): Promise<unknown> {
     return this.content.listHistory(actorContext(principal));
   }

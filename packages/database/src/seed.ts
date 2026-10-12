@@ -99,17 +99,18 @@ try {
      ON CONFLICT (id) DO NOTHING`,
   );
   await database.pool.query(
-    `INSERT INTO content_fields (id, tenant_id, site_id, page_id, stable_id, field_type, protected, ai_mode)
+    `INSERT INTO content_fields
+       (id, tenant_id, site_id, page_id, stable_id, field_type, protected, ai_mode, editable_by)
      VALUES
-       ('61000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000001', '20000000-0000-4000-8000-000000000001', '60000000-0000-4000-8000-000000000001', 'home.heading', 'text', false, 'auto'),
-       ('61000000-0000-4000-8000-000000000002', '10000000-0000-4000-8000-000000000002', '20000000-0000-4000-8000-000000000002', '60000000-0000-4000-8000-000000000002', 'home.heading', 'text', false, 'suggestion')
-     ON CONFLICT (id) DO NOTHING`,
+       ('61000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000001', '20000000-0000-4000-8000-000000000001', '60000000-0000-4000-8000-000000000001', 'home.heading', 'text', false, 'auto', ARRAY['customer_owner','customer_editor']::varchar(40)[]),
+       ('61000000-0000-4000-8000-000000000002', '10000000-0000-4000-8000-000000000002', '20000000-0000-4000-8000-000000000002', '60000000-0000-4000-8000-000000000002', 'home.marquee', 'text', false, 'auto', ARRAY['customer_owner','customer_editor']::varchar(40)[])
+     ON CONFLICT (id) DO UPDATE SET editable_by = EXCLUDED.editable_by`,
   );
   await database.pool.query(
     `INSERT INTO content_revisions (id, tenant_id, site_id, revision, schema_version, content, facts_snapshot, created_by, origin)
      VALUES
        ('62000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000001', '20000000-0000-4000-8000-000000000001', 1, 1, '{"home.heading":"Welcome to Fictional Copper Spoon"}'::jsonb, '{}'::jsonb, '40000000-0000-4000-8000-000000000001', 'seed'),
-       ('62000000-0000-4000-8000-000000000002', '10000000-0000-4000-8000-000000000002', '20000000-0000-4000-8000-000000000002', 1, 1, '{"home.heading":"Welcome to Fictional Night Market"}'::jsonb, '{}'::jsonb, '40000000-0000-4000-8000-000000000002', 'seed')
+       ('62000000-0000-4000-8000-000000000002', '10000000-0000-4000-8000-000000000002', '20000000-0000-4000-8000-000000000002', 1, 1, '{"home.marquee":"NIGHT MARKET 44"}'::jsonb, '{}'::jsonb, '40000000-0000-4000-8000-000000000002', 'seed')
      ON CONFLICT (tenant_id, site_id, revision) DO NOTHING`,
   );
   await database.pool.query('COMMIT');

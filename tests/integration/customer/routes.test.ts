@@ -1,5 +1,10 @@
 import { buildApiServer, type CustomerPrincipal } from '@omnireach/api';
-import { ProtectedFieldError, RevisionConflictError, readLimitedUpload } from '@omnireach/content';
+import {
+  PostgresContentRepository,
+  ProtectedFieldError,
+  RevisionConflictError,
+  readLimitedUpload,
+} from '@omnireach/content';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const owner: CustomerPrincipal = {
@@ -32,6 +37,7 @@ function service() {
     createDraft: vi.fn(async () => ({ id: '80000000-0000-4000-8000-000000000001' })),
     dashboard: vi.fn(async () => ({ status: 'ready' })),
     drafts: vi.fn(async () => []),
+    draftUpdate: vi.fn(async () => ({ version: 2 })),
     fieldUpdate: vi.fn(async () => ({ version: 2 })),
     history: vi.fn(async () => []),
     pages: vi.fn(async () => []),
@@ -101,6 +107,126 @@ describe('customer content routes', () => {
       fieldId: 'home.heading',
       value: 'Updated',
     });
+  });
+
+  it('applies a multi-field patch through one atomic service call', async () => {
+    const content = service();
+    const server = buildApiServer({
+      customerService: content,
+      logLevel: 'silent',
+      resolveCustomerPrincipal: async () => owner,
+    });
+    servers.push(server);
+
+    const response = await server.inject({
+      headers: { host: 'admin.alpha.test', origin: 'https://admin.alpha.test' },
+      method: 'PATCH',
+      payload: {
+        expectedVersion: 4,
+        patch: { 'home.heading': 'Updated', 'home.intro': '<p>Updated</p>' },
+      },
+      url: '/v1/customer/drafts/80000000-0000-4000-8000-000000000001',
+    });
+    expect(response.statusCode).toBe(200);
+    expect(content.draftUpdate).toHaveBeenCalledTimes(1);
+    expect(content.draftUpdate).toHaveBeenCalledWith(owner, {
+      draftId: '80000000-0000-4000-8000-000000000001',
+      expectedVersion: 4,
+      patch: { 'home.heading': 'Updated', 'home.intro': '<p>Updated</p>' },
+    });
+  });
+
+  it('denies an owner-only field to a customer editor through the direct API', async () => {
+    const query = vi.fn(async (text: string, values?: unknown[]) => {
+      if (text.includes('WITH latest_feature')) {
+        return {
+          rows: [
+            {
+              editing_frozen: false,
+              feature_enabled: true,
+              grace_ends_at: null,
+              subscription_status: 'active',
+            },
+          ],
+        };
+      }
+      if (text.includes('FROM content_drafts')) {
+        return {
+          rows: [
+            {
+              base_revision: 1,
+              content: { 'site.theme': 'default' },
+              id: '80000000-0000-4000-8000-000000000001',
+              version: 2,
+            },
+          ],
+        };
+      }
+      if (text.includes('FROM content_fields')) {
+        return {
+          rows: [
+            {
+              ai_mode: 'disabled',
+              editable_by: ['customer_owner'],
+              field_type: 'theme',
+              protected: false,
+              stable_id: 'site.theme',
+            },
+          ],
+        };
+      }
+      if (text.includes('UPDATE content_drafts')) {
+        return {
+          rows: [
+            {
+              base_revision: 1,
+              content: JSON.parse(String(values?.[0])) as Record<string, unknown>,
+              id: '80000000-0000-4000-8000-000000000001',
+              version: 3,
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+    const repository = new PostgresContentRepository({
+      connect: vi.fn(async () => ({ query, release: vi.fn() })),
+    });
+    const repositoryService = {
+      ...service(),
+      fieldUpdate: vi.fn(async (principal: CustomerPrincipal, input) =>
+        repository.updateDraftField(principal, input),
+      ),
+    };
+    const request = {
+      headers: { host: 'admin.alpha.test', origin: 'https://admin.alpha.test' },
+      method: 'PATCH' as const,
+      payload: { expectedVersion: 2, value: 'dark' },
+      url: '/v1/customer/drafts/80000000-0000-4000-8000-000000000001/fields/site.theme',
+    };
+
+    const editorServer = buildApiServer({
+      customerService: repositoryService,
+      logLevel: 'silent',
+      resolveCustomerPrincipal: async () => ({ ...owner, role: 'customer_editor' }),
+    });
+    servers.push(editorServer);
+    const denied = await editorServer.inject(request);
+    expect(denied.statusCode).toBe(403);
+    expect(query.mock.calls.some(([text]) => text.includes('UPDATE content_drafts'))).toBe(false);
+
+    query.mockClear();
+    const ownerServer = buildApiServer({
+      customerService: repositoryService,
+      logLevel: 'silent',
+      resolveCustomerPrincipal: async () => owner,
+    });
+    servers.push(ownerServer);
+    const accepted = await ownerServer.inject(request);
+    expect(accepted.statusCode).toBe(200);
+    expect(
+      query.mock.calls.filter(([text]) => text.includes('UPDATE content_drafts')),
+    ).toHaveLength(1);
   });
 
   it('requires explicit editor publish grants and an idempotency key', async () => {
@@ -217,6 +343,8 @@ describe('customer content routes', () => {
     expect(created.statusCode).toBe(201);
     expect(created.body).not.toContain('fictional-preview-token');
     expect(created.headers['set-cookie']).toContain('__Host-omnireach_preview=');
+    expect(created.headers['set-cookie']).toContain('Path=/;');
+    expect(created.headers['set-cookie']).not.toContain('Path=/v1/customer/preview-content');
     expect(created.headers['set-cookie']).not.toContain('Domain=');
 
     const preview = await server.inject({

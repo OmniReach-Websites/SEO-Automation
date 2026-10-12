@@ -32,9 +32,33 @@ export function canPublish(role: string, explicitEditorGrant: boolean): boolean 
   return role === 'customer_owner' || (role === 'customer_editor' && explicitEditorGrant);
 }
 
-export function renderEditor(fields: readonly EditorField[], draftVersion: number): string {
+export function renderEditor(
+  fields: readonly EditorField[],
+  draftVersion: number,
+  options: {
+    canEdit?: boolean;
+    canPublish?: boolean;
+    draftId?: string;
+    publishIdempotencyKey?: string;
+  } = {},
+): string {
   const controls = fields.map((field) => renderControl(field)).join('');
-  return `<form method="post" action="/editor/draft"><input type="hidden" name="expectedVersion" value="${draftVersion}">${controls}<button type="submit">Save draft</button></form><p id="protected-note">Unavailable fields cannot be changed from this editor.</p>`;
+  const draftId = options.draftId
+    ? `<input type="hidden" name="draftId" value="${escapeHtml(options.draftId)}">`
+    : '';
+  const editor =
+    options.canEdit === false
+      ? `<section aria-label="Draft fields">${controls}<p>Editing is unavailable for this account.</p></section>`
+      : `<form method="post" action="/editor/draft">${draftId}<input type="hidden" name="expectedVersion" value="${draftVersion}">${controls}<button type="submit">Save draft</button></form>`;
+  const actions =
+    options.draftId && options.canEdit !== false
+      ? `<section aria-labelledby="draft-actions-heading"><h2 id="draft-actions-heading">Draft actions</h2><form method="post" action="/editor/preview"><input type="hidden" name="draftId" value="${escapeHtml(options.draftId)}"><button type="submit">Preview draft</button></form>${
+          options.canPublish
+            ? `<form method="post" action="/editor/publish"><input type="hidden" name="draftId" value="${escapeHtml(options.draftId)}">${options.publishIdempotencyKey ? `<input type="hidden" name="idempotencyKey" value="${escapeHtml(options.publishIdempotencyKey)}">` : ''}<label for="publish-reason">Publication reason</label><input id="publish-reason" name="reason" minlength="3" maxlength="500" required><button type="submit">Publish draft</button></form>`
+            : '<p>Publishing is unavailable for this account.</p>'
+        }</section>`
+      : '';
+  return `${editor}<p id="protected-note">Unavailable fields cannot be changed from this editor.</p>${actions}`;
 }
 
 function renderControl(field: EditorField): string {
