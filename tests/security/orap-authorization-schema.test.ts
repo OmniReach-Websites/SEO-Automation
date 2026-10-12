@@ -26,6 +26,13 @@ const directoryProjectionMigration = readFileSync(
   ),
   'utf8',
 );
+const staffOwnerSessionPolicyMigration = readFileSync(
+  resolve(
+    root,
+    'packages/database/prisma/migrations/20261012040000_orap_staff_owner_session_policy/migration.sql',
+  ),
+  'utf8',
+);
 const schema = readFileSync(resolve(root, 'packages/database/prisma/schema.prisma'), 'utf8');
 
 describe('ORAP authorization schema foundation', () => {
@@ -79,6 +86,16 @@ describe('ORAP authorization schema foundation', () => {
     expect(migration).toContain("scope_type = 'site'");
     expect(migration).toContain('UNIQUE NULLS NOT DISTINCT');
     expect(orapCapabilityCatalog.filter(({ ownerOnly }) => ownerOnly).length).toBeGreaterThan(8);
+  });
+
+  it('limits the owner-session step-up exception to audited staff authority', () => {
+    expect(staffOwnerSessionPolicyMigration).toContain(
+      'DROP CONSTRAINT owner_permission_safeguard',
+    );
+    expect(staffOwnerSessionPolicyMigration).toContain("module = 'staff'");
+    expect(staffOwnerSessionPolicyMigration).toContain('requires_reason');
+    expect(staffOwnerSessionPolicyMigration).toContain("risk_level = 'critical'");
+    expect(staffOwnerSessionPolicyMigration).toContain('requires_step_up OR');
   });
 
   it('gives the authentication role read-only effective-authorization access', () => {
