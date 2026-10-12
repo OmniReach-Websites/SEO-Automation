@@ -14,6 +14,55 @@ const deniedStaff = {
 const sessionAdministrator = actor;
 
 describe('PostgreSQL ORAP service', () => {
+  it('replaces a staff password through the owner-only audited database function', async () => {
+    const targetUserId = '40000000-0000-4000-8000-000000000099';
+    const query = vi.fn(async (text: string, values?: unknown[]) => {
+      if (text.includes('orap_owner_update_staff_account')) {
+        expect(values?.[0]).toBe(targetUserId);
+        expect(values?.[1]).toBe('Updated Employee');
+        expect(values?.[2]).toBe('updated@example.test');
+        expect(values?.[4]).toEqual(expect.stringMatching(/^\$argon2id\$/u));
+        expect(values?.[4]).not.toBe('replacement-password-123');
+        expect(values?.[5]).toBe('Owner-approved recovery');
+        expect(values?.[6]).toBe(actor.traceId);
+        return {
+          rows: [
+            {
+              password_replaced: true,
+              revoked_sessions: 2,
+              updated_display_name: 'Updated Employee',
+              updated_job_title: 'Operations Lead',
+              updated_normalized_email: 'updated@example.test',
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+    const service = new PostgresOrapService(
+      { connect: vi.fn(async () => ({ query, release: vi.fn() })) },
+      { send: vi.fn() },
+      vi.fn(),
+    );
+
+    await expect(
+      service.updateStaffAccount(actor, {
+        displayName: ' Updated Employee ',
+        email: 'UPDATED@example.test',
+        jobTitle: 'Operations Lead',
+        newPassword: 'replacement-password-123',
+        reason: 'Owner-approved recovery',
+        userId: targetUserId,
+      }),
+    ).resolves.toEqual({
+      displayName: 'Updated Employee',
+      jobTitle: 'Operations Lead',
+      normalizedEmail: 'updated@example.test',
+      passwordReplaced: true,
+      revokedSessions: 2,
+    });
+  });
+
   it('protects the last owner without requiring a separate strong-factor step-up', async () => {
     const targetOwnerId = '40000000-0000-4000-8000-000000000099';
     const query = vi.fn(async (text: string, values?: unknown[]) => {

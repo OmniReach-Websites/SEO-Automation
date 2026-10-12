@@ -73,6 +73,7 @@ function service() {
     setQuotaOverride: vi.fn(async () => ({ status: 'updated' })),
     setSiteAiBudget: vi.fn(async () => ({ status: 'updated' })),
     setSubscriptionState: vi.fn(async () => ({ status: 'updated' })),
+    updateStaffAccount: vi.fn(async () => ({ passwordReplaced: true, revokedSessions: 1 })),
   };
 }
 
@@ -195,6 +196,45 @@ describe('ORAP administration routes', () => {
     expect(administration.changeStaffRole).toHaveBeenCalledWith(actor, {
       reason: 'Approved fictional reassignment',
       roleSlug: 'operations-manager',
+      userId,
+    });
+  });
+
+  it('lets only a Platform Owner update staff identity and replace a password', async () => {
+    const administration = service();
+    const ownerServer = buildApiServer({
+      logLevel: 'silent',
+      orapService: administration,
+      resolvePlatformActor: async () => actor,
+    });
+    const staffServer = buildApiServer({
+      logLevel: 'silent',
+      orapService: administration,
+      resolvePlatformActor: async () => deniedStaff,
+    });
+    servers.push(ownerServer, staffServer);
+    const userId = '40000000-0000-4000-8000-000000000099';
+    const request = {
+      headers: { host: 'admin.omnireach.test', origin: 'https://admin.omnireach.test' },
+      method: 'PUT' as const,
+      payload: {
+        displayName: 'Recovered Owner',
+        email: 'recovered@example.test',
+        jobTitle: 'Platform Owner',
+        newPassword: 'replacement-password-123',
+        reason: 'Owner-approved account recovery',
+      },
+      url: `/v1/orap/staff/${userId}`,
+    };
+
+    const allowed = await ownerServer.inject(request);
+    const denied = await staffServer.inject(request);
+
+    expect(allowed.statusCode).toBe(200);
+    expect(denied.statusCode).toBe(403);
+    expect(administration.updateStaffAccount).toHaveBeenCalledTimes(1);
+    expect(administration.updateStaffAccount).toHaveBeenCalledWith(actor, {
+      ...request.payload,
       userId,
     });
   });

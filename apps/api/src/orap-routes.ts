@@ -103,6 +103,17 @@ export interface OrapAdministrationEndpointService {
     actor: AdminActor,
     input: { host: string; networkIdentifier: string; reason: string; userId: string },
   ): Promise<unknown>;
+  updateStaffAccount?(
+    actor: AdminActor,
+    input: {
+      displayName: string;
+      email: string;
+      jobTitle?: string;
+      newPassword?: string;
+      reason: string;
+      userId: string;
+    },
+  ): Promise<unknown>;
   revokeAllCustomerSessions?(
     actor: AdminActor,
     input: { reason: string; siteId: string; tenantId: string; userId: string },
@@ -276,6 +287,38 @@ export function registerOrapRoutes(
           roleSlug: body.roleSlug,
         }),
       );
+    },
+  );
+
+  server.put(
+    '/v1/orap/staff/:userId',
+    { preHandler: requireSameOrigin },
+    async (request, reply) => {
+      const actor = await authorizedActor(request, reply, resolveActor);
+      if (!actor) return;
+      if (!authorizedOwner(actor, reply)) return;
+      if (!service.updateStaffAccount) return reply.code(501).send({ error: 'not_available' });
+      const params = parse(z.object({ userId: z.string().uuid() }), request.params, reply);
+      const body = parse(
+        z.object({
+          displayName: z.string().trim().min(1).max(160),
+          email: z.string().trim().email().max(320),
+          jobTitle: z.string().trim().max(160).optional(),
+          newPassword: z.string().min(12).max(128).optional(),
+          reason,
+        }),
+        request.body,
+        reply,
+      );
+      if (!params || !body) return;
+      return service.updateStaffAccount(actor, {
+        displayName: body.displayName,
+        email: body.email,
+        ...(body.jobTitle ? { jobTitle: body.jobTitle } : {}),
+        ...(body.newPassword ? { newPassword: body.newPassword } : {}),
+        reason: body.reason,
+        userId: params.userId,
+      });
     },
   );
 

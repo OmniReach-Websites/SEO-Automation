@@ -780,6 +780,27 @@ const staffInvitationInput = z.object({
   reason: z.string().trim().min(3).max(500),
   roleSlug: z.string().regex(/^[a-z0-9-]{1,100}$/u),
 });
+const staffAccountUpdateInput = z
+  .object({
+    confirmPassword: z.string().max(128).optional(),
+    displayName: z.string().trim().min(1).max(160),
+    email: z.string().trim().email().max(320),
+    jobTitle: z.string().trim().max(160).optional(),
+    newPassword: z.string().max(128).optional(),
+    reason: z.string().trim().min(3).max(500),
+  })
+  .superRefine((value, context) => {
+    const password = value.newPassword ?? '';
+    const confirmation = value.confirmPassword ?? '';
+    if (!password && !confirmation) return;
+    if (password.length < 12 || password !== confirmation) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Passwords must match and contain at least 12 characters',
+        path: ['newPassword'],
+      });
+    }
+  });
 
 function parseSiteSummaries(value: unknown): OrapSiteSummary[] {
   return Array.isArray(value)
@@ -829,6 +850,9 @@ function staffNotice(
   if (value === 'role') {
     return { message: 'Staff authority was updated and active sessions were revoked.' };
   }
+  if (value === 'updated') {
+    return { message: 'Account details were updated and active sessions were revoked.' };
+  }
   if (value === 'failed') {
     return {
       kind: 'error',
@@ -845,6 +869,43 @@ function registerOrapStaffForms(
     resolvePlatformActor?: ResolvePlatformActor;
   },
 ): void {
+  server.post<{ Body: unknown; Params: { userId: string } }>(
+    '/orap/security/staff/:userId/profile',
+    { preHandler: requireSameOrigin },
+    async (request, reply) => {
+      const actor = await options.resolvePlatformActor?.(request);
+      if (!actor || !isPlatformOwnerIdentity(actor)) {
+        return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
+      }
+      const body = staffAccountUpdateInput.safeParse(request.body);
+      if (!body.success || !options.orapService?.updateStaffAccount) {
+        return reply
+          .code(303)
+          .redirect(`/orap/security/staff/${request.params.userId}?notice=failed`);
+      }
+      try {
+        await options.orapService.updateStaffAccount(actor, {
+          displayName: body.data.displayName,
+          email: body.data.email,
+          ...(body.data.jobTitle ? { jobTitle: body.data.jobTitle } : {}),
+          ...(body.data.newPassword ? { newPassword: body.data.newPassword } : {}),
+          reason: body.data.reason,
+          userId: request.params.userId,
+        });
+        return request.params.userId === actor.id
+          ? reply.code(303).redirect('/login')
+          : reply
+              .code(303)
+              .redirect(`/orap/security/staff/${request.params.userId}?notice=updated`);
+      } catch (error) {
+        request.log.error({ error }, 'ORAP staff account update failed');
+        return reply
+          .code(303)
+          .redirect(`/orap/security/staff/${request.params.userId}?notice=failed`);
+      }
+    },
+  );
+
   const register = (
     path: string,
     action: 'disabled' | 'reset' | 'sessions',

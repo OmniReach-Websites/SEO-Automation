@@ -40,6 +40,27 @@ const staffInvitationAcceptanceMigration = readFileSync(
   ),
   'utf8',
 );
+const staffInvitationCatalogMigration = readFileSync(
+  resolve(
+    root,
+    'packages/database/prisma/migrations/20261012110000_staff_invitation_catalog_access/migration.sql',
+  ),
+  'utf8',
+);
+const ownerAccountEditorMigration = readFileSync(
+  resolve(
+    root,
+    'packages/database/prisma/migrations/20261012120000_owner_staff_account_editor/migration.sql',
+  ),
+  'utf8',
+);
+const invitationConsumptionGuardMigration = readFileSync(
+  resolve(
+    root,
+    'packages/database/prisma/migrations/20261012130000_staff_invitation_consumption_guard/migration.sql',
+  ),
+  'utf8',
+);
 const schema = readFileSync(resolve(root, 'packages/database/prisma/schema.prisma'), 'utf8');
 
 describe('ORAP authorization schema foundation', () => {
@@ -132,6 +153,46 @@ describe('ORAP authorization schema foundation', () => {
       /GRANT\s+(?:INSERT|UPDATE|DELETE)[^;]+staff_roles/isu,
     );
     expect(staffInvitationAcceptanceMigration).toContain('NOT role.owner_identity_only');
+  });
+
+  it('allows invitation acceptance to read but never mutate non-owner role catalog data', () => {
+    expect(staffInvitationCatalogMigration).toContain(
+      'GRANT SELECT ON staff_roles, staff_role_versions TO omnireach_auth',
+    );
+    expect(staffInvitationCatalogMigration).toContain('NOT owner_identity_only');
+    expect(staffInvitationCatalogMigration).not.toMatch(
+      /GRANT\s+(?:INSERT|UPDATE|DELETE)[^;]+staff_roles/isu,
+    );
+  });
+
+  it('consumes an invitation only after its complete non-owner authority state exists', () => {
+    expect(invitationConsumptionGuardMigration).toContain('SECURITY DEFINER');
+    expect(invitationConsumptionGuardMigration).toContain(
+      "legacy.role IN ('platform_admin', 'staff')",
+    );
+    expect(invitationConsumptionGuardMigration).toContain(
+      'assignment.role_version_id = invitation_record.role_version_id',
+    );
+    expect(invitationConsumptionGuardMigration).toContain("scope.scope_type = 'platform'");
+    expect(invitationConsumptionGuardMigration).toContain(
+      'GRANT EXECUTE ON FUNCTION accept_orap_staff_invitation',
+    );
+    expect(invitationConsumptionGuardMigration).toContain(
+      'REVOKE UPDATE (state, accepted_at, accepted_user_id)',
+    );
+    expect(invitationConsumptionGuardMigration).toContain(
+      'DROP POLICY staff_invitations_auth_update_policy',
+    );
+  });
+
+  it('keeps owner password replacement behind a narrow audited function', () => {
+    expect(ownerAccountEditorMigration).toContain('SECURITY DEFINER');
+    expect(ownerAccountEditorMigration).toContain("legacy.role = 'platform_owner'");
+    expect(ownerAccountEditorMigration).toContain("membership.status = 'active'");
+    expect(ownerAccountEditorMigration).toContain("requested_password_hash !~ '^\\$argon2id\\$'");
+    expect(ownerAccountEditorMigration).toContain("revoke_reason = 'orap_owner_account_updated'");
+    expect(ownerAccountEditorMigration).toContain("'staff.account_updated'");
+    expect(ownerAccountEditorMigration).not.toMatch(/password_hash[^;]+staff_access_audits/isu);
   });
 
   it('exposes only non-secret authentication posture to the owner staff directory', () => {

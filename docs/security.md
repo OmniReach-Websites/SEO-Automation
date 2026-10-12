@@ -91,7 +91,14 @@
   Sensitive owner recovery, factor replacement, and security-policy changes require a
   recent TOTP or WebAuthn verification, or an explicitly approved short-lived,
   single-use, reason-bearing break-glass procedure. Email or a recovery-code session
-  alone cannot authorize those changes.
+  alone cannot authorize those changes. The owner-approved ORAP staff-lifecycle
+  exception permits a current Platform Owner who completed mandatory ORAP two-step
+  login to replace another staff/Owner password without an additional strong-factor
+  prompt. That write-only, reason-bearing action revokes the target's sessions,
+  invalidates password-recovery links, preserves required two-step login, and writes a
+  non-secret before/after audit record. This recovery convenience increases the impact
+  of a compromised Owner session and must be revisited when SMS or another recovery
+  control is introduced.
 - WebAuthn is exact-host scoped. The normalized verified admin hostname is both RP ID
   and the only accepted HTTPS origin; apex, wildcard, caller-selected, and cross-origin
   bindings are rejected. Ceremony state is opaque, one-use, server-side, and expires in
@@ -213,6 +220,10 @@ AND current resource belongs to resolved site
   identity checks and are never grantable capabilities. Platform Admin and custom Staff
   roles cannot invite/create employees, change staff status or credentials, edit roles,
   change role/scope assignments, or assign ownership. The last active Owner is protected.
+- Platform Owner account editing uses a narrow database function rather than credential
+  table access. It can update staff/Owner profile fields and replace a password hash,
+  but cannot reveal existing password hashes or MFA/recovery secrets, rewrite audit
+  history, bypass mandatory second-step login, or modify the last-owner safeguards.
 - Every ORAP route registers a stable capability and resource-scope resolver. Unknown or
   newly registered capabilities are denied to non-owners until deliberately assigned;
   owner-only catalog entries cannot be added to a role. Lists, counts, search, exports,

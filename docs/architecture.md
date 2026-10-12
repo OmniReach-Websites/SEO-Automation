@@ -159,6 +159,11 @@ No process writes runtime content to `main`. Optional future sanitized exports u
   Sensitive owner recovery or security changes require a recent TOTP/WebAuthn step or an
   explicitly approved, one-time audited break-glass procedure. Email verification and
   an ordinary recovery-code session do not provide that stronger authorization.
+- The approved staff-lifecycle exception lets a currently authenticated Platform Owner
+  update any ORAP staff/Owner profile and replace a password through a write-only,
+  audited operation. It revokes the target's sessions and keeps mandatory next-login
+  verification; it does not expose credential hashes, factors, recovery secrets, or
+  grant database-superuser access.
 - Customer Owner, Customer Editor, and Customer Viewer accounts are password-only by
   default. They may voluntarily enable email-code verification, TOTP, or WebAuthn from
   tenant-safe security settings. A method is not active until verified, and a customer

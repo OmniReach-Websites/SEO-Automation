@@ -13,6 +13,12 @@ export const orapRoutePolicyRegistry = [
   { capabilities: [], method: 'GET', ownerIdentityOnly: true, path: '/v1/orap/staff/roles' },
   {
     capabilities: [],
+    method: 'PUT',
+    ownerIdentityOnly: true,
+    path: '/v1/orap/staff/:userId',
+  },
+  {
+    capabilities: [],
     method: 'POST',
     ownerIdentityOnly: true,
     path: '/v1/orap/staff/invitations',

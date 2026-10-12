@@ -208,6 +208,7 @@ test('served ORAP and customer shells remain accessible and host isolated', asyn
       setQuotaOverride: async () => ({}),
       setSiteAiBudget: async () => ({}),
       setSubscriptionState: async () => ({}),
+      updateStaffAccount: async () => ({}),
     },
     resolveCustomerPrincipal: async (request) =>
       request.hostname === 'admin.alpha.localhost' &&
@@ -320,6 +321,11 @@ test('served ORAP and customer shells remain accessible and host isolated', asyn
     const employeeRow = staffPage.getByRole('row').filter({ hasText: 'Fictional Employee' });
     await employeeRow.getByRole('link', { name: 'Open' }).click();
     await expect(staffPage.getByRole('heading', { level: 1 })).toHaveText('Fictional Employee');
+    await expect(staffPage.getByRole('heading', { name: 'Edit account' })).toBeVisible();
+    await expect(staffPage.getByLabel('Name')).toHaveValue('Fictional Employee');
+    await expect(staffPage.getByLabel('Email')).toHaveValue('employee@example.test');
+    await expect(staffPage.getByLabel('New password', { exact: true })).toHaveValue('');
+    await expect(staffPage.getByText('Current passwords', { exact: false })).toBeVisible();
     await expect(staffPage.getByLabel('Staff role')).toHaveValue('operations-manager');
     await expect(staffPage.getByRole('button', { name: 'Update authority' })).toBeVisible();
 

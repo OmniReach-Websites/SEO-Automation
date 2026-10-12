@@ -262,8 +262,14 @@ describe('PostgreSQL authentication repository', () => {
     );
     expect(policyInsert).toBeGreaterThan(-1);
     expect(membershipInsert).toBeGreaterThan(policyInsert);
-    expect(calls.some((sql) => sql.includes("SET state = 'accepted'"))).toBe(true);
+    expect(calls.some((sql) => sql.includes('accept_orap_staff_invitation'))).toBe(true);
+    expect(calls.find((sql) => sql.includes('FROM staff_invitations invitation'))).not.toContain(
+      'FOR UPDATE',
+    );
     expect(calls.some((sql) => sql.includes('INSERT INTO staff_resource_scopes'))).toBe(true);
+    expect(calls.find((sql) => sql.includes('INSERT INTO staff_role_assignments'))).not.toContain(
+      'RETURNING',
+    );
     expect(calls.at(-1)).toBe('COMMIT');
   });
 
