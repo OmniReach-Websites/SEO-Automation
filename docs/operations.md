@@ -430,18 +430,20 @@ plan/pricing/grace policy, and real pilot onboarding.
 Internal ORAP employee provisioning and staff-authority changes require a currently
 authenticated Platform Owner who completed the mandatory ORAP two-step login. They do
 not require an additional authenticator/passkey step-up. Platform Admin or a custom
-employee role cannot approve or perform these actions. Every change retains an audit
-reason, last-owner protection, and session invalidation. SMS step-up may be added later
-only through a separately approved authentication-policy change. Repository
+employee role cannot approve or perform these actions. Every change retains automatic
+audit evidence, last-owner protection, and session invalidation. The staff UI does not
+ask the Owner to enter an audit reason. SMS step-up may be added later only through a
+separately approved authentication-policy change. Repository
 implementation and fictional tests do not authorize creating a real employee or
 changing a production owner's authority.
 
 For an owner-assisted ORAP account recovery, open the target in **Team & access**, edit
 only the required profile fields, optionally enter a replacement password twice, and
-record the business reason. The replacement password is write-only: never ask for or
-record the old password. Saving revokes all target ORAP sessions, clears password
-lockout state, invalidates outstanding password-recovery links, preserves mandatory
-two-step verification, and appends a non-secret before/after audit. Confirm the target
+save the change. The replacement password is write-only: never ask for or record the old
+password. Saving revokes all target ORAP sessions, clears password lockout state,
+invalidates outstanding password-recovery links, preserves mandatory two-step
+verification, and appends a non-secret before/after audit with an automatic action
+description. Confirm the target
 can complete the next login before treating recovery as finished. Do not use this path
 to expose hashes, bypass verification, rewrite audit history, or weaken last-owner
 protection.

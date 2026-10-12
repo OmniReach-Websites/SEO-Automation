@@ -50,10 +50,11 @@ to become unavailable by default rather than inheriting an accidental broad staf
 - A current Platform Owner may edit an ORAP staff or Owner account's display name,
   normalized email, job title, and replace its password from the owner-only staff page.
   Passwords remain write-only and Argon2id-hashed; hashes, verification secrets,
-  internal identifiers, and audit history are not editable. Every account update has a
-  bounded audit reason and revokes all ORAP sessions for the target. A password change
-  also clears lockout state and invalidates outstanding password-recovery links. The
-  target must still complete mandatory two-step verification at the next login.
+  internal identifiers, and audit history are not editable. Every account update records
+  a bounded system-generated audit description and revokes all ORAP sessions for the
+  target. A password change also clears lockout state and invalidates outstanding
+  password-recovery links. The target must still complete mandatory two-step verification
+  at the next login.
 - High-risk Owner actions outside staff authority require recent strong TOTP/WebAuthn
   verification or the separately approved one-use audited break-glass path where ADR
   0003 requires it. The owner-approved staff lifecycle exception accepts the current
@@ -85,8 +86,9 @@ to become unavailable by default rather than inheriting an accidental broad staf
 - Production staff lifecycle actions require a current Platform Owner session that
   completed mandatory ORAP two-step authentication. Per the owner-approved 2026-10-12
   policy change, staff-authority actions do not require an additional
-  authenticator/passkey step-up; audited reasons, session invalidation, and last-owner
-  protection remain mandatory. A future SMS step-up requires a separate policy change.
+  authenticator/passkey step-up; automatic audit evidence, session invalidation, and
+  last-owner protection remain mandatory. The staff UI does not require an Owner to type
+  an audit reason. A future SMS step-up requires a separate policy change.
 - This exception includes owner-initiated staff/Owner profile and password replacement.
   It deliberately creates an account-takeover-capable recovery path for a compromised
   Owner session; session revocation, write-only passwords, immutable audit evidence,

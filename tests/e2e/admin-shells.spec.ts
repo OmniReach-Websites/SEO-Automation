@@ -316,7 +316,12 @@ test('served ORAP and customer shells remain accessible and host isolated', asyn
     await staffPage.getByRole('link', { name: 'Invite staff' }).click();
     await expect(staffPage.getByRole('heading', { level: 1 })).toHaveText('Invite staff');
     await expect(staffPage.getByRole('button', { name: 'Send invitation' })).toBeVisible();
-    await staffPage.getByRole('link', { name: 'Back to team' }).click();
+    await expect(staffPage.getByLabel('Audit reason')).toHaveCount(0);
+    await staffPage.getByLabel('Name').fill('Fictional Invitee');
+    await staffPage.getByLabel('Work email').fill('invitee@example.test');
+    await staffPage.getByLabel('Staff role').selectOption('analyst');
+    await staffPage.getByRole('button', { name: 'Send invitation' }).click();
+    await expect(staffPage.getByRole('status')).toContainText('invitation was sent');
     await expect(staffPage.getByRole('table')).toContainText('Fictional Owner');
     const employeeRow = staffPage.getByRole('row').filter({ hasText: 'Fictional Employee' });
     await employeeRow.getByRole('link', { name: 'Open' }).click();
@@ -328,25 +333,28 @@ test('served ORAP and customer shells remain accessible and host isolated', asyn
     await expect(staffPage.getByText('Current passwords', { exact: false })).toBeVisible();
     await expect(staffPage.getByLabel('Staff role')).toHaveValue('operations-manager');
     await expect(staffPage.getByRole('button', { name: 'Update authority' })).toBeVisible();
+    await expect(staffPage.getByLabel('Audit reason')).toHaveCount(0);
+    await staffPage.getByRole('button', { name: 'Save account details' }).click();
+    await expect(staffPage.getByRole('status')).toContainText('Account details were updated');
+    await staffPage.getByLabel('Staff role').selectOption('analyst');
+    await staffPage.getByRole('button', { name: 'Update authority' }).click();
+    await expect(staffPage.getByRole('status')).toContainText('Staff authority was updated');
 
     const resetStaff = staffPage.locator(
       'form[action="/orap/security/staff/40000000-0000-4000-8000-000000000012/reset"]',
     );
-    await resetStaff.getByLabel('Audit reason').fill('Approved fictional recovery request');
     await resetStaff.getByRole('button', { name: 'Send reset instructions' }).click();
     await expect(staffPage.getByRole('status')).toContainText('reset instructions were requested');
 
     const revokeStaff = staffPage.locator(
       'form[action="/orap/security/staff/40000000-0000-4000-8000-000000000012/sessions/revoke-all"]',
     );
-    await revokeStaff.getByLabel('Audit reason').fill('Approved fictional session revocation');
     await revokeStaff.getByRole('button', { name: 'Revoke all sessions' }).click();
     await expect(staffPage.getByRole('status')).toContainText('sessions were revoked');
 
     const disableStaff = staffPage.locator(
       'form[action="/orap/security/staff/40000000-0000-4000-8000-000000000012/disable"]',
     );
-    await disableStaff.getByLabel('Audit reason').fill('Approved fictional staff departure');
     await disableStaff.getByRole('button', { name: 'Disable staff access' }).click();
     await expect(staffPage.getByRole('status')).toContainText('Staff access was disabled');
 
