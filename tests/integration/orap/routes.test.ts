@@ -21,6 +21,17 @@ function service() {
     createPlan: vi.fn(async () => ({ id: 'plan-a' })),
     disableCustomer: vi.fn(),
     inviteCustomer: vi.fn(async () => ({ invitationId: 'invitation-a', status: 'pending' })),
+    listCustomerSessions: vi.fn(async () => ({
+      sessions: [
+        {
+          createdAt: '2026-10-11T01:00:00.000Z',
+          expiresAt: '2026-10-12T01:00:00.000Z',
+          host: 'admin.customer.test',
+          id: '50000000-0000-4000-8000-000000000001',
+          lastSeenAt: '2026-10-11T02:00:00.000Z',
+        },
+      ],
+    })),
     listSites: vi.fn(async () => []),
     listOperations: vi.fn(async () => ({
       alerts: [],
@@ -33,6 +44,8 @@ function service() {
       jobs: [],
     })),
     requestCustomerReset: vi.fn(async () => ({ status: 'accepted' })),
+    revokeAllCustomerSessions: vi.fn(async () => ({ revokedSessions: 2 })),
+    revokeCustomerSession: vi.fn(async () => ({ revokedSessions: 1 })),
     replayJob: vi.fn(async () => ({ state: 'queued' })),
     resolveAlert: vi.fn(async () => ({ state: 'resolved' })),
     setContactForm: vi.fn(async () => ({ status: 'updated' })),
@@ -457,5 +470,122 @@ describe('ORAP administration routes', () => {
         siteId: '20000000-0000-4000-8000-000000000001',
       }),
     );
+  });
+
+  it('limits exact-site customer session administration to platform owners and admins', async () => {
+    const administration = service();
+    const ownerActor: AdminActor = { ...actor, role: 'platform_owner' };
+    const ownerServer = buildApiServer({
+      logLevel: 'silent',
+      orapService: administration,
+      resolvePlatformActor: async () => ownerActor,
+    });
+    const staffServer = buildApiServer({
+      logLevel: 'silent',
+      orapService: administration,
+      resolvePlatformActor: async () => actor,
+    });
+    servers.push(ownerServer, staffServer);
+    const tenantId = '10000000-0000-4000-8000-000000000001';
+    const siteId = '20000000-0000-4000-8000-000000000001';
+    const userId = '30000000-0000-4000-8000-000000000001';
+    const sessionId = '50000000-0000-4000-8000-000000000001';
+    const baseUrl = `/v1/orap/tenants/${tenantId}/sites/${siteId}/users/${userId}/sessions`;
+    const headers = {
+      host: 'admin.omnireach.test',
+      origin: 'https://admin.omnireach.test',
+    };
+
+    const listed = await ownerServer.inject({ method: 'GET', url: baseUrl });
+    const revoked = await ownerServer.inject({
+      headers,
+      method: 'POST',
+      payload: { reason: 'Owner requested this exact session be closed' },
+      url: `${baseUrl}/${sessionId}/revoke`,
+    });
+    const revokedAll = await ownerServer.inject({
+      headers,
+      method: 'POST',
+      payload: { reason: 'Customer reported a potentially compromised account' },
+      url: `${baseUrl}/revoke-all`,
+    });
+
+    expect(listed.statusCode).toBe(200);
+    expect(JSON.stringify(listed.json())).not.toMatch(/token|credential|factor|secret/iu);
+    expect(revoked.statusCode).toBe(200);
+    expect(revokedAll.statusCode).toBe(200);
+    expect(administration.listCustomerSessions).toHaveBeenCalledWith(ownerActor, {
+      siteId,
+      tenantId,
+      userId,
+    });
+    expect(administration.revokeCustomerSession).toHaveBeenCalledWith(ownerActor, {
+      reason: 'Owner requested this exact session be closed',
+      sessionId,
+      siteId,
+      tenantId,
+      userId,
+    });
+    expect(administration.revokeAllCustomerSessions).toHaveBeenCalledWith(ownerActor, {
+      reason: 'Customer reported a potentially compromised account',
+      siteId,
+      tenantId,
+      userId,
+    });
+
+    const callsBeforeDenial = {
+      list: administration.listCustomerSessions.mock.calls.length,
+      revoke: administration.revokeCustomerSession.mock.calls.length,
+      revokeAll: administration.revokeAllCustomerSessions.mock.calls.length,
+    };
+    const staffList = await staffServer.inject({ method: 'GET', url: baseUrl });
+    const staffRevoke = await staffServer.inject({
+      headers,
+      method: 'POST',
+      payload: { reason: 'Staff should not have this permission' },
+      url: `${baseUrl}/revoke-all`,
+    });
+    expect(staffList.statusCode).toBe(403);
+    expect(staffRevoke.statusCode).toBe(403);
+    expect(administration.listCustomerSessions).toHaveBeenCalledTimes(callsBeforeDenial.list);
+    expect(administration.revokeCustomerSession).toHaveBeenCalledTimes(callsBeforeDenial.revoke);
+    expect(administration.revokeAllCustomerSessions).toHaveBeenCalledTimes(
+      callsBeforeDenial.revokeAll,
+    );
+  });
+
+  it('rejects invalid reasons and cross-origin customer session revocation', async () => {
+    const administration = service();
+    const ownerActor: AdminActor = { ...actor, role: 'platform_admin' };
+    const server = buildApiServer({
+      logLevel: 'silent',
+      orapService: administration,
+      resolvePlatformActor: async () => ownerActor,
+    });
+    servers.push(server);
+    const baseUrl =
+      '/v1/orap/tenants/10000000-0000-4000-8000-000000000001' +
+      '/sites/20000000-0000-4000-8000-000000000001' +
+      '/users/30000000-0000-4000-8000-000000000001/sessions';
+    const sameOrigin = {
+      host: 'admin.omnireach.test',
+      origin: 'https://admin.omnireach.test',
+    };
+    const invalidReason = await server.inject({
+      headers: sameOrigin,
+      method: 'POST',
+      payload: { reason: 'no' },
+      url: `${baseUrl}/revoke-all`,
+    });
+    const crossOrigin = await server.inject({
+      headers: { ...sameOrigin, origin: 'https://attacker.test' },
+      method: 'POST',
+      payload: { reason: 'Hostile cross-site request' },
+      url: `${baseUrl}/revoke-all`,
+    });
+
+    expect(invalidReason.statusCode).toBe(400);
+    expect(crossOrigin.statusCode).toBe(403);
+    expect(administration.revokeAllCustomerSessions).not.toHaveBeenCalled();
   });
 });
