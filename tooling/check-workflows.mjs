@@ -200,8 +200,14 @@ export function checkWorkflows(directory = workflowsDirectory) {
       ) {
         errors.push(`${file}: bridge must preflight both release contracts before transfer`);
       }
+      const metadataGeneratorCount =
+        occurrences(source, 'node infrastructure/deploy/create-release-metadata.mjs') +
+        occurrences(
+          source,
+          'node ../bridge-verification/infrastructure/deploy/create-release-metadata.mjs',
+        );
       if (
-        occurrences(source, 'node infrastructure/deploy/create-release-metadata.mjs') < 3 ||
+        metadataGeneratorCount < 3 ||
         occurrences(source, 'npm run verify:goal -- G05') < 3 ||
         occurrences(source, 'npm run verify:goal -- G06') < 3 ||
         occurrences(source, 'npm run verify:goal -- G30') < 3
