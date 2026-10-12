@@ -10,8 +10,23 @@ on:
         description: Reviewed production recovery operation
         required: true
         type: choice
+        default: rollback
         options:
+          - bridge
           - rollback
+      candidate_sha:
+        description: Exact bridge candidate commit on main history
+        required: false
+        type: string
+      rollback_sha:
+        description: Exact reviewed rollback commit on main history
+        required: false
+        type: string
+      confirm_bridge:
+        description: Confirm the reviewed two-artifact bridge operation
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -54,7 +69,7 @@ jobs:
           npm run verify:goal -- G06
           npm run verify:goal -- G30
           npm run verify:production-compose
-          npm run scan:secrets -- --full-history
+          npm run scan:secrets -- --scope full
           npm audit --omit=dev --audit-level=high
 
       - name: Build immutable runtime images
@@ -104,9 +119,189 @@ jobs:
         if: always()
         run: rm -f "${HOME}/.ssh/id_ed25519" "${HOME}/.ssh/known_hosts"
 
+  bridge:
+    name: Build and activate reviewed contract bridge
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' &&
+      inputs.operation == 'bridge' && inputs.confirm_bridge == true &&
+      vars.PRODUCTION_DEPLOYMENT_ENABLED == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    environment: production
+    steps:
+      - name: Check out main history for ancestry verification
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          path: bridge-verification
+          persist-credentials: false
+
+      - name: Prove exact distinct commits belong to main history
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          ROLLBACK_SHA: ${{ inputs.rollback_sha }}
+        run: |
+          printf '%s' "${CANDIDATE_SHA}" | grep -Eq '^[0-9a-f]{40}$'
+          printf '%s' "${ROLLBACK_SHA}" | grep -Eq '^[0-9a-f]{40}$'
+          test "${CANDIDATE_SHA}" != "${ROLLBACK_SHA}"
+          test "$(git -C bridge-verification rev-parse --verify "${CANDIDATE_SHA}^{commit}")" = "${CANDIDATE_SHA}"
+          test "$(git -C bridge-verification rev-parse --verify "${ROLLBACK_SHA}^{commit}")" = "${ROLLBACK_SHA}"
+          git -C bridge-verification merge-base --is-ancestor "${CANDIDATE_SHA}" refs/remotes/origin/main
+          git -C bridge-verification merge-base --is-ancestor "${ROLLBACK_SHA}" refs/remotes/origin/main
+          git -C bridge-verification merge-base --is-ancestor "${ROLLBACK_SHA}" "${CANDIDATE_SHA}"
+
+      - name: Check out exact candidate source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 0
+          path: candidate-source
+          persist-credentials: false
+
+      - name: Set up candidate Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: candidate-source/.nvmrc
+          cache: npm
+          cache-dependency-path: candidate-source/package-lock.json
+
+      - name: Build, test, and package exact candidate
+        working-directory: candidate-source
+        env:
+          RELEASE_SHA: ${{ inputs.candidate_sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "${RELEASE_SHA}"
+          cleanup() {
+            docker compose --file infrastructure/compose/dev.compose.yml down --volumes --remove-orphans
+          }
+          trap cleanup EXIT
+          npm ci --ignore-scripts
+          npx playwright install --with-deps chromium
+          docker compose --file infrastructure/compose/dev.compose.yml up --detach --wait
+          npm run verify:local-stack
+          npm run verify:goal -- G05
+          npm run verify:goal -- G06
+          npm run verify:goal -- G30
+          npm run verify:production-compose
+          npm run scan:secrets -- --scope full
+          npm audit --omit=dev --audit-level=high
+          docker build --file infrastructure/compose/production.Dockerfile --target runtime --tag "omnireach-runtime:${RELEASE_SHA}" .
+          docker build --file infrastructure/compose/production.Dockerfile --target migrator --tag "omnireach-migrator:${RELEASE_SHA}" .
+          docker save "omnireach-runtime:${RELEASE_SHA}" "omnireach-migrator:${RELEASE_SHA}" | gzip -n > omnireach-images.tar.gz
+          sha256sum omnireach-images.tar.gz > omnireach-images.tar.gz.sha256
+          node infrastructure/deploy/create-release-metadata.mjs "${RELEASE_SHA}" omnireach-release.meta
+          tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 -czf "${RELEASE_SHA}.tgz" \
+            .dockerignore .nvmrc apps infrastructure/compose infrastructure/deploy packages sites workers \
+            omnireach-images.tar.gz omnireach-images.tar.gz.sha256 omnireach-release.meta \
+            package.json package-lock.json \
+            prisma.config.ts tsconfig.base.json tsconfig.json
+          sha256sum "${RELEASE_SHA}.tgz" > "${RELEASE_SHA}.tgz.sha256"
+
+      - name: Check out exact reviewed rollback source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.rollback_sha }}
+          fetch-depth: 0
+          path: rollback-source
+          persist-credentials: false
+
+      - name: Set up rollback Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: rollback-source/.nvmrc
+          cache: npm
+          cache-dependency-path: rollback-source/package-lock.json
+
+      - name: Build, test, and package exact reviewed rollback
+        working-directory: rollback-source
+        env:
+          RELEASE_SHA: ${{ inputs.rollback_sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "${RELEASE_SHA}"
+          cleanup() {
+            docker compose --file infrastructure/compose/dev.compose.yml down --volumes --remove-orphans
+          }
+          trap cleanup EXIT
+          npm ci --ignore-scripts
+          npx playwright install --with-deps chromium
+          docker compose --file infrastructure/compose/dev.compose.yml up --detach --wait
+          npm run verify:local-stack
+          npm run verify:goal -- G05
+          npm run verify:goal -- G06
+          npm run verify:goal -- G30
+          npm run verify:production-compose
+          npm run scan:secrets -- --scope full
+          npm audit --omit=dev --audit-level=high
+          docker build --file infrastructure/compose/production.Dockerfile --target runtime --tag "omnireach-runtime:${RELEASE_SHA}" .
+          docker build --file infrastructure/compose/production.Dockerfile --target migrator --tag "omnireach-migrator:${RELEASE_SHA}" .
+          docker save "omnireach-runtime:${RELEASE_SHA}" "omnireach-migrator:${RELEASE_SHA}" | gzip -n > omnireach-images.tar.gz
+          sha256sum omnireach-images.tar.gz > omnireach-images.tar.gz.sha256
+          node infrastructure/deploy/create-release-metadata.mjs "${RELEASE_SHA}" omnireach-release.meta
+          tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 -czf "${RELEASE_SHA}.tgz" \
+            .dockerignore .nvmrc apps infrastructure/compose infrastructure/deploy packages sites workers \
+            omnireach-images.tar.gz omnireach-images.tar.gz.sha256 omnireach-release.meta \
+            package.json package-lock.json \
+            prisma.config.ts tsconfig.base.json tsconfig.json
+          sha256sum "${RELEASE_SHA}.tgz" > "${RELEASE_SHA}.tgz.sha256"
+
+      - name: Preflight both source-bound release contracts
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          ROLLBACK_SHA: ${{ inputs.rollback_sha }}
+        run: |
+          validator=bridge-verification/infrastructure/deploy/validate-release-metadata.sh
+          candidate_metadata=candidate-source/omnireach-release.meta
+          rollback_metadata=rollback-source/omnireach-release.meta
+          candidate_schema=$(sh "${validator}" schema-target "${candidate_metadata}" "${CANDIDATE_SHA}")
+          candidate_auth=$(sh "${validator}" auth-contract "${candidate_metadata}" "${CANDIDATE_SHA}")
+          candidate_crypto=$(sh "${validator}" crypto-write "${candidate_metadata}" "${CANDIDATE_SHA}")
+          rollback_schema=$(sh "${validator}" schema-target "${rollback_metadata}" "${ROLLBACK_SHA}")
+          rollback_auth=$(sh "${validator}" auth-contract "${rollback_metadata}" "${ROLLBACK_SHA}")
+          rollback_crypto=$(sh "${validator}" crypto-write "${rollback_metadata}" "${ROLLBACK_SHA}")
+          test "${rollback_crypto}" -eq "${candidate_crypto}"
+          sh "${validator}" supports "${rollback_metadata}" "${ROLLBACK_SHA}" \
+            "${candidate_schema}" "${candidate_auth}" "${candidate_crypto}"
+          sh "${validator}" supports "${candidate_metadata}" "${CANDIDATE_SHA}" \
+            "${rollback_schema}" "${rollback_auth}" "${rollback_crypto}"
+
+      - name: Configure ephemeral restricted SSH identity
+        env:
+          DEPLOY_KEY: ${{ secrets.PRODUCTION_DEPLOY_KEY }}
+          KNOWN_HOSTS: ${{ secrets.PRODUCTION_KNOWN_HOSTS }}
+        run: |
+          test -n "${DEPLOY_KEY}"
+          test -n "${KNOWN_HOSTS}"
+          install -d -m 0700 "${HOME}/.ssh"
+          printf '%s\n' "${DEPLOY_KEY}" > "${HOME}/.ssh/id_ed25519"
+          printf '%s\n' "${KNOWN_HOSTS}" > "${HOME}/.ssh/known_hosts"
+          chmod 0600 "${HOME}/.ssh/id_ed25519" "${HOME}/.ssh/known_hosts"
+
+      - name: Transfer and activate both reviewed bridge artifacts
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          ROLLBACK_SHA: ${{ inputs.rollback_sha }}
+          TARGET_HOST: ${{ vars.PRODUCTION_HOST }}
+          TARGET_USER: ${{ vars.PRODUCTION_USER }}
+        run: |
+          test -n "${TARGET_HOST}"
+          test "${TARGET_USER}" = omnireach-deploy
+          scp -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "candidate-source/${CANDIDATE_SHA}.tgz" "candidate-source/${CANDIDATE_SHA}.tgz.sha256" \
+            "rollback-source/${ROLLBACK_SHA}.tgz" "rollback-source/${ROLLBACK_SHA}.tgz.sha256" \
+            "${TARGET_USER}@${TARGET_HOST}:/opt/servers/omnireach/incoming/"
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes "${TARGET_USER}@${TARGET_HOST}" \
+            "omnireach-release bridge ${CANDIDATE_SHA} ${ROLLBACK_SHA}"
+
+      - name: Remove ephemeral identity
+        if: always()
+        run: rm -f "${HOME}/.ssh/id_ed25519" "${HOME}/.ssh/known_hosts"
+
   rollback:
     name: Run reviewed compatible rollback
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'rollback' }}
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' &&
+      inputs.operation == 'rollback' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: production

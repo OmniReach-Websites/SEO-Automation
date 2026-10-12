@@ -36,6 +36,9 @@ jobs:
       - name: Validate workflow policy
         run: npm run check:workflows
 
+      - name: Validate source release capability contract
+        run: node infrastructure/deploy/create-release-metadata.mjs --check-contract
+
       - name: Check formatting
         run: npm run format:check
 
@@ -55,7 +58,7 @@ jobs:
         run: npm run build
 
       - name: Scan repository for secrets and forbidden paths
-        run: npm run scan:secrets -- --full-history
+        run: npm run scan:secrets -- --scope full
 
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high

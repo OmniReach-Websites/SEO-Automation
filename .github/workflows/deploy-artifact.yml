@@ -67,7 +67,7 @@ jobs:
           npm run verify:goal -- G06
           npm run verify:goal -- G30
           npm run verify:production-compose
-          npm run scan:secrets -- --full-history
+          npm run scan:secrets -- --scope full
           npm audit --omit=dev --audit-level=high
 
       - name: Build immutable runtime images

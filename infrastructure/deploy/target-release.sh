@@ -8,6 +8,7 @@ shared_root=$deploy_root/shared
 lock_file=$deploy_root/.release.lock
 metadata_validator=/usr/local/libexec/omnireach-validate-release-metadata
 required_auth_contract=2
+required_crypto_contract=2
 api_port=44100
 
 fail() {
@@ -90,13 +91,20 @@ release_auth_contract() {
   "$metadata_validator" auth-contract "$(metadata_path "$contract_dir")" "$contract_id"
 }
 
+release_crypto_write() {
+  contract_dir=$1
+  contract_id=$(basename "$contract_dir")
+  "$metadata_validator" crypto-write "$(metadata_path "$contract_dir")" "$contract_id"
+}
+
 assert_release_supports() {
   support_dir=$1
   required_schema=$2
   required_auth=$3
+  required_crypto=$4
   support_id=$(basename "$support_dir")
   "$metadata_validator" supports "$(metadata_path "$support_dir")" "$support_id" \
-    "$required_schema" "$required_auth"
+    "$required_schema" "$required_auth" "$required_crypto"
 }
 
 validate_archive() {
@@ -211,16 +219,28 @@ deploy_release() {
   candidate_dir=$staged_release_dir
   candidate_schema=$(release_schema_target "$candidate_dir")
   candidate_auth=$(release_auth_contract "$candidate_dir")
+  candidate_crypto=$(release_crypto_write "$candidate_dir")
   [ "$candidate_auth" -eq "$required_auth_contract" ] ||
     fail 'candidate does not implement the required authentication contract'
+  [ "$candidate_crypto" -ge "$required_crypto_contract" ] ||
+    fail 'candidate does not implement the required crypto/keyring contract'
 
   resolve_pointer current
   prior_dir=$resolved_pointer
   if [ -n "$prior_dir" ]; then
     [ -f "$(metadata_path "$prior_dir")" ] ||
       fail 'active release predates contract metadata; use the reviewed bridge operation'
-    assert_release_supports "$prior_dir" "$candidate_schema" "$candidate_auth" ||
-      fail 'active release cannot safely roll back after the candidate schema transition'
+    prior_schema=$(release_schema_target "$prior_dir")
+    prior_auth=$(release_auth_contract "$prior_dir")
+    prior_crypto=$(release_crypto_write "$prior_dir")
+    [ "$candidate_crypto" -eq "$prior_crypto" ] ||
+      fail 'ordinary deployment requires equal crypto write contracts; use the reviewed bridge operation'
+    assert_release_supports \
+      "$prior_dir" "$candidate_schema" "$candidate_auth" "$candidate_crypto" ||
+      fail 'active release cannot safely roll back after the candidate contract transition'
+    assert_release_supports \
+      "$candidate_dir" "$prior_schema" "$prior_auth" "$prior_crypto" ||
+      fail 'candidate cannot read the active release contracts'
   fi
 
   prepare_release "$candidate_dir"
@@ -245,13 +265,25 @@ bridge_release() {
   candidate_dir=$staged_release_dir
   candidate_schema=$(release_schema_target "$candidate_dir")
   candidate_auth=$(release_auth_contract "$candidate_dir")
+  candidate_crypto=$(release_crypto_write "$candidate_dir")
   [ "$candidate_auth" -eq "$required_auth_contract" ] ||
     fail 'bridge candidate does not implement the required authentication contract'
+  [ "$candidate_crypto" -ge "$required_crypto_contract" ] ||
+    fail 'bridge candidate does not implement the required crypto/keyring contract'
 
   stage_release "$rollback_id"
   rollback_dir=$staged_release_dir
-  assert_release_supports "$rollback_dir" "$candidate_schema" "$candidate_auth" ||
-    fail 'reviewed rollback release is incompatible with the candidate schema contract'
+  rollback_schema=$(release_schema_target "$rollback_dir")
+  rollback_auth=$(release_auth_contract "$rollback_dir")
+  rollback_crypto=$(release_crypto_write "$rollback_dir")
+  [ "$rollback_crypto" -eq "$candidate_crypto" ] ||
+    fail 'bridge candidate and rollback must use the same crypto write contract'
+  assert_release_supports \
+    "$rollback_dir" "$candidate_schema" "$candidate_auth" "$candidate_crypto" ||
+    fail 'reviewed rollback release is incompatible with the candidate contracts'
+  assert_release_supports \
+    "$candidate_dir" "$rollback_schema" "$rollback_auth" "$rollback_crypto" ||
+    fail 'bridge candidate cannot recover from reviewed rollback writes'
 
   resolve_pointer current
   legacy_dir=$resolved_pointer
@@ -282,8 +314,18 @@ rollback_release() {
 
   active_schema=$(release_schema_target "$active_dir")
   active_auth=$(release_auth_contract "$active_dir")
-  assert_release_supports "$rollback_dir" "$active_schema" "$active_auth" ||
-    fail 'rollback release is incompatible with the active schema and authentication contracts'
+  active_crypto=$(release_crypto_write "$active_dir")
+  rollback_schema=$(release_schema_target "$rollback_dir")
+  rollback_auth=$(release_auth_contract "$rollback_dir")
+  rollback_crypto=$(release_crypto_write "$rollback_dir")
+  [ "$rollback_crypto" -ge "$active_crypto" ] ||
+    fail 'rollback would lower the active crypto write contract'
+  assert_release_supports \
+    "$rollback_dir" "$active_schema" "$active_auth" "$active_crypto" ||
+    fail 'rollback release is incompatible with the active schema, authentication, or crypto/keyring contracts'
+  assert_release_supports \
+    "$active_dir" "$rollback_schema" "$rollback_auth" "$rollback_crypto" ||
+    fail 'active release cannot recover from rollback writes'
   prepare_release "$rollback_dir"
   if ! start_release "$rollback_dir"; then
     start_release "$active_dir" || fail 'rollback and active release health checks failed'

@@ -9,6 +9,14 @@ const workflowsDirectory = resolve(root, '.github', 'workflows');
 const immutableAction = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+@[a-f0-9]{40}$/;
 const forbiddenBranchCiText = /(?:\bssh\b|\bscp\b|\brsync\b|deploy(?:ment)?|environment\s*:)/i;
 
+function includesEvery(value, fragments) {
+  return typeof value === 'string' && fragments.every((fragment) => value.includes(fragment));
+}
+
+function occurrences(source, needle) {
+  return source.split(needle).length - 1;
+}
+
 function visit(value, callback, path = []) {
   callback(value, path);
   if (Array.isArray(value)) {
@@ -62,8 +70,25 @@ export function checkWorkflows(directory = workflowsDirectory) {
     ) {
       errors.push(`${file}: top-level permissions must be exactly contents: read`);
     }
-    if (isBranchCi && forbiddenBranchCiText.test(source))
+    const branchCiSource = source.replace(
+      'node infrastructure/deploy/create-release-metadata.mjs --check-contract',
+      '',
+    );
+    if (isBranchCi && forbiddenBranchCiText.test(branchCiSource))
       errors.push(`${file}: branch CI contains deployment/production/SSH text`);
+    if (
+      isBranchCi &&
+      !source.includes('node infrastructure/deploy/create-release-metadata.mjs --check-contract')
+    ) {
+      errors.push(`${file}: branch CI must validate source release capabilities`);
+    }
+    const expectedFullSecretScans = isProductionDeploy ? 3 : 1;
+    if (
+      source.includes('scan:secrets -- --full-history') ||
+      occurrences(source, 'npm run scan:secrets -- --scope full') !== expectedFullSecretScans
+    ) {
+      errors.push(`${file}: every source path must use the supported full secret-scan scope`);
+    }
     if (
       isReusableDeploy &&
       Object.values(workflow?.jobs ?? {}).some(
@@ -79,13 +104,17 @@ export function checkWorkflows(directory = workflowsDirectory) {
       if (!Object.hasOwn(workflow?.on ?? {}, 'workflow_dispatch')) {
         errors.push(`${file}: production recovery must expose an explicit manual dispatch`);
       }
+      if (Object.hasOwn(workflow?.on ?? {}, 'pull_request')) {
+        errors.push(`${file}: pull requests must never trigger production operations`);
+      }
       const jobs = workflow?.jobs ?? {};
       if (
-        Object.keys(jobs).sort().join(',') !== 'deploy,rollback' ||
+        Object.keys(jobs).sort().join(',') !== 'bridge,deploy,rollback' ||
+        jobs.bridge?.environment !== 'production' ||
         jobs.deploy?.environment !== 'production' ||
         jobs.rollback?.environment !== 'production'
       ) {
-        errors.push(`${file}: deploy and rollback must bind the production environment`);
+        errors.push(`${file}: deploy, bridge, and rollback must bind the production environment`);
       }
       if (
         jobs.deploy?.if !==
@@ -94,17 +123,95 @@ export function checkWorkflows(directory = workflowsDirectory) {
         errors.push(`${file}: production deployment must default off behind explicit activation`);
       }
       if (
-        jobs.rollback?.if !==
-          "${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'rollback' }}" ||
+        !includesEvery(jobs.rollback?.if, [
+          "github.event_name == 'workflow_dispatch'",
+          "github.ref == 'refs/heads/main'",
+          "inputs.operation == 'rollback'",
+        ]) ||
         !source.includes('omnireach-release rollback')
       ) {
         errors.push(`${file}: rollback must be an environment-reviewed manual operation`);
+      }
+      const dispatchInputs = workflow.on.workflow_dispatch?.inputs ?? {};
+      if (
+        dispatchInputs.candidate_sha?.type !== 'string' ||
+        dispatchInputs.rollback_sha?.type !== 'string' ||
+        dispatchInputs.confirm_bridge?.type !== 'boolean' ||
+        dispatchInputs.confirm_bridge?.default !== false ||
+        dispatchInputs.operation?.default !== 'rollback' ||
+        !dispatchInputs.operation?.options?.includes('bridge') ||
+        !dispatchInputs.operation?.options?.includes('rollback')
+      ) {
+        errors.push(`${file}: bridge dispatch must accept two SHAs and default-off confirmation`);
+      }
+      if (
+        !includesEvery(jobs.bridge?.if, [
+          "github.event_name == 'workflow_dispatch'",
+          "github.ref == 'refs/heads/main'",
+          "inputs.operation == 'bridge'",
+          'inputs.confirm_bridge == true',
+          "vars.PRODUCTION_DEPLOYMENT_ENABLED == 'true'",
+        ])
+      ) {
+        errors.push(`${file}: bridge must be main-only and default off behind both gates`);
+      }
+      const historyCheckout = jobs.bridge?.steps?.find(
+        (step) => step?.name === 'Check out main history for ancestry verification',
+      );
+      if (
+        historyCheckout?.with?.ref !== '${{ github.sha }}' ||
+        historyCheckout?.with?.['fetch-depth'] !== 0 ||
+        historyCheckout?.with?.['persist-credentials'] !== false
+      ) {
+        errors.push(`${file}: bridge ancestry verification must use the pinned workflow commit`);
+      }
+      const candidateCheckout = jobs.bridge?.steps?.find(
+        (step) => step?.name === 'Check out exact candidate source',
+      );
+      const rollbackCheckout = jobs.bridge?.steps?.find(
+        (step) => step?.name === 'Check out exact reviewed rollback source',
+      );
+      if (
+        candidateCheckout?.with?.ref !== '${{ inputs.candidate_sha }}' ||
+        candidateCheckout?.with?.path !== 'candidate-source' ||
+        rollbackCheckout?.with?.ref !== '${{ inputs.rollback_sha }}' ||
+        rollbackCheckout?.with?.path !== 'rollback-source'
+      ) {
+        errors.push(`${file}: bridge artifacts must use separate exact-source checkouts`);
+      }
+      if (
+        !source.includes('merge-base --is-ancestor "${CANDIDATE_SHA}" refs/remotes/origin/main') ||
+        !source.includes('merge-base --is-ancestor "${ROLLBACK_SHA}" refs/remotes/origin/main') ||
+        !source.includes('merge-base --is-ancestor "${ROLLBACK_SHA}" "${CANDIDATE_SHA}"') ||
+        !source.includes('working-directory: candidate-source') ||
+        !source.includes('working-directory: rollback-source') ||
+        !source.includes('omnireach-release bridge ${CANDIDATE_SHA} ${ROLLBACK_SHA}')
+      ) {
+        errors.push(`${file}: bridge must prove main ancestry and build both exact sources`);
+      }
+      if (
+        !source.includes('test "${rollback_crypto}" -eq "${candidate_crypto}"') ||
+        !source.includes('sh "${validator}" supports "${rollback_metadata}" "${ROLLBACK_SHA}"') ||
+        !source.includes('sh "${validator}" supports "${candidate_metadata}" "${CANDIDATE_SHA}"')
+      ) {
+        errors.push(`${file}: bridge must preflight both release contracts before transfer`);
+      }
+      if (
+        occurrences(source, 'node infrastructure/deploy/create-release-metadata.mjs') < 3 ||
+        occurrences(source, 'npm run verify:goal -- G05') < 3 ||
+        occurrences(source, 'npm run verify:goal -- G06') < 3 ||
+        occurrences(source, 'npm run verify:goal -- G30') < 3
+      ) {
+        errors.push(`${file}: candidate and rollback must independently pass gates and metadata`);
       }
       if (!source.includes('omnireach-release deploy ${GITHUB_SHA}')) {
         errors.push(`${file}: production deployment must activate the exact pushed SHA`);
       }
       if (!source.includes('${TARGET_USER}@${TARGET_HOST}:/opt/servers/omnireach/incoming/')) {
         errors.push(`${file}: production artifacts must use the fixed target incoming directory`);
+      }
+      if (!source.includes('StrictHostKeyChecking=yes') || !source.includes('known_hosts')) {
+        errors.push(`${file}: production operations must strictly verify the SSH host key`);
       }
     }
     if (
