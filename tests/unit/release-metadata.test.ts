@@ -26,13 +26,17 @@ const legacyContract = {
   schemaMinimum: 2,
   schemaTarget: 2,
 };
-const keyringContract = {
+const keyringAuthV2Contract = {
   ...legacyContract,
   cryptoReadMaximum: 2,
   cryptoWrite: 2,
 };
+const webAuthnContract = {
+  ...keyringAuthV2Contract,
+  authContract: 3,
+};
 const metadataSource = renderReleaseMetadata({
-  contract: keyringContract,
+  contract: webAuthnContract,
   migrationCount: 2,
   migrationHead: '20261010250000_g05_account_authentication_policy',
   releaseId,
@@ -43,7 +47,7 @@ describe('immutable release contract metadata', () => {
     const metadata = parseReleaseMetadata(metadataSource, releaseId);
 
     expect(metadata).toMatchObject({
-      authContract: 2,
+      authContract: 3,
       cryptoReadMaximum: 2,
       cryptoReadMinimum: 1,
       cryptoWrite: 2,
@@ -55,21 +59,21 @@ describe('immutable release contract metadata', () => {
     expect(() => parseReleaseMetadata(metadataSource, 'b'.repeat(40))).toThrow('identity mismatch');
   });
 
-  it('rejects duplicate fields and a pre-keyring Auth v2 rollback after keyring writes', () => {
+  it('rejects duplicate fields and authentication/schema/crypto-incompatible rollbacks', () => {
     expect(() =>
-      parseReleaseMetadata(`${metadataSource}OMNIREACH_AUTH_CONTRACT=2\n`, releaseId),
+      parseReleaseMetadata(`${metadataSource}OMNIREACH_AUTH_CONTRACT=3\n`, releaseId),
     ).toThrow('Duplicate');
     const metadata = parseReleaseMetadata(metadataSource, releaseId);
     expect(() =>
       assertReleaseMetadataSupports(metadata, {
-        authContract: 1,
+        authContract: 2,
         cryptoContract: 2,
         schemaContract: 2,
       }),
     ).toThrow('authentication contract');
     expect(() =>
       assertReleaseMetadataSupports(metadata, {
-        authContract: 2,
+        authContract: 3,
         cryptoContract: 2,
         schemaContract: 3,
       }),
@@ -108,7 +112,7 @@ describe('immutable release contract metadata', () => {
     ).toThrow('crypto/keyring contract');
   });
 
-  it('requires the checked-in manifest to track versioned-keyring source capability', () => {
+  it('requires the manifest to track keyring and exact-RP WebAuthn source capabilities', () => {
     const parsed = parseReleaseContractManifest(`{
       "manifestVersion": 1,
       "authContract": 2,
@@ -129,10 +133,25 @@ describe('immutable release contract metadata', () => {
         keyringSource,
       ),
     ).toThrow('requires crypto contract 2');
-    expect(() => assertManifestMatchesSourceCapabilities(keyringContract, 'legacy source')).toThrow(
+    expect(() =>
+      assertManifestMatchesSourceCapabilities(keyringAuthV2Contract, 'legacy source'),
+    ).toThrow('absent from source');
+    expect(assertManifestMatchesSourceCapabilities(keyringAuthV2Contract, keyringSource)).toBe(
+      true,
+    );
+    const webAuthnSource = `
+      export const webAuthnCeremonyTtlSeconds = 300;
+      export function verifyExactHostWebAuthnAuthentication() {}
+    `;
+    expect(() =>
+      assertManifestMatchesSourceCapabilities(keyringAuthV2Contract, keyringSource, webAuthnSource),
+    ).toThrow('requires authentication contract 3');
+    expect(() => assertManifestMatchesSourceCapabilities(webAuthnContract, keyringSource)).toThrow(
       'absent from source',
     );
-    expect(assertManifestMatchesSourceCapabilities(keyringContract, keyringSource)).toBe(true);
+    expect(
+      assertManifestMatchesSourceCapabilities(webAuthnContract, keyringSource, webAuthnSource),
+    ).toBe(true);
   });
 
   it('creates metadata once from the ordered migration set', async () => {
@@ -204,13 +223,13 @@ describe('immutable release contract metadata', () => {
           'validate-release-metadata.sh',
         );
         await expect(
-          execFileAsync(validator, ['supports', metadataPath, releaseId, '2', '2', '2']),
+          execFileAsync(validator, ['supports', metadataPath, releaseId, '2', '3', '2']),
         ).resolves.toBeDefined();
         await expect(
-          execFileAsync(validator, ['supports', metadataPath, releaseId, '3', '2', '2']),
+          execFileAsync(validator, ['supports', metadataPath, releaseId, '3', '3', '2']),
         ).rejects.toThrow();
         await expect(
-          execFileAsync(validator, ['supports', legacyMetadataPath, releaseId, '2', '2', '2']),
+          execFileAsync(validator, ['supports', legacyMetadataPath, releaseId, '2', '3', '2']),
         ).rejects.toThrow();
       } finally {
         await rm(fixture, { recursive: true, force: true });

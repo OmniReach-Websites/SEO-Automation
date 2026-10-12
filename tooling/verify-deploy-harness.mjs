@@ -43,9 +43,13 @@ try {
     cryptoReadMaximum: 2,
     cryptoWrite: 2,
   };
+  const webAuthnContract = {
+    ...keyringCryptoContract,
+    authContract: 3,
+  };
   const metadata = parseReleaseMetadata(
     renderReleaseMetadata({
-      contract: keyringCryptoContract,
+      contract: webAuthnContract,
       migrationCount: 1,
       migrationHead: '20261010250000_g05_account_authentication_policy',
       releaseId: first,
@@ -53,14 +57,14 @@ try {
     first,
   );
   assertReleaseMetadataSupports(metadata, {
-    authContract: 2,
+    authContract: 3,
     cryptoContract: 2,
     schemaContract: 2,
   });
   let incompatibleRollbackRejected = false;
   try {
     assertReleaseMetadataSupports(metadata, {
-      authContract: 2,
+      authContract: 3,
       cryptoContract: 2,
       schemaContract: 3,
     });
@@ -79,12 +83,31 @@ try {
       first,
     );
     assertReleaseMetadataSupports(preKeyringMetadata, {
-      authContract: 2,
+      authContract: 3,
       cryptoContract: 2,
       schemaContract: 2,
     });
   } catch {
     preKeyringRollbackRejected = true;
+  }
+  let preWebAuthnRollbackRejected = false;
+  try {
+    const preWebAuthnMetadata = parseReleaseMetadata(
+      renderReleaseMetadata({
+        contract: keyringCryptoContract,
+        migrationCount: 1,
+        migrationHead: '20261010250000_g05_account_authentication_policy',
+        releaseId: first,
+      }),
+      first,
+    );
+    assertReleaseMetadataSupports(preWebAuthnMetadata, {
+      authContract: 3,
+      cryptoContract: 2,
+      schemaContract: 2,
+    });
+  } catch {
+    preWebAuthnRollbackRejected = true;
   }
   let metadataIdentityRejected = false;
   try {
@@ -138,6 +161,7 @@ try {
     !migrationRejected ||
     !incompatibleRollbackRejected ||
     !preKeyringRollbackRejected ||
+    !preWebAuthnRollbackRejected ||
     !metadataIdentityRejected ||
     !releaseLockRejected ||
     current.releaseId !== first ||
@@ -154,6 +178,7 @@ try {
       migrationRejected,
       ok: true,
       preKeyringRollbackRejected,
+      preWebAuthnRollbackRejected,
       releaseId: current.releaseId,
       releaseLockRejected,
       restored,

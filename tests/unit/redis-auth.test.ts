@@ -4,9 +4,10 @@ import {
   LocalRedisPasswordRecoveryNotifier,
   RedisMfaChallengeStore,
   RedisOwnerBootstrapPendingStore,
+  RedisWebAuthnCeremonyStore,
   type AuthRedisClient,
 } from '@omnireach/api/redis-auth';
-import type { MfaChallenge } from '@omnireach/auth';
+import type { MfaChallenge, WebAuthnCeremony } from '@omnireach/auth';
 import { describe, expect, it, vi } from 'vitest';
 
 function redisClient(): AuthRedisClient & { values: Map<string, string> } {
@@ -41,11 +42,102 @@ describe('Redis authentication boundaries', () => {
       userId: 'staff-a',
     };
     const id = await store.create(challenge, 300);
-    expect([...redis.values.keys()][0]).toMatch(/^omnireach:auth:mfa:v2:/u);
+    expect([...redis.values.keys()][0]).toMatch(/^omnireach:auth:mfa:v3:/u);
     expect([...redis.values.keys()][0]).not.toContain(id);
     await expect(store.read(id)).resolves.toEqual(challenge);
     await expect(store.consume(id)).resolves.toEqual(challenge);
     await expect(store.consume(id)).resolves.toBeUndefined();
+  });
+
+  it('stores exact-host WebAuthn ceremony state under a digest and consumes it once', async () => {
+    const redis = redisClient();
+    const store = new RedisWebAuthnCeremonyStore(redis);
+    const ceremony = {
+      authStateVersion: '7',
+      baseChallengeDigest: 'a'.repeat(64),
+      challenge: 'base64url_challenge_value',
+      host: 'admin.omnireach.cloud',
+      origin: 'https://admin.omnireach.cloud',
+      purpose: 'authentication' as const,
+      rpId: 'admin.omnireach.cloud',
+      scopeId: '10000000-0000-4000-8000-000000000001',
+      traceId: 'trace-webauthn',
+      userHandle: Buffer.alloc(64, 7).toString('base64url'),
+      userId: '20000000-0000-4000-8000-000000000001',
+    };
+    const id = await store.create(ceremony);
+    const key = [...redis.values.keys()][0];
+    expect(key).toMatch(/^omnireach:auth:webauthn:v3:[a-f0-9]{64}$/u);
+    expect(key).not.toContain(id);
+    await expect(store.consume(id)).resolves.toEqual(ceremony);
+    await expect(store.consume(id)).resolves.toBeUndefined();
+  });
+
+  it('rejects widened origins, overlong lifetimes, and malformed ceremony bindings', async () => {
+    const redis = redisClient();
+    const store = new RedisWebAuthnCeremonyStore(redis);
+    const ceremony = {
+      authStateVersion: '1',
+      challenge: 'base64url_challenge_value',
+      host: 'admin.customer.example',
+      origin: 'https://customer.example',
+      purpose: 'registration' as const,
+      rpId: 'admin.customer.example',
+      scopeId: '10000000-0000-4000-8000-000000000001',
+      siteId: '30000000-0000-4000-8000-000000000001',
+      tenantId: '40000000-0000-4000-8000-000000000001',
+      traceId: 'trace-webauthn',
+      userHandle: Buffer.alloc(64, 8).toString('base64url'),
+      userId: '20000000-0000-4000-8000-000000000001',
+    };
+    await expect(store.create(ceremony as unknown as WebAuthnCeremony)).rejects.toThrow(
+      'Invalid WebAuthn ceremony',
+    );
+    await expect(
+      store.create(
+        { ...ceremony, origin: 'https://admin.customer.example' } as unknown as WebAuthnCeremony,
+        301,
+      ),
+    ).rejects.toThrow('lifetime');
+  });
+
+  it('requires exactly one purpose-specific WebAuthn authorization binding', async () => {
+    const redis = redisClient();
+    const store = new RedisWebAuthnCeremonyStore(redis);
+    const common = {
+      authStateVersion: '3',
+      challenge: 'base64url_challenge_value',
+      host: 'admin.omnireach.cloud',
+      origin: 'https://admin.omnireach.cloud',
+      rpId: 'admin.omnireach.cloud',
+      scopeId: '10000000-0000-4000-8000-000000000001',
+      traceId: 'trace-binding',
+      userHandle: Buffer.alloc(64, 9).toString('base64url'),
+      userId: '20000000-0000-4000-8000-000000000001',
+    };
+    const registration: WebAuthnCeremony = {
+      ...common,
+      purpose: 'registration',
+      sessionTokenHash: 'b'.repeat(64),
+    };
+    const ownerBootstrap: WebAuthnCeremony = {
+      ...common,
+      bootstrapBindingDigest: 'c'.repeat(64),
+      purpose: 'owner_bootstrap',
+    };
+    await expect(store.create(registration)).resolves.toBeTypeOf('string');
+    await expect(store.create(ownerBootstrap)).resolves.toBeTypeOf('string');
+    await expect(
+      store.create({
+        ...registration,
+        baseChallengeDigest: 'd'.repeat(64),
+      } as WebAuthnCeremony),
+    ).rejects.toThrow('Invalid WebAuthn ceremony');
+    const missingSession = { ...registration } as Record<string, unknown>;
+    delete missingSession.sessionTokenHash;
+    await expect(store.create(missingSession as unknown as WebAuthnCeremony)).rejects.toThrow(
+      'Invalid WebAuthn ceremony',
+    );
   });
 
   it('stores local recovery tokens behind a hashed email key without logging them', async () => {

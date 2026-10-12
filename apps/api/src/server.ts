@@ -160,7 +160,7 @@ export function buildApiServer(options: ApiServerOptions = {}) {
       return reply.code(503).send({ failed, status: 'degraded' });
     }
     return reply.code(200).send({
-      authContract: 2,
+      authContract: 3,
       dependencies: dependencies.map(({ name }) => name),
       status: 'ready',
     });

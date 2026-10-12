@@ -31,7 +31,7 @@ describe('API health contract', () => {
     const response = await server.inject({ method: 'GET', url: '/health/ready' });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({
-      authContract: 2,
+      authContract: 3,
       dependencies: ['postgres', 'redis'],
       status: 'ready',
     });

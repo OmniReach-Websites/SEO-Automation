@@ -47,13 +47,15 @@
       "orap-admin.test.ts",
       "password-recovery-outbox.test.ts",
       "postgres-auth.test.ts",
+      "postgres-webauthn.test.ts",
       "postgres-orap.test.ts",
       "postgres-password-recovery.test.ts",
       "postgres-recovery-code.test.ts",
       "postgres-session-idle.test.ts",
       "redis-auth.test.ts",
       "redis-email-code-challenge.test.ts",
-      "resend-auth-alert.test.ts"
+      "resend-auth-alert.test.ts",
+      "webauthn.test.ts"
     ],
     ["npm", "run", "test:integration", "--", "auth/routes.test.ts"],
     ["npm", "run", "test:security"],
@@ -63,7 +65,7 @@
   "G06": [
     ["npm", "run", "check:migrations"],
     ["npm", "run", "test:security"],
-    ["node", "tooling/verify-auth-v2-migration.mjs"]
+    ["node", "tooling/verify-auth-v3-migration.mjs"]
   ],
   "G07": [
     ["npm", "test", "--", "orap-admin.test.ts"],

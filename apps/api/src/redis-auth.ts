@@ -11,6 +11,10 @@ import {
   type PasswordRecoveryNotifier,
   type VerificationCodeNotifier,
   type VerificationMethod,
+  normalizeWebAuthnHost,
+  webAuthnCeremonyTtlSeconds,
+  type WebAuthnCeremony,
+  type WebAuthnCeremonyStore,
 } from '@omnireach/auth';
 
 export interface AuthRedisClient {
@@ -83,7 +87,7 @@ export class RedisMfaChallengeStore implements MfaChallengeStore {
     private readonly redis: AuthRedisClient,
     // Version the namespace so a code rollback cannot consume challenges created
     // under the newer account-policy/auth-state contract.
-    private readonly prefix = 'omnireach:auth:mfa:v2:',
+    private readonly prefix = 'omnireach:auth:mfa:v3:',
   ) {}
 
   async create(challenge: MfaChallenge, ttlSeconds: number): Promise<string> {
@@ -118,6 +122,43 @@ export class RedisMfaChallengeStore implements MfaChallengeStore {
 
   private key(challengeId: string): string {
     return `${this.prefix}${digestToken(challengeId)}`;
+  }
+}
+
+export class RedisWebAuthnCeremonyStore implements WebAuthnCeremonyStore {
+  constructor(
+    private readonly redis: AuthRedisClient,
+    private readonly prefix = 'omnireach:auth:webauthn:v3:',
+  ) {}
+
+  async create(
+    ceremony: WebAuthnCeremony,
+    ttlSeconds = webAuthnCeremonyTtlSeconds,
+  ): Promise<string> {
+    if (
+      !Number.isInteger(ttlSeconds) ||
+      ttlSeconds < 1 ||
+      ttlSeconds > webAuthnCeremonyTtlSeconds
+    ) {
+      throw new Error('Invalid WebAuthn ceremony lifetime');
+    }
+    const validated = parseWebAuthnCeremony(JSON.stringify(ceremony));
+    if (!validated) throw new Error('Invalid WebAuthn ceremony');
+    const value = JSON.stringify(validated);
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const id = createOneTimeToken().token;
+      const stored = await this.redis.set(this.key(id), value, { EX: ttlSeconds, NX: true });
+      if (stored === 'OK') return id;
+    }
+    throw new Error('Unable to allocate WebAuthn ceremony');
+  }
+
+  async consume(ceremonyId: string): Promise<WebAuthnCeremony | undefined> {
+    return parseWebAuthnCeremony(await this.redis.getDel(this.key(ceremonyId)));
+  }
+
+  private key(ceremonyId: string): string {
+    return `${this.prefix}${digestToken(ceremonyId)}`;
   }
 }
 
@@ -334,6 +375,64 @@ function parseChallenge(value: string | null): MfaChallenge | undefined {
   }
 }
 
+function parseWebAuthnCeremony(value: string | null): WebAuthnCeremony | undefined {
+  if (!value) return undefined;
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    const tenantId = optionalUuid(parsed.tenantId);
+    const siteId = optionalUuid(parsed.siteId);
+    const binding = parseWebAuthnCeremonyBinding(parsed);
+    if (
+      typeof parsed.authStateVersion !== 'string' ||
+      !/^[1-9][0-9]*$/u.test(parsed.authStateVersion) ||
+      !binding ||
+      typeof parsed.challenge !== 'string' ||
+      parsed.challenge.length < 16 ||
+      parsed.challenge.length > 512 ||
+      !/^[A-Za-z0-9_-]+$/u.test(parsed.challenge) ||
+      typeof parsed.host !== 'string' ||
+      typeof parsed.origin !== 'string' ||
+      !isWebAuthnPurpose(parsed.purpose) ||
+      typeof parsed.rpId !== 'string' ||
+      typeof parsed.scopeId !== 'string' ||
+      !isUuid(parsed.scopeId) ||
+      (parsed.sessionTokenHash !== undefined && !isSha256Digest(parsed.sessionTokenHash)) ||
+      (parsed.tenantId !== undefined && !tenantId) ||
+      (parsed.siteId !== undefined && !siteId) ||
+      Boolean(tenantId) !== Boolean(siteId) ||
+      typeof parsed.traceId !== 'string' ||
+      !parsed.traceId ||
+      parsed.traceId.length > 128 ||
+      typeof parsed.userHandle !== 'string' ||
+      !isUserHandle(parsed.userHandle) ||
+      typeof parsed.userId !== 'string' ||
+      !isUuid(parsed.userId)
+    ) {
+      return undefined;
+    }
+    const host = normalizeWebAuthnHost(parsed.host);
+    if (host !== parsed.host || parsed.rpId !== host || parsed.origin !== `https://${host}`) {
+      return undefined;
+    }
+    return {
+      authStateVersion: parsed.authStateVersion,
+      ...binding,
+      challenge: parsed.challenge,
+      host,
+      origin: parsed.origin,
+      rpId: parsed.rpId,
+      scopeId: parsed.scopeId,
+      ...(siteId ? { siteId } : {}),
+      ...(tenantId ? { tenantId } : {}),
+      traceId: parsed.traceId,
+      userHandle: parsed.userHandle,
+      userId: parsed.userId,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 function parseOwnerBootstrap(value: string | null): PendingOwnerBootstrap | undefined {
   if (!value) return undefined;
   try {
@@ -378,6 +477,86 @@ function assertDigest(value: string): void {
 
 function isVerificationMethod(value: unknown): value is VerificationMethod {
   return value === 'email_code' || value === 'totp' || value === 'webauthn';
+}
+
+function isWebAuthnPurpose(value: unknown): value is WebAuthnCeremony['purpose'] {
+  return (
+    value === 'authentication' ||
+    value === 'owner_bootstrap' ||
+    value === 'registration' ||
+    value === 'step_up'
+  );
+}
+
+function parseWebAuthnCeremonyBinding(
+  parsed: Record<string, unknown>,
+):
+  | Pick<
+      Extract<WebAuthnCeremony, { purpose: 'authentication' }>,
+      'baseChallengeDigest' | 'purpose'
+    >
+  | Pick<
+      Extract<WebAuthnCeremony, { purpose: 'owner_bootstrap' }>,
+      'bootstrapBindingDigest' | 'purpose'
+    >
+  | Pick<
+      Extract<WebAuthnCeremony, { purpose: 'registration' | 'step_up' }>,
+      'purpose' | 'sessionTokenHash'
+    >
+  | undefined {
+  if (!isWebAuthnPurpose(parsed.purpose)) return undefined;
+  const base = parsed.baseChallengeDigest;
+  const bootstrap = parsed.bootstrapBindingDigest;
+  const session = parsed.sessionTokenHash;
+  if (
+    parsed.purpose === 'authentication' &&
+    isSha256Digest(base) &&
+    bootstrap === undefined &&
+    session === undefined
+  ) {
+    return { baseChallengeDigest: base, purpose: parsed.purpose };
+  }
+  if (
+    parsed.purpose === 'owner_bootstrap' &&
+    base === undefined &&
+    isSha256Digest(bootstrap) &&
+    session === undefined
+  ) {
+    return { bootstrapBindingDigest: bootstrap, purpose: parsed.purpose };
+  }
+  if (
+    (parsed.purpose === 'registration' || parsed.purpose === 'step_up') &&
+    base === undefined &&
+    bootstrap === undefined &&
+    isSha256Digest(session)
+  ) {
+    return { purpose: parsed.purpose, sessionTokenHash: session };
+  }
+  return undefined;
+}
+
+function isSha256Digest(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value);
+}
+
+function isUuid(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value)
+  );
+}
+
+function optionalUuid(value: unknown): string | undefined {
+  return value === undefined ? undefined : isUuid(value) ? value : undefined;
+}
+
+function isUserHandle(value: string): boolean {
+  if (!/^[A-Za-z0-9_-]+$/u.test(value)) return false;
+  try {
+    return Buffer.from(value, 'base64url').byteLength === 64;
+  } catch {
+    return false;
+  }
 }
 
 const REPLACE_EMAIL_CODE_SCRIPT = `

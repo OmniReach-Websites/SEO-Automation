@@ -92,6 +92,16 @@
   recent TOTP or WebAuthn verification, or an explicitly approved short-lived,
   single-use, reason-bearing break-glass procedure. Email or a recovery-code session
   alone cannot authorize those changes.
+- WebAuthn is exact-host scoped. The normalized verified admin hostname is both RP ID
+  and the only accepted HTTPS origin; apex, wildcard, caller-selected, and cross-origin
+  bindings are rejected. Ceremony state is opaque, one-use, server-side, and expires in
+  at most five minutes. User verification is required and attestation is not collected.
+- The Auth Contract v3 persistence foundation stores random 64-byte user handles and
+  immutable RP/site credential identity behind forced RLS and auth-role-only grants.
+  There are no passkey routes or credential mutation methods yet. Later enrollment and
+  revocation must atomically audit and revoke sessions; assertion counter/backup updates
+  must be atomic with session issuance. A verified email-code or TOTP fallback remains
+  mandatory before passkey enrollment in V1, including for multi-host identities.
 - Customer Owner, Customer Editor, and Customer Viewer accounts are password-only by
   default. Customers may voluntarily enable email-code verification, TOTP, or WebAuthn
   through tenant-safe security settings. Enrollment must verify the new method before

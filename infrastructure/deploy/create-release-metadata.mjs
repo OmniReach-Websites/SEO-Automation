@@ -75,7 +75,11 @@ export function parseReleaseContractManifest(source) {
   return contract;
 }
 
-export function assertManifestMatchesSourceCapabilities(contract, authSecretsSource) {
+export function assertManifestMatchesSourceCapabilities(
+  contract,
+  authSecretsSource,
+  authWebAuthnSource = '',
+) {
   const hasVersionedKeyring =
     /\binterface\s+VersionedSecretKeyring\b/u.test(authSecretsSource) &&
     /\bcreateVersionedSecretKeyring\b/u.test(authSecretsSource);
@@ -87,6 +91,17 @@ export function assertManifestMatchesSourceCapabilities(contract, authSecretsSou
   }
   if (!hasVersionedKeyring && claimsVersionedKeyring) {
     throw new Error('Crypto contract claims versioned keyring support absent from source');
+  }
+  const hasRpScopedWebAuthn =
+    /\bwebAuthnCeremonyTtlSeconds\b/u.test(authWebAuthnSource) &&
+    /\bverifyExactHostWebAuthnAuthentication\b/u.test(authWebAuthnSource);
+  if (hasRpScopedWebAuthn && contract.authContract < 3) {
+    throw new Error('RP-scoped WebAuthn source requires authentication contract 3 or newer');
+  }
+  if (!hasRpScopedWebAuthn && contract.authContract >= 3) {
+    throw new Error(
+      'Authentication contract 3 claims RP-scoped WebAuthn support absent from source',
+    );
   }
   return true;
 }
@@ -192,18 +207,20 @@ export function assertReleaseMetadataSupports(
   return true;
 }
 
-export async function verifyReleaseContract({ authSecretsPath, manifestPath }) {
-  const [authSecretsSource, contractSource] = await Promise.all([
+export async function verifyReleaseContract({ authSecretsPath, authWebAuthnPath, manifestPath }) {
+  const [authSecretsSource, authWebAuthnSource, contractSource] = await Promise.all([
     readFile(authSecretsPath, 'utf8'),
+    authWebAuthnPath ? readFile(authWebAuthnPath, 'utf8') : Promise.resolve(''),
     readFile(manifestPath, 'utf8'),
   ]);
   const contract = parseReleaseContractManifest(contractSource);
-  assertManifestMatchesSourceCapabilities(contract, authSecretsSource);
+  assertManifestMatchesSourceCapabilities(contract, authSecretsSource, authWebAuthnSource);
   return contract;
 }
 
 export async function createReleaseMetadata({
   authSecretsPath,
+  authWebAuthnPath,
   manifestPath,
   migrationsRoot,
   outputPath,
@@ -212,7 +229,7 @@ export async function createReleaseMetadata({
 }) {
   if (sourceCommit !== releaseId) throw new Error('Release ID does not match checked-out source');
   const [contract, migrations] = await Promise.all([
-    verifyReleaseContract({ authSecretsPath, manifestPath }),
+    verifyReleaseContract({ authSecretsPath, authWebAuthnPath, manifestPath }),
     readdir(migrationsRoot, { withFileTypes: true }),
   ]);
   const migrationNames = migrations
@@ -236,6 +253,7 @@ async function main() {
   const root = resolve(import.meta.dirname, '../..');
   const contractPaths = {
     authSecretsPath: resolve(root, 'packages/auth/src/secrets.ts'),
+    authWebAuthnPath: resolve(root, 'packages/auth/src/webauthn.ts'),
     manifestPath: resolve(root, 'infrastructure/deploy/release-contract.json'),
   };
   if (releaseId === '--check-contract') {
