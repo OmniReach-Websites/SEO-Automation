@@ -66,7 +66,7 @@ describe('production release workflow gates', () => {
     const result = withWorkflowFixture((files) => ({
       ...files,
       'deploy-production.yml': workflowSource(files, 'deploy-production.yml').replace(
-        "inputs.confirm_bridge == true &&\n      vars.PRODUCTION_DEPLOYMENT_ENABLED == 'true'",
+        /inputs\.confirm_bridge == true &&\r?\n      vars\.PRODUCTION_DEPLOYMENT_ENABLED == 'true'/u,
         'inputs.confirm_bridge == true',
       ),
     }));
@@ -80,7 +80,7 @@ describe('production release workflow gates', () => {
     const result = withWorkflowFixture((files) => ({
       ...files,
       'deploy-production.yml': workflowSource(files, 'deploy-production.yml').replace(
-        "inputs.confirm_rollback == true &&\n      vars.PRODUCTION_DEPLOYMENT_ENABLED == 'true'",
+        /inputs\.confirm_rollback == true &&\r?\n      vars\.PRODUCTION_DEPLOYMENT_ENABLED == 'true'/u,
         'inputs.confirm_rollback == true',
       ),
     }));
