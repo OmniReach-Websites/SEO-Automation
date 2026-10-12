@@ -1,6 +1,7 @@
 node_modules
 package-lock.json
 docs/masterplan.md
+docs/OmniReach_ORAP_Codex_Master_Prompt.md
 dist
 build
 packages/database/generated

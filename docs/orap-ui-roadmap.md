@@ -604,17 +604,17 @@ O10 ── O11 documentation and release-readiness handoff
 
 ## 5. Progress ledger
 
-| Goal | Status      | Depends on   | Notes                                                             |
-| ---- | ----------- | ------------ | ----------------------------------------------------------------- |
-| O00  | complete    | —            | Audit, roadmap, ADR, and cross-references complete                |
-| O01  | complete    | O00          | Capability catalog and normalized data foundation complete        |
-| O02  | complete    | O01          | Effective authorization, scope cutover, and route registry        |
-| O03  | in progress | O02          | Owner-only directory complete; mutation lifecycle remains         |
-| O04  | not started | O03          | Configurable roles/scopes and impact preview                      |
-| O05  | in progress | O02          | Shell, overview, responsive layout, and current navigation work   |
-| O06  | not started | O04, O05     | Customer and website workflows                                    |
-| O07  | not started | O06          | SEO/AIO, automation, analytics                                    |
-| O08  | not started | O06          | Subscriptions, spending, alerts                                   |
-| O09  | not started | O04, O05     | Security, audit, sessions, settings                               |
-| O10  | not started | O04, O06-O09 | Integrated security/browser/a11y gate                             |
-| O11  | not started | O10          | Documentation and production-gate handoff                         |
+| Goal | Status      | Depends on   | Notes                                                           |
+| ---- | ----------- | ------------ | --------------------------------------------------------------- |
+| O00  | complete    | —            | Audit, roadmap, ADR, and cross-references complete              |
+| O01  | complete    | O00          | Capability catalog and normalized data foundation complete      |
+| O02  | complete    | O01          | Effective authorization, scope cutover, and route registry      |
+| O03  | in progress | O02          | Owner-only directory complete; mutation lifecycle remains       |
+| O04  | not started | O03          | Configurable roles/scopes and impact preview                    |
+| O05  | in progress | O02          | Shell, overview, responsive layout, and current navigation work |
+| O06  | not started | O04, O05     | Customer and website workflows                                  |
+| O07  | not started | O06          | SEO/AIO, automation, analytics                                  |
+| O08  | not started | O06          | Subscriptions, spending, alerts                                 |
+| O09  | not started | O04, O05     | Security, audit, sessions, settings                             |
+| O10  | not started | O04, O06-O09 | Integrated security/browser/a11y gate                           |
+| O11  | not started | O10          | Documentation and production-gate handoff                       |
