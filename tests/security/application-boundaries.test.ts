@@ -126,13 +126,28 @@ describe('application security boundaries', () => {
     expect(accepted.statusCode).toBe(200);
     expect(login).toHaveBeenCalledOnce();
 
+    const acceptedWithReferer = await server.inject({
+      headers: {
+        host: 'admin.fixture.test',
+        referer: 'https://admin.fixture.test/login',
+      },
+      method: 'POST',
+      payload: { email: 'owner@fixture.test', password: 'fictional-password' },
+      url: '/auth/login',
+    });
+    expect(acceptedWithReferer.statusCode).toBe(200);
+    expect(login).toHaveBeenCalledTimes(2);
+
     for (const headers of [
       { host: 'admin.fixture.test' },
+      { host: 'admin.fixture.test', referer: 'https://attacker.test/login' },
+      { host: 'admin.fixture.test', referer: 'not-a-url' },
       { host: 'admin.fixture.test', ...browserNavigation, 'sec-fetch-site': 'cross-site' },
       { host: 'admin.fixture.test', ...browserNavigation, 'sec-fetch-mode': 'cors' },
       {
         host: 'admin.fixture.test',
         origin: 'https://attacker.test',
+        referer: 'https://admin.fixture.test/login',
         ...browserNavigation,
       },
     ]) {
@@ -144,7 +159,7 @@ describe('application security boundaries', () => {
       });
       expect(rejected.statusCode).toBe(403);
     }
-    expect(login).toHaveBeenCalledOnce();
+    expect(login).toHaveBeenCalledTimes(2);
   });
 
   it('blocks forbidden crawl networks and site-crossing asset paths', async () => {

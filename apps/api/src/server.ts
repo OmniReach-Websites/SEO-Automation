@@ -120,7 +120,9 @@ export function buildApiServer(options: ApiServerOptions = {}) {
         "default-src 'none'; form-action 'self'; frame-ancestors 'none'",
       );
     }
-    reply.header('Referrer-Policy', 'no-referrer');
+    // Keep cross-site navigation private while allowing same-origin form
+    // submissions to use Referer as a standards-based CSRF fallback.
+    reply.header('Referrer-Policy', 'same-origin');
     reply.header('X-Content-Type-Options', 'nosniff');
     reply.header('X-Frame-Options', 'DENY');
   });
