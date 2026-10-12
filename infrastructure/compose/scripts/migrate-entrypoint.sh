@@ -22,6 +22,7 @@ export DATABASE_URL="postgresql://omnireach_db_admin:${admin_password}@postgres:
 unset admin_password
 
 npm run db:migrate
+npm run db:sync-orap-catalog
 
 PGPASSWORD=$(printf '%s' "$DATABASE_URL" | node -e "process.stdin.once('data', d => process.stdout.write(new URL(d.toString()).password))") \
   psql \
@@ -50,4 +51,3 @@ SQL
 
 unset app_password DATABASE_URL PGPASSWORD
 printf '%s\n' 'Database migrations and restricted runtime role provisioning completed.'
-
