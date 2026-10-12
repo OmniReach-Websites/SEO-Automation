@@ -24,6 +24,11 @@ to become unavailable by default rather than inheriting an accidental broad staf
   staff roles/permissions, or change staff role/resource-scope assignments. This is a
   direct server-side owner-identity invariant, not a permission key.
 - The last active Platform Owner cannot be disabled, demoted, archived, or removed.
+- The owner-only **Team & access** authority selector may promote an existing active ORAP
+  identity to Platform Owner or demote an Owner to a non-owner staff role. Owner status is
+  never available through staff invitation acceptance or a custom role grant. Authority
+  changes revoke the target's active ORAP sessions, increment authorization state, and
+  preserve the final active Owner invariant transactionally.
 - Store a versioned source-defined permission catalog in PostgreSQL. Each stable key has
   module, label, description, risk, applicable scope, owner-only, step-up, reason,
   version, deprecation, and replacement metadata. Source/catalog drift fails closed.

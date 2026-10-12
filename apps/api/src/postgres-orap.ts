@@ -406,6 +406,9 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
     if (input.userId === actor.id)
       throw new Error('The current owner identity cannot be reassigned');
     return this.transaction(actor, async (client) => {
+      await client.query(
+        `SELECT pg_advisory_xact_lock(hashtextextended('orap-platform-owner-authority', 0))`,
+      );
       const target = required(
         (
           await query<{ identity_kind: string; membership_id: string }>(
@@ -419,23 +422,28 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
         ).rows[0],
         'Active staff account was not found',
       );
-      if (target.identity_kind === 'platform_owner') {
-        throw new Error('Platform Owner authority uses the separate owner procedure');
-      }
+      const ownerAuthorityRequested = input.roleSlug === 'platform-owner';
       const role = required(
         (
-          await query<{ id: string; name: string; role_version_id: string; slug: string }>(
+          await query<{
+            id: string;
+            name: string;
+            owner_identity_only: boolean;
+            role_version_id: string;
+            slug: string;
+          }>(
             client,
-            `SELECT role.id, role.slug, role.name, version.id AS role_version_id
+            `SELECT role.id, role.slug, role.name, role.owner_identity_only,
+                    version.id AS role_version_id
                FROM staff_roles role
                JOIN staff_role_versions version
                  ON version.role_id = role.id AND version.version = role.current_version
-              WHERE role.slug = $1 AND role.active AND NOT role.owner_identity_only
+              WHERE role.slug = $1 AND role.active AND role.owner_identity_only = $2
               FOR SHARE OF role, version`,
-            [input.roleSlug],
+            [input.roleSlug, ownerAuthorityRequested],
           )
         ).rows[0],
-        'Assignable staff role was not found',
+        'Assignable authority level was not found',
       );
       const before = await query<Record<string, unknown>>(
         client,
@@ -446,33 +454,52 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
           FOR UPDATE OF assignment`,
         [target.membership_id],
       );
+      if (target.identity_kind === 'platform_owner' && !ownerAuthorityRequested) {
+        const owners = await query<{ id: string }>(
+          client,
+          `SELECT id
+             FROM orap_staff_memberships
+            WHERE identity_kind = 'platform_owner' AND status = 'active'
+            FOR UPDATE`,
+          [],
+        );
+        if (owners.rows.length <= 1) {
+          throw new Error('The last active Platform Owner cannot be demoted');
+        }
+      }
       await client.query(
         `UPDATE staff_role_assignments
             SET active = false, revoked_by = $2, revoked_at = now()
           WHERE staff_membership_id = $1 AND active`,
         [target.membership_id, actor.id],
       );
-      const assignment = required(
-        (
-          await query<{ id: string }>(
-            client,
-            `INSERT INTO staff_role_assignments
-               (staff_membership_id, role_id, role_version_id, primary_role,
-                assigned_by, reason)
-             VALUES ($1, $2, $3, true, $4, $5)
-             RETURNING id`,
-            [target.membership_id, role.id, role.role_version_id, actor.id, input.reason.trim()],
-          )
-        ).rows[0],
-        'Staff role assignment failed',
-      );
-      await client.query(
-        `INSERT INTO staff_resource_scopes
-           (assignment_id, scope_type, created_by)
-         VALUES ($1, 'platform', $2)`,
-        [assignment.id, actor.id],
-      );
-      const identityKind = role.slug === 'platform-admin' ? 'platform_admin' : 'staff';
+      if (!ownerAuthorityRequested) {
+        const assignment = required(
+          (
+            await query<{ id: string }>(
+              client,
+              `INSERT INTO staff_role_assignments
+                 (staff_membership_id, role_id, role_version_id, primary_role,
+                  assigned_by, reason)
+               VALUES ($1, $2, $3, true, $4, $5)
+               RETURNING id`,
+              [target.membership_id, role.id, role.role_version_id, actor.id, input.reason.trim()],
+            )
+          ).rows[0],
+          'Staff role assignment failed',
+        );
+        await client.query(
+          `INSERT INTO staff_resource_scopes
+             (assignment_id, scope_type, created_by)
+           VALUES ($1, 'platform', $2)`,
+          [assignment.id, actor.id],
+        );
+      }
+      const identityKind = ownerAuthorityRequested
+        ? 'platform_owner'
+        : role.slug === 'platform-admin'
+          ? 'platform_admin'
+          : 'staff';
       await client.query(
         `UPDATE orap_staff_memberships
             SET identity_kind = $2, authorization_version = authorization_version + 1,
@@ -495,9 +522,14 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
         [input.userId],
       );
       await staffAccessAudit(client, actor, {
-        action: 'staff.role_changed',
+        action:
+          identityKind === 'platform_owner' && target.identity_kind !== 'platform_owner'
+            ? 'staff.owner_assigned'
+            : target.identity_kind === 'platform_owner' && identityKind !== 'platform_owner'
+              ? 'staff.owner_removed'
+              : 'staff.role_changed',
         after: { identityKind, roleSlug: role.slug, revokedSessions: revoked.rows.length },
-        before: before.rows,
+        before: { assignments: before.rows, identityKind: target.identity_kind },
         reason: input.reason,
         targetUserId: input.userId,
       });

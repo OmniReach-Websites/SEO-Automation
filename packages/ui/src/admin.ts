@@ -37,6 +37,13 @@ export interface OrapStaffRoleOption {
   slug: string;
 }
 
+const platformOwnerAuthority: OrapStaffRoleOption = {
+  description: 'Full owner authority, including internal staff and security administration.',
+  name: 'Platform Owner',
+  permissionCount: 0,
+  slug: 'platform-owner',
+};
+
 export type OrapNavigationItem = 'operations' | 'overview' | 'security' | 'sites' | 'staff';
 
 export interface OrapOverviewModel {
@@ -136,14 +143,20 @@ export function renderOrapStaffDetails(
 ): string {
   const mayMutate = member.status === 'active' && member.userId !== input.currentUserId;
   const profileEditor = `<section class="panel"><h2>Edit account</h2><p class="help">A Platform Owner can update this account's profile or replace its password. Current passwords, password hashes, verification secrets, internal IDs, and audit history are never displayed or editable. Saving revokes every active ORAP session for this account; mandatory two-step verification still applies at the next login. The change is recorded automatically.</p><form method="post" action="/orap/security/staff/${encodeURIComponent(member.userId)}/profile"><div class="field-grid"><div class="field"><label for="displayName">Name</label><input id="displayName" name="displayName" value="${escapeHtml(member.displayName)}" maxlength="160" required></div><div class="field"><label for="email">Email</label><input id="email" name="email" type="email" value="${escapeHtml(member.normalizedEmail)}" maxlength="320" required></div><div class="field full"><label for="jobTitle">Job title</label><input id="jobTitle" name="jobTitle" value="${escapeHtml(member.jobTitle ?? '')}" maxlength="160"></div><div class="field"><label for="newPassword">New password</label><input id="newPassword" name="newPassword" type="password" minlength="12" maxlength="128" autocomplete="new-password"><p class="help">Leave blank to keep the current password.</p></div><div class="field"><label for="confirmPassword">Confirm new password</label><input id="confirmPassword" name="confirmPassword" type="password" minlength="12" maxlength="128" autocomplete="new-password"></div></div><button type="submit">Save account details</button></form></section>`;
-  const roleOptions = (input.roles ?? [])
-    .map(
-      (role) =>
-        `<option value="${escapeHtml(role.slug)}"${member.roleSlug === role.slug ? ' selected' : ''}>${escapeHtml(role.name)}</option>`,
-    )
+  const authorityOptions = [
+    platformOwnerAuthority,
+    ...(input.roles ?? []).filter(({ slug }) => slug !== platformOwnerAuthority.slug),
+  ];
+  const roleOptions = authorityOptions
+    .map((role) => {
+      const selected =
+        member.roleSlug === role.slug ||
+        (role.slug === platformOwnerAuthority.slug && member.identityKind === 'platform_owner');
+      return `<option value="${escapeHtml(role.slug)}"${selected ? ' selected' : ''}>${escapeHtml(role.name)}</option>`;
+    })
     .join('');
   const actionContent = mayMutate
-    ? `<section class="panel"><h2>Authority</h2><p class="help">Changing the role takes effect immediately, signs this staff member out, and is recorded automatically.</p><form method="post" action="/orap/security/staff/${encodeURIComponent(member.userId)}/role"><div class="field"><label for="roleSlug">Staff role</label><select id="roleSlug" name="roleSlug" required>${roleOptions}</select></div><button type="submit">Update authority</button></form></section><div class="section-grid"><section class="panel"><h2>Revoke sessions</h2><p class="help">Signs this staff member out of every active ORAP session.</p><form method="post" action="/orap/security/staff/${encodeURIComponent(member.userId)}/sessions/revoke-all"><button type="submit">Revoke all sessions</button></form></section><section class="panel"><h2>Send password reset</h2><p class="help">Creates a time-limited recovery message. Required privileged verification still applies.</p><form method="post" action="/orap/security/staff/${encodeURIComponent(member.userId)}/reset"><button type="submit">Send reset instructions</button></form></section></div><section class="panel"><h2>Disable staff access</h2><p class="help">Revokes privileged sessions and removes ORAP access. Public customer websites remain online.</p><form method="post" action="/orap/security/staff/${encodeURIComponent(member.userId)}/disable"><button class="danger" type="submit">Disable staff access</button></form></section>`
+    ? `<section class="panel"><h2>Authority</h2><p class="help">Platform Owner grants the same owner-level authority you have. Changing authority takes effect immediately, signs this person out, and is recorded automatically.</p><form method="post" action="/orap/security/staff/${encodeURIComponent(member.userId)}/role"><div class="field"><label for="roleSlug">Authority level</label><select id="roleSlug" name="roleSlug" required>${roleOptions}</select></div><button type="submit">Update authority</button></form></section><div class="section-grid"><section class="panel"><h2>Revoke sessions</h2><p class="help">Signs this staff member out of every active ORAP session.</p><form method="post" action="/orap/security/staff/${encodeURIComponent(member.userId)}/sessions/revoke-all"><button type="submit">Revoke all sessions</button></form></section><section class="panel"><h2>Send password reset</h2><p class="help">Creates a time-limited recovery message. Required privileged verification still applies.</p><form method="post" action="/orap/security/staff/${encodeURIComponent(member.userId)}/reset"><button type="submit">Send reset instructions</button></form></section></div><section class="panel"><h2>Disable staff access</h2><p class="help">Revokes privileged sessions and removes ORAP access. Public customer websites remain online.</p><form method="post" action="/orap/security/staff/${encodeURIComponent(member.userId)}/disable"><button class="danger" type="submit">Disable staff access</button></form></section>`
     : `<section class="surface-note">${member.userId === input.currentUserId ? 'This is your owner account. Self-disable and self-demotion are blocked so the platform cannot lose its final owner. Use Security settings to manage your own sign-in methods.' : 'This staff account is not active.'}</section>`;
   return renderOrapShell({
     actions: '<a class="button secondary" href="/orap/security/staff">Back to team</a>',
