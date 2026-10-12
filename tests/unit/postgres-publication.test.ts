@@ -103,8 +103,49 @@ describe('PostgreSQL publication state', () => {
     };
     const state = new PostgresPublicationState(pool, {} as never);
     await expect(state.revalidate(request)).resolves.toBeUndefined();
+    const revalidationSql = query.mock.calls.find(([text]) =>
+      text.includes('CROSS JOIN LATERAL'),
+    )?.[0];
+    expect(revalidationSql).toContain('artifact.content_revision > $3');
+    expect(revalidationSql).toContain('newer.content_revision > $3');
     await expect(state.revalidate({ ...request, role: 'customer_editor' })).rejects.toThrow(
       'no longer eligible',
+    );
+  });
+
+  it('restores the file pointer and rejects an out-of-order activation older than live content', async () => {
+    const query = vi.fn(async (text: string) => {
+      if (text.includes('SELECT id, content_revision FROM build_artifacts')) {
+        return { rows: [{ content_revision: 2, id: 'artifact-two' }] };
+      }
+      if (text.includes('SELECT artifact.content_revision')) {
+        return { rows: [{ content_revision: 3 }] };
+      }
+      return { rows: [] };
+    });
+    const pool: TenantTransactionPool = {
+      connect: vi.fn(async () => ({ query, release: vi.fn() })),
+    };
+    const artifacts = {
+      activeHash: vi.fn(async () => 'newer-active-hash'),
+      activate: vi.fn(async () => undefined),
+      artifactPath: vi.fn(),
+      restoreActive: vi.fn(async () => undefined),
+    } as never;
+    const state = new PostgresPublicationState(pool, artifacts);
+
+    await expect(state.activate(request, 'candidate-hash')).rejects.toThrow(
+      'older than the active artifact',
+    );
+    expect((artifacts as { activate: ReturnType<typeof vi.fn> }).activate).toHaveBeenCalledWith(
+      request.siteId,
+      'candidate-hash',
+    );
+    expect(
+      (artifacts as { restoreActive: ReturnType<typeof vi.fn> }).restoreActive,
+    ).toHaveBeenCalledWith(request.siteId, 'newer-active-hash');
+    expect(query.mock.calls.some(([text]) => text.includes('INSERT INTO active_artifacts'))).toBe(
+      false,
     );
   });
 });

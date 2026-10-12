@@ -1,5 +1,9 @@
 import { createTraceId } from '@omnireach/observability';
-import { ProtectedFieldError, RevisionConflictError } from '@omnireach/content';
+import {
+  ProtectedFieldError,
+  PublicationPendingError,
+  RevisionConflictError,
+} from '@omnireach/content';
 import { SitePolicyDeniedError } from '@omnireach/tenant';
 import cookie from '@fastify/cookie';
 import rateLimit from '@fastify/rate-limit';
@@ -120,6 +124,9 @@ export function buildApiServer(options: ApiServerOptions = {}) {
   });
 
   server.setErrorHandler((error, request, reply) => {
+    if (error instanceof PublicationPendingError) {
+      return reply.code(409).send({ error: 'publication_pending' });
+    }
     if (error instanceof RevisionConflictError) {
       return reply.code(409).send({ error: 'revision_conflict' });
     }

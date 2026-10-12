@@ -19,6 +19,10 @@ export class ProtectedFieldError extends Error {
   override readonly name = 'ProtectedFieldError';
 }
 
+export class PublicationPendingError extends Error {
+  override readonly name = 'PublicationPendingError';
+}
+
 export function updateDraft(input: {
   actor: 'human' | 'ai';
   current: ContentRecord;

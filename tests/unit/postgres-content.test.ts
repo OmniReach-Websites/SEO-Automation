@@ -1,6 +1,7 @@
 import {
   PostgresContentRepository,
   ProtectedFieldError,
+  PublicationPendingError,
   RevisionConflictError,
 } from '@omnireach/content';
 import type { TenantTransactionPool } from '@omnireach/tenant';
@@ -23,6 +24,10 @@ function repository(field: {
   const query = vi.fn(async (text: string, values?: unknown[]) => {
     void values;
     if (text.includes('WITH latest_feature')) return { rows: [allowedPolicy()] };
+    if (text.includes("status IN ('queued', 'building')")) return { rows: [] };
+    if (text.includes('revision.revision = COALESCE')) {
+      return { rows: [{ content: { 'home.heading': 'Before' }, revision: 1 }] };
+    }
     if (text.includes('FROM content_drafts')) {
       return {
         rows: [
@@ -69,10 +74,15 @@ function repository(field: {
 describe('PostgreSQL content repository', () => {
   it('creates a revision and queued publication atomically, then reuses its idempotency key', async () => {
     let existing = false;
-    const query = vi.fn(async (text: string) => {
+    const query = vi.fn(async (text: string, values?: unknown[]) => {
+      void values;
       if (text.includes('WITH latest_feature')) return { rows: [allowedPolicy()] };
-      if (text.includes('FROM publication_requests')) {
+      if (text.includes("status IN ('queued', 'building')")) return { rows: [] };
+      if (text.includes('idempotency_key = $3')) {
         return existing ? { rows: [{ content_revision: 3, status: 'queued' }] } : { rows: [] };
+      }
+      if (text.includes('revision.revision = COALESCE')) {
+        return { rows: [{ content: { 'home.heading': 'Ready' }, revision: 2 }] };
       }
       if (text.includes('FROM content_drafts')) {
         return {
@@ -206,6 +216,17 @@ describe('PostgreSQL content repository', () => {
   it('validates and commits a multi-field patch with one version compare-and-swap', async () => {
     const query = vi.fn(async (text: string, values?: unknown[]) => {
       if (text.includes('WITH latest_feature')) return { rows: [allowedPolicy()] };
+      if (text.includes("status IN ('queued', 'building')")) return { rows: [] };
+      if (text.includes('revision.revision = COALESCE')) {
+        return {
+          rows: [
+            {
+              content: { 'home.heading': 'Before', 'home.link': 'https://before.test' },
+              revision: 1,
+            },
+          ],
+        };
+      }
       if (text.includes('FROM content_drafts')) {
         return {
           rows: [
@@ -288,6 +309,227 @@ describe('PostgreSQL content repository', () => {
     ).rejects.toThrow(/unsafe URL/u);
     expect(query.mock.calls.some(([text]) => text.includes('UPDATE content_drafts'))).toBe(false);
     expect(query.mock.calls.at(-1)?.[0]).toBe('ROLLBACK');
+  });
+
+  it('serializes draft creation and atomically archives a stale active draft before upsert', async () => {
+    let activeBase = 1;
+    let insertCount = 0;
+    const query = vi.fn(async (text: string, values?: unknown[]) => {
+      void values;
+      if (text.includes('WITH latest_feature')) return { rows: [allowedPolicy()] };
+      if (text.includes("status IN ('queued', 'building')")) return { rows: [] };
+      if (text.includes('revision.revision = COALESCE')) {
+        return { rows: [{ content: { 'home.heading': 'Published revision two' }, revision: 2 }] };
+      }
+      if (text.includes('FROM content_drafts') && text.includes("state = 'active'")) {
+        return activeBase
+          ? {
+              rows: [
+                {
+                  base_revision: activeBase,
+                  content: { 'home.heading': 'Old draft' },
+                  id: draftId,
+                  version: 2,
+                },
+              ],
+            }
+          : { rows: [] };
+      }
+      if (text.includes("archive_reason = 'rebased_to_published_revision'")) {
+        activeBase = 0;
+        return { rows: [] };
+      }
+      if (text.includes('INSERT INTO content_drafts')) {
+        insertCount += 1;
+        activeBase = 2;
+        return {
+          rows: [
+            {
+              base_revision: 2,
+              content: { 'home.heading': 'Published revision two' },
+              id: '80000000-0000-4000-8000-000000000002',
+              version: 1,
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+    const content = new PostgresContentRepository({
+      connect: vi.fn(async () => ({ query, release: vi.fn() })),
+    });
+
+    await expect(content.createDraft(context)).resolves.toMatchObject({
+      baseRevision: 2,
+      current: true,
+    });
+    await expect(content.createDraft(context)).resolves.toMatchObject({
+      baseRevision: 2,
+      current: true,
+    });
+    expect(insertCount).toBe(1);
+    expect(
+      query.mock.calls.some(
+        ([text, values]) =>
+          text.includes('pg_advisory_xact_lock') &&
+          values?.[0] === `${context.tenantId}:${context.siteId}:content-lifecycle`,
+      ),
+    ).toBe(true);
+    expect(
+      query.mock.calls.some(
+        ([text]) =>
+          text.includes('ON CONFLICT (tenant_id, site_id)') && text.includes("state = 'active'"),
+      ),
+    ).toBe(true);
+    expect(
+      query.mock.calls.findIndex(([text]) => text.includes("archive_reason = 'rebased")),
+    ).toBeLessThan(
+      query.mock.calls.findIndex(([text]) => text.includes('INSERT INTO content_drafts')),
+    );
+  });
+
+  it('freezes queued drafts, rejects stale post-activation clients, and unlocks failed publications', async () => {
+    const pendingQuery = vi.fn(async (text: string) => {
+      if (text.includes('WITH latest_feature')) return { rows: [allowedPolicy()] };
+      if (text.includes("status IN ('queued', 'building')")) {
+        return { rows: [{ status: 'queued' }] };
+      }
+      return { rows: [] };
+    });
+    const pending = new PostgresContentRepository({
+      connect: vi.fn(async () => ({ query: pendingQuery, release: vi.fn() })),
+    });
+    await expect(
+      pending.updateDraftField(context, {
+        draftId,
+        expectedVersion: 2,
+        fieldId: 'home.heading',
+        value: 'Must wait',
+      }),
+    ).rejects.toBeInstanceOf(PublicationPendingError);
+    expect(pendingQuery.mock.calls.some(([text]) => text.includes('UPDATE content_drafts'))).toBe(
+      false,
+    );
+
+    const staleQuery = vi.fn(async (text: string) => {
+      if (text.includes('WITH latest_feature')) return { rows: [allowedPolicy()] };
+      if (text.includes("status IN ('queued', 'building')")) return { rows: [] };
+      if (text.includes('FROM content_drafts')) {
+        return {
+          rows: [
+            {
+              base_revision: 1,
+              content: { 'home.heading': 'Old base' },
+              id: draftId,
+              version: 2,
+            },
+          ],
+        };
+      }
+      if (text.includes('revision.revision = COALESCE')) {
+        return { rows: [{ content: { 'home.heading': 'Published' }, revision: 2 }] };
+      }
+      return { rows: [] };
+    });
+    const stale = new PostgresContentRepository({
+      connect: vi.fn(async () => ({ query: staleQuery, release: vi.fn() })),
+    });
+    await expect(
+      stale.updateDraftField(context, {
+        draftId,
+        expectedVersion: 2,
+        fieldId: 'home.heading',
+        value: 'Stale browser edit',
+      }),
+    ).rejects.toBeInstanceOf(RevisionConflictError);
+    expect(staleQuery.mock.calls.some(([text]) => text.includes('UPDATE content_drafts'))).toBe(
+      false,
+    );
+
+    const failed = repository({ ai_mode: 'auto', protected: false });
+    await expect(
+      failed.content.updateDraftField(context, {
+        draftId,
+        expectedVersion: 2,
+        fieldId: 'home.heading',
+        value: 'Recovered after failure',
+      }),
+    ).resolves.toMatchObject({ current: true, version: 3 });
+  });
+
+  it('returns publication-request and active-artifact state instead of assuming every revision is published', async () => {
+    const query = vi.fn(async (text: string) => {
+      if (text.includes('LEFT JOIN LATERAL')) {
+        return {
+          rows: [
+            {
+              active: false,
+              created_at: new Date('2026-10-11T02:00:00.000Z'),
+              created_by: context.userId,
+              error_code: 'publication_failed',
+              origin: 'human',
+              publication_pending: false,
+              publication_status: 'failed',
+              restored_from: null,
+              revision: 3,
+            },
+            {
+              active: true,
+              created_at: new Date('2026-10-11T01:00:00.000Z'),
+              created_by: context.userId,
+              error_code: null,
+              origin: 'human',
+              publication_pending: false,
+              publication_status: 'published',
+              restored_from: null,
+              revision: 2,
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+    const content = new PostgresContentRepository({
+      connect: vi.fn(async () => ({ query, release: vi.fn() })),
+    });
+    await expect(content.listHistory(context)).resolves.toEqual([
+      expect.objectContaining({
+        active: false,
+        errorCode: 'publication_failed',
+        publicationStatus: 'failed',
+        revision: 3,
+      }),
+      expect.objectContaining({ active: true, publicationStatus: 'published', revision: 2 }),
+    ]);
+  });
+
+  it('allows restore only from a successfully published or active revision', async () => {
+    const query = vi.fn(async (text: string) => {
+      if (text.includes('WITH latest_feature')) return { rows: [allowedPolicy()] };
+      if (text.includes('idempotency_key = $3')) return { rows: [] };
+      if (text.includes("status IN ('queued', 'building')")) return { rows: [] };
+      if (text.includes('FROM content_revisions target')) return { rows: [] };
+      return { rows: [] };
+    });
+    const content = new PostgresContentRepository({
+      connect: vi.fn(async () => ({ query, release: vi.fn() })),
+    });
+    await expect(
+      content.prepareRestorePublication(context, {
+        idempotencyKey: 'restore-failed-revision',
+        reason: 'Unsafe failed revision',
+        revision: 4,
+      }),
+    ).rejects.toThrow(RevisionConflictError);
+    expect(query.mock.calls.some(([text]) => text.includes('INSERT INTO content_revisions'))).toBe(
+      false,
+    );
+    expect(
+      query.mock.calls.some(
+        ([text]) =>
+          text.includes("published.status = 'published'") && text.includes('active_artifacts'),
+      ),
+    ).toBe(true);
   });
 });
 

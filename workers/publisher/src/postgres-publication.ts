@@ -146,7 +146,23 @@ export class PostgresPublicationState implements PublicationStateDependencies {
               )
            ) actor
           WHERE s.tenant_id = $1 AND s.id = $2 AND s.status = 'active'
-            AND COALESCE(e.editing_frozen, false) = false`,
+            AND COALESCE(e.editing_frozen, false) = false
+            AND NOT EXISTS (
+              SELECT 1
+                FROM active_artifacts active
+                JOIN build_artifacts artifact
+                  ON artifact.tenant_id = active.tenant_id
+                 AND artifact.site_id = active.site_id
+                 AND artifact.id = active.artifact_id
+               WHERE active.tenant_id = $1 AND active.site_id = $2
+                 AND artifact.content_revision > $3
+            )
+            AND NOT EXISTS (
+              SELECT 1
+                FROM publication_requests newer
+               WHERE newer.tenant_id = $1 AND newer.site_id = $2
+                 AND newer.content_revision > $3 AND newer.status = 'published'
+            )`,
         [request.tenantId, request.siteId, request.contentRevision, request.actorId],
       );
       const authorization = valid.rows;
@@ -198,14 +214,30 @@ export class PostgresPublicationState implements PublicationStateDependencies {
     await this.artifacts.activate(request.siteId, artifactHash);
     try {
       await this.transaction(request, async (client) => {
-        const artifact = await query<{ id: string }>(
+        const artifact = await query<{ content_revision: number; id: string }>(
           client,
-          `SELECT id FROM build_artifacts
+          `SELECT id, content_revision FROM build_artifacts
             WHERE tenant_id = $1 AND site_id = $2 AND artifact_hash = $3 AND status = 'verified'
+              AND content_revision = $4
             FOR UPDATE`,
-          [request.tenantId, request.siteId, artifactHash],
+          [request.tenantId, request.siteId, artifactHash, request.contentRevision],
         );
         if (!artifact.rows[0]) throw new Error('Only verified artifacts can be activated');
+        const current = await query<{ content_revision: number }>(
+          client,
+          `SELECT artifact.content_revision
+             FROM active_artifacts active
+             JOIN build_artifacts artifact
+               ON artifact.tenant_id = active.tenant_id
+              AND artifact.site_id = active.site_id
+              AND artifact.id = active.artifact_id
+            WHERE active.tenant_id = $1 AND active.site_id = $2
+            FOR UPDATE OF active`,
+          [request.tenantId, request.siteId],
+        );
+        if ((current.rows[0]?.content_revision ?? 0) > request.contentRevision) {
+          throw new Error('Publication revision is older than the active artifact');
+        }
         await client.query(
           `UPDATE build_artifacts
               SET status = 'superseded'

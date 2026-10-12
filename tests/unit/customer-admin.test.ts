@@ -118,11 +118,13 @@ describe('customer dashboard and editor', () => {
   it('renders immutable revision history and exposes restore only to authorized users', () => {
     const entries = [
       {
+        active: true,
         actorLabel: '<script>Customer</script>',
         createdAt: '2026-10-10T20:00:00.000Z',
         number: 3,
         origin: 'restore' as const,
-        published: true,
+        publicationPending: false,
+        publicationStatus: 'published' as const,
         restoredFrom: 1,
         summary: 'Restored homepage copy',
       },
@@ -130,8 +132,10 @@ describe('customer dashboard and editor', () => {
     const authorized = renderRevisionHistory(entries, {
       canRestore: true,
       csrfToken: 'csrf-token',
+      restoreIdempotencyKeys: { 3: '00000000-0000-4000-8000-000000000003' },
     });
     expect(authorized).toContain('restored from revision 1');
+    expect(authorized).toContain('Published (active)');
     expect(authorized).toContain('Restore revision 3');
     expect(authorized).not.toContain('<script>');
 
@@ -141,5 +145,38 @@ describe('customer dashboard and editor', () => {
     });
     expect(viewer).toContain('Restore unavailable');
     expect(viewer).not.toContain('action="/history/3/restore"');
+  });
+
+  it('labels in-flight and failed publications truthfully and never offers them as restore targets', () => {
+    const html = renderRevisionHistory(
+      [
+        {
+          active: false,
+          actorLabel: 'Customer',
+          createdAt: '2026-10-10T20:00:00.000Z',
+          number: 4,
+          origin: 'customer',
+          publicationPending: false,
+          publicationStatus: 'failed',
+          summary: 'Publication failed; live content unchanged',
+        },
+        {
+          active: false,
+          actorLabel: 'Customer',
+          createdAt: '2026-10-10T19:00:00.000Z',
+          number: 3,
+          origin: 'customer',
+          publicationPending: true,
+          publicationStatus: 'building',
+          summary: 'Publication build in progress',
+        },
+      ],
+      { canRestore: true },
+    );
+    expect(html).toContain('Failed');
+    expect(html).toContain('Building');
+    expect(html).toContain('Only published revisions can be restored');
+    expect(html).not.toContain('action="/history/4/restore"');
+    expect(html).not.toContain('action="/history/3/restore"');
   });
 });

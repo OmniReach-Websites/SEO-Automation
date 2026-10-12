@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto';
 
 import { hasPermission, type Action } from '@omnireach/auth';
+import { PublicationPendingError, RevisionConflictError } from '@omnireach/content';
 import {
   renderEditor,
   renderRevisionHistory,
   type EditorField,
+  type PublicationStatus,
   type RevisionHistoryEntry,
   type RevisionOrigin,
 } from '@omnireach/customer-admin';
@@ -49,7 +51,9 @@ const revisionOrigins = new Set<RevisionOrigin>([
 
 interface CustomerDraftView {
   content: Record<string, unknown>;
+  current: boolean;
   id: string;
+  publicationStatus?: 'building' | 'queued';
   version: number;
 }
 
@@ -69,29 +73,54 @@ export function registerCustomerUiRoutes(
   server.get<{ Querystring: { notice?: string } }>('/editor', async (request, reply) => {
     const principal = await authorizeUi(request, reply, resolvePrincipal, 'content.read');
     if (!principal) return;
-    const [rawPages, rawDrafts] = await Promise.all([
+    const [rawPages, rawDrafts, rawHistory] = await Promise.all([
       service.pages(principal),
       service.drafts(principal),
+      service.history(principal),
     ]);
     const fields = parseFields(rawPages);
     const drafts = parseDrafts(rawDrafts);
+    if (drafts.length > 1) {
+      return invalidUiRequest(
+        reply,
+        'Multiple active drafts were detected. Editing is blocked until support resolves the lifecycle conflict.',
+        'editor',
+        409,
+      );
+    }
+    const history = parseHistory(rawHistory);
+    const pendingStatus =
+      drafts[0]?.publicationStatus ??
+      history.find((entry) => entry.publicationPending)?.publicationStatus;
     const draft = drafts[0];
     const canEdit = hasPermission(principal.role, 'content.edit');
-    const canPublish = canPerform(principal, 'content.publish');
+    const canPublish = canPerform(principal, 'content.publish') && !pendingStatus;
     let content: string;
-    if (draft) {
+    if (draft && !draft.current) {
+      content = `<p role="status">The active draft is based on an older published revision and cannot be edited.</p>${
+        canEdit && !pendingStatus
+          ? '<form method="post" action="/editor/draft/new"><button type="submit">Start from latest published revision</button></form>'
+          : '<p>Draft reconciliation is unavailable while publication is in progress.</p>'
+      }`;
+    } else if (draft) {
+      const editingAvailable = canEdit && !pendingStatus;
       const editorFields = fields.map((field): EditorField => ({
         ...field,
-        editable: canEdit && !field.protected && field.editableBy.includes(principal.role),
+        editable: editingAvailable && !field.protected && field.editableBy.includes(principal.role),
         label: fieldLabel(field.id),
         value: draft.content[field.id],
       }));
       content = renderEditor(editorFields, draft.version, {
-        canEdit,
+        canEdit: editingAvailable,
         canPublish,
         draftId: draft.id,
         publishIdempotencyKey: randomUUID(),
       });
+      if (pendingStatus) {
+        content = `<p role="status">Publication is ${pendingStatus}. Editing is paused so the immutable publication snapshot cannot diverge from this draft.</p>${content}`;
+      }
+    } else if (pendingStatus) {
+      content = `<p role="status">Publication is ${pendingStatus}. A new draft can be created after it finishes.</p>`;
     } else if (canEdit) {
       content =
         '<p>No active draft exists. Create one from the latest published revision.</p><form method="post" action="/editor/draft/new"><button type="submit">Create draft</button></form>';
@@ -114,8 +143,19 @@ export function registerCustomerUiRoutes(
   server.post('/editor/draft/new', { preHandler: requireSameOrigin }, async (request, reply) => {
     const principal = await authorizeUi(request, reply, resolvePrincipal, 'content.edit');
     if (!principal) return;
-    const drafts = parseDrafts(await service.drafts(principal));
-    if (drafts.length === 0) await service.createDraft(principal);
+    try {
+      await service.createDraft(principal);
+    } catch (error) {
+      if (error instanceof PublicationPendingError) {
+        return invalidUiRequest(
+          reply,
+          'A publication is in progress. Drafting resumes after it completes.',
+          'editor',
+          409,
+        );
+      }
+      throw error;
+    }
     return reply.code(303).redirect('/editor?notice=draft-created');
   });
 
@@ -133,8 +173,33 @@ export function registerCustomerUiRoutes(
       service.pages(principal),
       service.drafts(principal),
     ]);
-    const draft = parseDrafts(rawDrafts).find((entry) => entry.id === draftId.data);
+    const drafts = parseDrafts(rawDrafts);
+    if (drafts.length > 1) {
+      return invalidUiRequest(
+        reply,
+        'Multiple active drafts were detected. Editing is blocked until support resolves the lifecycle conflict.',
+        'editor',
+        409,
+      );
+    }
+    const draft = drafts.find((entry) => entry.id === draftId.data);
     if (!draft) return invalidUiRequest(reply, 'The active draft was not found.', 'editor', 404);
+    if (!draft.current) {
+      return invalidUiRequest(
+        reply,
+        'This draft is based on an older published revision. Start from the latest revision before editing.',
+        'editor',
+        409,
+      );
+    }
+    if (draft.publicationStatus) {
+      return invalidUiRequest(
+        reply,
+        `Publication is ${draft.publicationStatus}. Editing is paused until it completes.`,
+        'editor',
+        409,
+      );
+    }
     if (draft.version !== expectedVersion.data) {
       return invalidUiRequest(
         reply,
@@ -162,11 +227,25 @@ export function registerCustomerUiRoutes(
     }
 
     if (changes.length > 0) {
-      await service.draftUpdate(principal, {
-        draftId: draft.id,
-        expectedVersion: expectedVersion.data,
-        patch: Object.fromEntries(changes.map((change) => [change.fieldId, change.value])),
-      });
+      try {
+        await service.draftUpdate(principal, {
+          draftId: draft.id,
+          expectedVersion: expectedVersion.data,
+          patch: Object.fromEntries(changes.map((change) => [change.fieldId, change.value])),
+        });
+      } catch (error) {
+        if (error instanceof PublicationPendingError || error instanceof RevisionConflictError) {
+          return invalidUiRequest(
+            reply,
+            error instanceof PublicationPendingError
+              ? 'Publication began before this save completed. Reload the editor after it finishes.'
+              : 'The draft or published revision changed. Reload before saving.',
+            'editor',
+            409,
+          );
+        }
+        throw error;
+      }
     }
     return reply.code(303).redirect('/editor?notice=draft-saved');
   });
@@ -202,11 +281,25 @@ export function registerCustomerUiRoutes(
     if (!draftId.success || !idempotencyKey.success || !reason.success) {
       return invalidUiRequest(reply, 'The publication request is invalid.', 'editor');
     }
-    await service.publish(principal, {
-      draftId: draftId.data,
-      idempotencyKey: idempotencyKey.data,
-      reason: reason.data,
-    });
+    try {
+      await service.publish(principal, {
+        draftId: draftId.data,
+        idempotencyKey: idempotencyKey.data,
+        reason: reason.data,
+      });
+    } catch (error) {
+      if (error instanceof PublicationPendingError || error instanceof RevisionConflictError) {
+        return invalidUiRequest(
+          reply,
+          error instanceof PublicationPendingError
+            ? 'Another publication is already in progress.'
+            : 'This draft is no longer based on the active published revision. Reconcile it before publishing.',
+          'editor',
+          409,
+        );
+      }
+      throw error;
+    }
     return reply.code(303).redirect('/history?notice=publication-queued');
   });
 
@@ -214,10 +307,13 @@ export function registerCustomerUiRoutes(
     const principal = await authorizeUi(request, reply, resolvePrincipal, 'content.read');
     if (!principal) return;
     const entries = parseHistory(await service.history(principal));
+    const publicationPending = entries.some((entry) => entry.publicationPending);
     const content = renderRevisionHistory(entries, {
-      canRestore: canPerform(principal, 'content.publish'),
+      canRestore: canPerform(principal, 'content.publish') && !publicationPending,
       restoreIdempotencyKeys: Object.fromEntries(
-        entries.map((entry) => [entry.number, randomUUID()]),
+        entries
+          .filter((entry) => entry.publicationStatus === 'published')
+          .map((entry) => [entry.number, randomUUID()]),
       ),
     });
     return reply
@@ -246,11 +342,25 @@ export function registerCustomerUiRoutes(
       if (!idempotencyKey.success || !revision.success || !reason.success) {
         return invalidUiRequest(reply, 'The restore request is invalid.', 'history');
       }
-      await service.restore(principal, {
-        idempotencyKey: idempotencyKey.data,
-        reason: reason.data,
-        revision: revision.data,
-      });
+      try {
+        await service.restore(principal, {
+          idempotencyKey: idempotencyKey.data,
+          reason: reason.data,
+          revision: revision.data,
+        });
+      } catch (error) {
+        if (error instanceof PublicationPendingError || error instanceof RevisionConflictError) {
+          return invalidUiRequest(
+            reply,
+            error instanceof PublicationPendingError
+              ? 'Another publication is already in progress.'
+              : 'The selected revision is no longer eligible for restore.',
+            'history',
+            409,
+          );
+        }
+        throw error;
+      }
       return reply.code(303).redirect('/history?notice=restore-queued');
     },
   );
@@ -285,8 +395,20 @@ function parseDrafts(value: unknown): CustomerDraftView[] {
     if (!isRecord(entry) || !isRecord(entry.content)) return [];
     const id = draftIdSchema.safeParse(entry.id);
     const version = positiveInteger.safeParse(entry.version);
-    return id.success && version.success
-      ? [{ content: entry.content, id: id.data, version: version.data }]
+    const publicationStatus =
+      entry.publicationStatus === 'queued' || entry.publicationStatus === 'building'
+        ? entry.publicationStatus
+        : undefined;
+    return id.success && version.success && typeof entry.current === 'boolean'
+      ? [
+          {
+            content: entry.content,
+            current: entry.current,
+            id: id.data,
+            ...(publicationStatus ? { publicationStatus } : {}),
+            version: version.data,
+          },
+        ]
       : [];
   });
 }
@@ -336,23 +458,54 @@ function parseHistory(value: unknown): RevisionHistoryEntry[] {
     const createdAt = dateText(entry.createdAt);
     const createdBy = typeof entry.createdBy === 'string' ? entry.createdBy : '';
     const origin = revisionOrigin(entry.origin);
+    const publicationStatus = revisionStatus(entry.publicationStatus);
     const restoredFrom = positiveInteger.safeParse(entry.restoredFrom);
-    if (!revision.success || !createdAt || !createdBy || !origin) return [];
+    if (
+      !revision.success ||
+      !createdAt ||
+      !createdBy ||
+      !origin ||
+      !publicationStatus ||
+      typeof entry.active !== 'boolean' ||
+      typeof entry.publicationPending !== 'boolean'
+    ) {
+      return [];
+    }
     return [
       {
+        active: entry.active,
         actorLabel: createdBy,
         createdAt,
         number: revision.data,
         origin,
-        published: true,
+        publicationPending: entry.publicationPending,
+        publicationStatus,
         ...(restoredFrom.success ? { restoredFrom: restoredFrom.data } : {}),
-        summary:
-          origin === 'restore'
-            ? `Restored content as revision ${revision.data}`
-            : `Published content revision ${revision.data}`,
+        summary: historySummary(publicationStatus, origin, revision.data),
       },
     ];
   });
+}
+
+function revisionStatus(value: unknown): PublicationStatus | undefined {
+  return ['queued', 'building', 'published', 'failed', 'unpublished'].includes(String(value))
+    ? (value as PublicationStatus)
+    : undefined;
+}
+
+function historySummary(
+  status: PublicationStatus,
+  origin: RevisionOrigin,
+  revision: number,
+): string {
+  if (status === 'queued') return `Publication queued for revision ${revision}`;
+  if (status === 'building') return `Publication build in progress for revision ${revision}`;
+  if (status === 'failed')
+    return `Publication failed for revision ${revision}; live content unchanged`;
+  if (status === 'unpublished') return `Revision ${revision} has not been published`;
+  return origin === 'restore'
+    ? `Restored content published as revision ${revision}`
+    : `Published content revision ${revision}`;
 }
 
 function revisionOrigin(value: unknown): RevisionOrigin | undefined {

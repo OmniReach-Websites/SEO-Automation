@@ -90,7 +90,7 @@ export class PostgresPreviewService {
           await query<{ base_revision: number; content: unknown; version: number }>(
             client,
             `SELECT base_revision, version, content FROM content_drafts
-              WHERE tenant_id = $1 AND site_id = $2 AND id = $3`,
+              WHERE tenant_id = $1 AND site_id = $2 AND id = $3 AND state = 'active'`,
             [context.tenantId, context.siteId, draftId],
           )
         ).rows[0];

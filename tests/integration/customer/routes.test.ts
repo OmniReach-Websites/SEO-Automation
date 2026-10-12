@@ -2,6 +2,7 @@ import { buildApiServer, type CustomerPrincipal } from '@omnireach/api';
 import {
   PostgresContentRepository,
   ProtectedFieldError,
+  PublicationPendingError,
   RevisionConflictError,
   readLimitedUpload,
 } from '@omnireach/content';
@@ -136,6 +137,28 @@ describe('customer content routes', () => {
     });
   });
 
+  it('returns a safe conflict when direct API editing races an in-flight publication', async () => {
+    const content = service();
+    content.draftUpdate.mockRejectedValue(
+      new PublicationPendingError('private queued publication details'),
+    );
+    const server = buildApiServer({
+      customerService: content,
+      logLevel: 'silent',
+      resolveCustomerPrincipal: async () => owner,
+    });
+    servers.push(server);
+    const response = await server.inject({
+      headers: { host: 'admin.alpha.test', origin: 'https://admin.alpha.test' },
+      method: 'PATCH',
+      payload: { expectedVersion: 4, patch: { 'home.heading': 'Racing edit' } },
+      url: '/v1/customer/drafts/80000000-0000-4000-8000-000000000001',
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({ error: 'publication_pending' });
+    expect(response.body).not.toContain('private');
+  });
+
   it('denies an owner-only field to a customer editor through the direct API', async () => {
     const query = vi.fn(async (text: string, values?: unknown[]) => {
       if (text.includes('WITH latest_feature')) {
@@ -149,6 +172,10 @@ describe('customer content routes', () => {
             },
           ],
         };
+      }
+      if (text.includes("status IN ('queued', 'building')")) return { rows: [] };
+      if (text.includes('revision.revision = COALESCE')) {
+        return { rows: [{ content: { 'site.theme': 'default' }, revision: 1 }] };
       }
       if (text.includes('FROM content_drafts')) {
         return {

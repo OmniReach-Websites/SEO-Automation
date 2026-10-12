@@ -1,4 +1,5 @@
 export {
+  PublicationPendingError,
   ProtectedFieldError,
   RevisionConflictError,
   assertProtectedTokensPreserved,
