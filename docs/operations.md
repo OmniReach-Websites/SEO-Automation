@@ -436,6 +436,16 @@ only through a separately approved authentication-policy change. Repository
 implementation and fictional tests do not authorize creating a real employee or
 changing a production owner's authority.
 
+For an owner-assisted ORAP account recovery, open the target in **Team & access**, edit
+only the required profile fields, optionally enter a replacement password twice, and
+record the business reason. The replacement password is write-only: never ask for or
+record the old password. Saving revokes all target ORAP sessions, clears password
+lockout state, invalidates outstanding password-recovery links, preserves mandatory
+two-step verification, and appends a non-secret before/after audit. Confirm the target
+can complete the next login before treating recovery as finished. Do not use this path
+to expose hashes, bypass verification, rewrite audit history, or weaken last-owner
+protection.
+
 ## 12. Completion evidence by goal
 
 Each goal report includes files changed, migration/environment changes, commands/tests, manual review, observability/rollback behavior, known risks, and next unblocked goal. A live claim requires direct evidence; scaffolding, a dry run, or an unexecuted runbook is not production proof.
