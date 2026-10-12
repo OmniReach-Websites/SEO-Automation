@@ -1,0 +1,29 @@
+<figure class="comparison" data-comparison>
+  <div class="comparison-stage" style="--comparison-position: 50%">
+    <picture>
+      <source media="(max-width: 520px)" srcset="/images/before-interior-420.webp" />
+      <img src="/images/before-interior.webp" width="672" height="1000" alt="Black rear seating before interior detailing" loading="lazy" decoding="async" />
+    </picture>
+    <picture class="comparison-after">
+      <source media="(max-width: 520px)" srcset="/images/after-interior-420.webp" />
+      <img src="/images/after-interior.webp" width="672" height="1000" alt="The same black rear seating after interior detailing" loading="lazy" decoding="async" />
+    </picture>
+    <span class="comparison-label label-before">Before</span>
+    <span class="comparison-label label-after">After</span>
+    <span class="comparison-divider" aria-hidden="true"><span>↔</span></span>
+    <label class="sr-only" for="comparison-range">Move to compare the interior before and after detailing</label>
+    <input id="comparison-range" class="comparison-range" type="range" min="0" max="100" value="50" data-comparison-range />
+  </div>
+  <figcaption>Drag the divider to compare the same interior before and after the detail.</figcaption>
+</figure>
+
+<script>
+  document.querySelectorAll('[data-comparison]').forEach((comparison) => {
+    const stage = comparison.querySelector('.comparison-stage');
+    const range = comparison.querySelector('[data-comparison-range]');
+    if (!(stage instanceof HTMLElement) || !(range instanceof HTMLInputElement)) return;
+    const update = () => stage.style.setProperty('--comparison-position', `${range.value}%`);
+    range.addEventListener('input', update);
+    update();
+  });
+</script>

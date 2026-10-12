@@ -1,0 +1,173 @@
+---
+import BeforeAfter from '../components/BeforeAfter.astro';
+import FaqList from '../components/FaqList.astro';
+import FinalCta from '../components/FinalCta.astro';
+import GoalProgress from '../components/GoalProgress.astro';
+import ServiceCard from '../components/ServiceCard.astro';
+import Layout from '../layouts/Layout.astro';
+import {
+  CALL_HREF,
+  faqs,
+  homeCopy,
+  localBusinessSchema,
+  serviceAreas,
+  services,
+  TEXT_HREF,
+} from '../data/site';
+
+const faqSchema = {
+  '@context': 'https://schema.org',
+  '@type': 'FAQPage',
+  mainEntity: faqs.map((faq) => ({
+    '@type': 'Question',
+    name: faq.question,
+    acceptedAnswer: { '@type': 'Answer', text: faq.answer },
+  })),
+};
+---
+
+<Layout
+  title="Mobile Car Detailing in Aledo, TX"
+  description="Mobile interior, exterior, and full vehicle detailing in Aledo, Weatherford, Willow Park, Fort Worth, and surrounding communities. Call or text Cooper for a quote."
+  structuredData={[localBusinessSchema, faqSchema]}
+>
+  <section class="hero">
+    <div class="hero-media" aria-hidden="true">
+      <img src="/images/work-3.webp" width="756" height="1008" alt="" fetchpriority="high" />
+    </div>
+    <div class="hero-shade"></div>
+    <div class="hero-content shell">
+      <p class="eyebrow"><span></span>Aledo, Texas · Mobile service</p>
+      <h1>{homeCopy.heading}</h1>
+      <p class="hero-intro">{homeCopy.intro}</p>
+      <div class="button-row">
+        <a class="button button-primary" href={CALL_HREF}>
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6.6 10.8a15.5 15.5 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.24c1.1.37 2.25.56 3.43.56A1.17 1.17 0 0 1 21 16.69v3.48a1.17 1.17 0 0 1-1.17 1.17A17.83 17.83 0 0 1 2 3.5 1.17 1.17 0 0 1 3.17 2.33h3.5A1.17 1.17 0 0 1 7.83 3.5c0 1.2.19 2.35.56 3.43a1 1 0 0 1-.25 1.02L6.6 10.8Z" /></svg>
+          Call Cooper
+        </a>
+        <a class="button button-secondary" href={TEXT_HREF}>Text for a quote</a>
+        <a class="button button-ghost" href="/our-work/">View our work</a>
+      </div>
+    </div>
+    <a class="hero-scroll" href="#featured-work">Explore <span aria-hidden="true">↓</span></a>
+  </section>
+
+  <section class="trust-strip" aria-label="Business highlights">
+    <div class="shell trust-grid">
+      <div><strong>Mobile service</strong><span>At your location</span></div>
+      <div><strong>Based in Aledo</strong><span>Serving nearby communities</span></div>
+      <div><strong>Inside + out</strong><span>Three detailing packages</span></div>
+      <div><strong>Call or text</strong><span>Contact Cooper directly</span></div>
+    </div>
+  </section>
+
+  <section class="section section-dark" id="featured-work">
+    <div class="shell">
+      <div class="section-heading split-heading">
+        <div><p class="eyebrow">Real work. Real vehicles.</p><h2>Results you can see.</h2></div>
+        <div><p>Exterior shine, cleaned interiors, and careful hands-on work from Coop's Mobile Detailing.</p><a class="text-link" href="/our-work/">Explore the full gallery <span aria-hidden="true">→</span></a></div>
+      </div>
+      <div class="featured-gallery">
+        <a class="feature-photo feature-photo-main" href="/our-work/">
+          <img src="/images/work-1.webp" width="756" height="1008" alt="Cooper detailing the front of a blue Ford Mustang" loading="lazy" decoding="async" />
+          <span>Hands-on exterior care</span>
+        </a>
+        <a class="feature-photo" href="/our-work/">
+          <img src="/images/work-4-480.webp" width="480" height="640" alt="Clean tan leather seating after interior detailing" loading="lazy" decoding="async" />
+          <span>Interior detail</span>
+        </a>
+        <a class="feature-photo" href="/our-work/">
+          <img src="/images/work-7-480.webp" width="480" height="640" alt="Clean blue Jeep wheel and front fender" loading="lazy" decoding="async" />
+          <span>Exterior finish</span>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <section class="section section-light" aria-labelledby="services-heading">
+    <div class="shell">
+      <div class="section-heading centered">
+        <p class="eyebrow">Detailing packages</p>
+        <h2 id="services-heading">Choose the clean your vehicle needs.</h2>
+        <p>Starting prices are shown below. Final pricing can vary with vehicle size and condition.</p>
+      </div>
+      <div class="service-grid">
+        {services.map((service) => <ServiceCard service={service} />)}
+      </div>
+      <p class="pricing-note">Add-ons available: pet hair removal, engine bay cleaning, and ceramic coating. Contact Cooper for details; add-on prices are not listed online.</p>
+    </div>
+  </section>
+
+  <section class="section mobile-detailing-section">
+    <div class="shell two-column">
+      <div class="stacked-photos">
+        <img class="photo-back" src="/images/work-6-480.webp" width="480" height="640" alt="Detailed blue Jeep parked outside" loading="lazy" decoding="async" />
+        <img class="photo-front" src="/images/work-2-480.webp" width="480" height="640" alt="Blue Ford Mustang covered in foam" loading="lazy" decoding="async" />
+      </div>
+      <div class="prose-block">
+        <p class="eyebrow">Why mobile detailing?</p>
+        <h2>Quality care, brought to your driveway.</h2>
+        <p>Skip the drive and keep your day moving. Cooper performs the service at your location while you stay close to home or work.</p>
+        <div class="numbered-points">
+          <div><span>01</span><p><strong>Choose your service</strong>Pick exterior, interior, or a full detail.</p></div>
+          <div><span>02</span><p><strong>Share the details</strong>Text your vehicle type, condition, and location.</p></div>
+          <div><span>03</span><p><strong>Confirm the quote</strong>Cooper will reply with next steps.</p></div>
+        </div>
+        <p class="note">Water and electricity need to be available at the service location.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section comparison-section" aria-labelledby="comparison-heading">
+    <div class="shell comparison-grid">
+      <div>
+        <p class="eyebrow">Before & after</p>
+        <h2 id="comparison-heading">Slide to see the difference.</h2>
+        <p>Use the slider to compare the same rear seating area before and after interior detailing.</p>
+        <a class="text-link" href="/our-work/">See more detailing work <span aria-hidden="true">→</span></a>
+      </div>
+      <BeforeAfter />
+    </div>
+  </section>
+
+  <section class="section story-section">
+    <div class="shell story-grid">
+      <div class="story-photo">
+        <img src="/images/work-1.webp" width="756" height="1008" alt="Cooper working on the front of a vehicle" loading="lazy" decoding="async" />
+        <span>Local business · Aledo, TX</span>
+      </div>
+      <div class="prose-block">
+        <p class="eyebrow">Meet Cooper</p>
+        <h2>Building a business, one detail at a time.</h2>
+        <p>Cooper is a high school student growing Coop's Mobile Detailing while saving toward his first car. Each job is a chance to work hard, improve his craft, and build something of his own.</p>
+        <p>No inflated claims or invented credentials—just a personal local business and real work you can see.</p>
+        <a class="button button-secondary" href="/about/">Read Cooper's story</a>
+      </div>
+    </div>
+  </section>
+
+  <GoalProgress visible={false} target={7000} />
+
+  <section class="section area-section" aria-labelledby="area-heading">
+    <div class="shell area-grid">
+      <div><p class="eyebrow">Service area</p><h2 id="area-heading">Mobile detailing around Aledo.</h2></div>
+      <div class="area-list">
+        {serviceAreas.map((area, index) => <span><small>0{index + 1}</small>{area}</span>)}
+        <span><small>+</small>Surrounding communities</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="section section-light faq-section" aria-labelledby="faq-heading">
+    <div class="shell faq-grid">
+      <div class="section-heading">
+        <p class="eyebrow">Good to know</p>
+        <h2 id="faq-heading">Straight answers before you reach out.</h2>
+        <p>These details come from the current business site and should be reconfirmed with Cooper before production launch.</p>
+      </div>
+      <FaqList />
+    </div>
+  </section>
+
+  <FinalCta />
+</Layout>

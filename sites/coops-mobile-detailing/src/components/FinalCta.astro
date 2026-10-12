@@ -1,0 +1,20 @@
+---
+import { CALL_HREF, TEXT_HREF } from '../data/site';
+interface Props { compact?: boolean }
+const { compact = false } = Astro.props;
+---
+
+<section class:list={['final-cta', { compact }]} aria-labelledby="final-cta-heading">
+  <div class="shell final-cta-inner">
+    <div>
+      <p class="eyebrow">Your vehicle. Your driveway. A cleaner finish.</p>
+      <h2 id="final-cta-heading">Ready to make your vehicle look its best?</h2>
+      <p>Tell Cooper what you drive, the service you want, and where you're located.</p>
+    </div>
+    <div class="button-row">
+      <a class="button button-primary" href={CALL_HREF}>Call Cooper</a>
+      <a class="button button-secondary" href={TEXT_HREF}>Text for a quote</a>
+      {!compact && <a class="button button-ghost" href="/services/">View services</a>}
+    </div>
+  </div>
+</section>

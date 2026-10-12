@@ -1,0 +1,74 @@
+---
+import { CALL_HREF } from '../data/site';
+
+const pathname = Astro.url.pathname;
+const links = [
+  { href: '/', label: 'Home' },
+  { href: '/services/', label: 'Services' },
+  { href: '/our-work/', label: 'Our Work' },
+  { href: '/about/', label: 'About' },
+  { href: '/contact/', label: 'Contact' },
+];
+const isCurrent = (href: string) => (href === '/' ? pathname === '/' : pathname.startsWith(href));
+---
+
+<header class="site-header" data-site-header>
+  <div class="header-inner">
+    <a class="brand" href="/">
+      <img src="/images/coops-logo.webp" width="52" height="52" alt="" />
+      <span><strong>Coop's</strong><small>Mobile Detailing</small></span>
+    </a>
+    <nav class="desktop-nav" aria-label="Primary navigation">
+      {links.map((link) => (
+        <a href={link.href} aria-current={isCurrent(link.href) ? 'page' : undefined}>{link.label}</a>
+      ))}
+    </nav>
+    <a class="button button-small header-call" href={CALL_HREF} aria-label="Call Cooper now">
+      <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6.6 10.8a15.5 15.5 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.24c1.1.37 2.25.56 3.43.56A1.17 1.17 0 0 1 21 16.69v3.48a1.17 1.17 0 0 1-1.17 1.17A17.83 17.83 0 0 1 2 3.5 1.17 1.17 0 0 1 3.17 2.33h3.5A1.17 1.17 0 0 1 7.83 3.5c0 1.2.19 2.35.56 3.43a1 1 0 0 1-.25 1.02L6.6 10.8Z" /></svg>
+      <span>Call now</span>
+    </a>
+    <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="mobile-menu" aria-label="Open navigation" data-menu-toggle>
+      <span></span><span></span><span></span>
+    </button>
+  </div>
+  <div class="mobile-menu" id="mobile-menu" data-mobile-menu hidden>
+    <nav aria-label="Mobile navigation">
+      {links.map((link) => (
+        <a href={link.href} aria-current={isCurrent(link.href) ? 'page' : undefined}>{link.label}</a>
+      ))}
+    </nav>
+  </div>
+</header>
+
+<script>
+  const header = document.querySelector('[data-site-header]');
+  const toggle = document.querySelector('[data-menu-toggle]');
+  const menu = document.querySelector('[data-mobile-menu]');
+
+  if (header && toggle instanceof HTMLButtonElement && menu instanceof HTMLElement) {
+    const closeMenu = () => {
+      toggle.setAttribute('aria-expanded', 'false');
+      toggle.setAttribute('aria-label', 'Open navigation');
+      menu.hidden = true;
+      document.body.classList.remove('menu-open');
+    };
+    toggle.addEventListener('click', () => {
+      const open = toggle.getAttribute('aria-expanded') === 'true';
+      if (open) closeMenu();
+      else {
+        toggle.setAttribute('aria-expanded', 'true');
+        toggle.setAttribute('aria-label', 'Close navigation');
+        menu.hidden = false;
+        document.body.classList.add('menu-open');
+        menu.querySelector('a')?.focus();
+      }
+    });
+    menu.querySelectorAll('a').forEach((link) => link.addEventListener('click', closeMenu));
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && !menu.hidden) {
+        closeMenu();
+        toggle.focus();
+      }
+    });
+  }
+</script>

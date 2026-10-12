@@ -1,0 +1,45 @@
+---
+import FinalCta from '../components/FinalCta.astro';
+import GoalProgress from '../components/GoalProgress.astro';
+import Layout from '../layouts/Layout.astro';
+import { serviceAreas } from '../data/site';
+---
+
+<Layout
+  title="About Cooper"
+  description="Meet Cooper, the high school student behind Coop's Mobile Detailing in Aledo, Texas, and learn why he started his local detailing business."
+>
+  <section class="page-hero about-page-hero">
+    <div class="page-hero-media"><img src="/images/work-1.webp" width="756" height="1008" alt="Cooper detailing the front bumper of a vehicle" fetchpriority="high" /></div>
+    <div class="shell page-hero-content"><p class="eyebrow">About Cooper</p><h1>Hard work. Clean cars. A goal worth chasing.</h1><p>A local student-run business with a simple focus: do careful work and keep building.</p></div>
+  </section>
+
+  <section class="section section-light">
+    <div class="shell about-story-grid">
+      <div class="prose-block large-prose"><p class="eyebrow">The story</p><h2>Starting small and taking the work seriously.</h2><p>Cooper is a high school student building Coop's Mobile Detailing while saving toward his first car. Rather than making the business sound bigger than it is, the work stays personal: customers contact Cooper directly, and every job contributes to a real goal.</p><p>That story is part of what makes Coop's different from a generic detailing company. The site keeps the focus on visible work, straightforward services, and easy contact.</p></div>
+      <aside class="story-quote"><span>“</span><p>Building a business while saving toward a first car.</p><small>Cooper's motivation</small></aside>
+    </div>
+  </section>
+
+  <GoalProgress visible={false} target={7000} />
+
+  <section class="section values-section" aria-labelledby="values-heading">
+    <div class="shell">
+      <div class="section-heading centered"><p class="eyebrow">What the business is built on</p><h2 id="values-heading">Simple things done well.</h2></div>
+      <div class="value-grid">
+        <article><span>01</span><h3>Visible work</h3><p>The portfolio uses actual detailing photos from the business.</p></article>
+        <article><span>02</span><h3>Direct contact</h3><p>Call or text Cooper without a booking portal in the middle.</p></article>
+        <article><span>03</span><h3>Local service</h3><p>Mobile detailing based in Aledo and serving confirmed nearby communities.</p></article>
+      </div>
+    </div>
+  </section>
+
+  <section class="section area-photo-section">
+    <div class="shell area-photo-grid">
+      <img src="/images/work-6.webp" width="756" height="1008" alt="Detailed blue Jeep outside a home" loading="lazy" decoding="async" />
+      <div><p class="eyebrow">Where Coop's works</p><h2>Based in Aledo. Mobile by design.</h2><p>Confirmed service areas include {serviceAreas.join(', ')} and surrounding communities.</p><a class="button button-secondary" href="/contact/">Contact Cooper</a></div>
+    </div>
+  </section>
+
+  <FinalCta />
+</Layout>

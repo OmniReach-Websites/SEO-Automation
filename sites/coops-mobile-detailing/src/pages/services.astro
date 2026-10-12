@@ -1,0 +1,55 @@
+---
+import FinalCta from '../components/FinalCta.astro';
+import ServiceCard from '../components/ServiceCard.astro';
+import Layout from '../layouts/Layout.astro';
+import { addOns, services } from '../data/site';
+---
+
+<Layout
+  title="Mobile Detailing Services"
+  description="Explore exterior, interior, and full mobile detailing packages from Coop's Mobile Detailing in Aledo, Texas. Starting prices from $60."
+>
+  <section class="page-hero page-hero-services">
+    <div class="page-hero-media"><img src="/images/work-2.webp" width="756" height="1008" alt="Blue Ford Mustang covered in foam during an exterior detail" fetchpriority="high" /></div>
+    <div class="shell page-hero-content"><p class="eyebrow">Services & pricing</p><h1>A clean built around your vehicle.</h1><p>Choose exterior, interior, or both. Cooper brings mobile detailing to your location around Aledo.</p></div>
+  </section>
+
+  <section class="section section-light" aria-labelledby="packages-heading">
+    <div class="shell">
+      <div class="section-heading split-heading">
+        <div><p class="eyebrow">Core packages</p><h2 id="packages-heading">Three ways to refresh your ride.</h2></div>
+        <p>Prices shown are starting prices. Final pricing can vary depending on vehicle size and condition.</p>
+      </div>
+      <div class="service-grid">
+        {services.map((service) => <ServiceCard service={service} />)}
+      </div>
+    </div>
+  </section>
+
+  <section class="section add-ons-section" aria-labelledby="addons-heading">
+    <div class="shell add-ons-grid">
+      <div>
+        <p class="eyebrow">Available add-ons</p>
+        <h2 id="addons-heading">Extra attention where it matters.</h2>
+        <p>Add-on prices are not listed online. Mention the add-on you need when you contact Cooper for a quote.</p>
+      </div>
+      <ol class="add-on-list">
+        {addOns.map((addOn, index) => <li><span>0{index + 1}</span><strong>{addOn}</strong></li>)}
+      </ol>
+    </div>
+  </section>
+
+  <section class="section process-section" aria-labelledby="process-heading">
+    <div class="shell">
+      <div class="section-heading centered"><p class="eyebrow">Requesting a quote</p><h2 id="process-heading">A quick conversation, not a complicated form.</h2></div>
+      <div class="process-grid">
+        <article><span>01</span><h3>Tell Cooper what you drive</h3><p>Share the vehicle type and general condition.</p></article>
+        <article><span>02</span><h3>Choose your service</h3><p>Exterior, interior, full detail, or a listed add-on.</p></article>
+        <article><span>03</span><h3>Share your location</h3><p>Confirm that the service address is within the area.</p></article>
+      </div>
+      <p class="pricing-note">Water and electricity need to be available at the service location. Most jobs take approximately 1.5–3.5 hours, depending on the vehicle.</p>
+    </div>
+  </section>
+
+  <FinalCta compact />
+</Layout>

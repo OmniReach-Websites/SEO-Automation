@@ -17,6 +17,7 @@ describe('snapshot, preview, and contact boundaries', () => {
     const definitions = discoverSiteBuildDefinitions(process.cwd());
     expect([...definitions.keys()]).toEqual([
       'sites/_starter',
+      'sites/coops-mobile-detailing',
       'sites/custom-portfolio-example',
       'sites/restaurant-example',
     ]);
