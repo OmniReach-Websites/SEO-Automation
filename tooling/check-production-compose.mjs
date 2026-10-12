@@ -113,6 +113,7 @@ export function checkProductionCompose() {
 
   const migration = readFileSync(resolve(scriptsDirectory, 'migrate-entrypoint.sh'), 'utf8');
   for (const expected of [
+    'npm run db:sync-orap-catalog',
     'NOSUPERUSER',
     'NOCREATEDB',
     'NOCREATEROLE',
