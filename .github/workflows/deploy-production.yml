@@ -27,6 +27,11 @@ on:
         required: false
         default: false
         type: boolean
+      confirm_rollback:
+        description: Confirm the reviewed production rollback operation
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -301,7 +306,8 @@ jobs:
     name: Run reviewed compatible rollback
     if: >-
       ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' &&
-      inputs.operation == 'rollback' }}
+      inputs.operation == 'rollback' && inputs.confirm_rollback == true &&
+      vars.PRODUCTION_DEPLOYMENT_ENABLED == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: production
