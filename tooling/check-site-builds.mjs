@@ -63,14 +63,14 @@ export function checkSiteBuilds() {
       }
       const allowedExternalUrls = new Set([
         'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit',
-        'https://coopsmobiledetailing.vercel.app',
-        'https://coopsmobiledetailing.vercel.app/',
-        'https://coopsmobiledetailing.vercel.app/about/',
-        'https://coopsmobiledetailing.vercel.app/contact/',
-        'https://coopsmobiledetailing.vercel.app/images/social-card.webp',
-        'https://coopsmobiledetailing.vercel.app/our-work/',
-        'https://coopsmobiledetailing.vercel.app/privacy/',
-        'https://coopsmobiledetailing.vercel.app/services/',
+        'https://coopsmobiledetailingaledo.com',
+        'https://coopsmobiledetailingaledo.com/',
+        'https://coopsmobiledetailingaledo.com/about/',
+        'https://coopsmobiledetailingaledo.com/contact/',
+        'https://coopsmobiledetailingaledo.com/images/social-card.webp',
+        'https://coopsmobiledetailingaledo.com/our-work/',
+        'https://coopsmobiledetailingaledo.com/privacy/',
+        'https://coopsmobiledetailingaledo.com/services/',
         'https://instagram.com/coops_mobile_detailing',
         'https://schema.org',
       ]);

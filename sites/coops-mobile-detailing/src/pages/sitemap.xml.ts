@@ -1,4 +1,4 @@
-const origin = 'https://coopsmobiledetailing.vercel.app';
+const origin = 'https://coopsmobiledetailingaledo.com';
 const paths = ['/', '/services/', '/our-work/', '/about/', '/contact/', '/privacy/'];
 export function GET(): Response {
   const urls = paths.map((path) => `<url><loc>${origin}${path}</loc></url>`).join('');

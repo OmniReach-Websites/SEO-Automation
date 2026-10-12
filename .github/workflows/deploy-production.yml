@@ -120,6 +120,26 @@ jobs:
           ssh -o BatchMode=yes -o StrictHostKeyChecking=yes "${TARGET_USER}@${TARGET_HOST}" \
             "omnireach-release deploy ${GITHUB_SHA}"
 
+      - name: Verify Coop public site and SEO endpoints
+        run: |
+          origin=https://coopsmobiledetailingaledo.com
+          attempts=0
+          until curl --fail --silent --show-error --max-time 15 "${origin}/" > coops-home.html; do
+            attempts=$((attempts + 1))
+            test "${attempts}" -lt 12
+            sleep 5
+          done
+          grep -Fq '<link rel="canonical" href="https://coopsmobiledetailingaledo.com/">' coops-home.html
+          grep -Fq 'application/ld+json' coops-home.html
+          curl --fail --silent --show-error --max-time 15 "${origin}/robots.txt" |
+            grep -Fq 'Sitemap: https://coopsmobiledetailingaledo.com/sitemap.xml'
+          curl --fail --silent --show-error --max-time 15 "${origin}/sitemap.xml" |
+            grep -Fq '<loc>https://coopsmobiledetailingaledo.com/</loc>'
+          test "$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+            --max-time 15 "${origin}/definitely-not-a-real-page")" = 404
+          test "$(curl --silent --show-error --output /dev/null --write-out '%{redirect_url}' \
+            --max-time 15 https://www.coopsmobiledetailingaledo.com/)" = "${origin}/"
+
       - name: Remove ephemeral identity
         if: always()
         run: rm -f "${HOME}/.ssh/id_ed25519" "${HOME}/.ssh/known_hosts"

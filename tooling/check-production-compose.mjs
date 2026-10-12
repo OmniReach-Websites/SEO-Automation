@@ -14,7 +14,14 @@ export function checkProductionCompose() {
   const source = readFileSync(composePath, 'utf8');
   const compose = parse(source, { merge: true });
   const errors = [];
-  const requiredServices = ['postgres', 'redis', 'migrate', 'platform-data-init', 'api'];
+  const requiredServices = [
+    'postgres',
+    'redis',
+    'migrate',
+    'platform-data-init',
+    'api',
+    'coops-mobile-detailing',
+  ];
 
   if (compose.name !== 'omnireach-production') errors.push('unexpected production project name');
   for (const service of requiredServices) {
@@ -94,6 +101,23 @@ export function checkProductionCompose() {
     errors.push('proxy network must be an explicitly external network');
   }
 
+  const coopsSite = compose.services?.['coops-mobile-detailing'];
+  if (
+    coopsSite?.entrypoint?.join(' ') !==
+    'node infrastructure/compose/scripts/static-site-server.mjs'
+  ) {
+    errors.push('Coop site must use the bounded static server entrypoint');
+  }
+  if (coopsSite?.networks?.proxy?.aliases?.[0] !== 'coops-mobile-detailing') {
+    errors.push('Coop site must expose only its fixed alias on the shared proxy network');
+  }
+  if (coopsSite?.read_only !== true || !coopsSite?.healthcheck) {
+    errors.push('Coop site must be read-only and health checked');
+  }
+  if ((coopsSite?.ports ?? []).length > 0) {
+    errors.push('Coop site must not publish a host port');
+  }
+
   const declaredVolumes = ['platform-data', 'postgres-data', 'redis-data'];
   for (const volume of declaredVolumes) {
     if (!compose.volumes?.[volume]?.name?.includes('OMNIREACH_RESOURCE_PREFIX')) {
@@ -145,6 +169,7 @@ export function checkProductionCompose() {
       'infrastructure/compose/scripts/migrate-entrypoint.sh',
       'infrastructure/compose/scripts/redis-entrypoint.sh',
       'infrastructure/compose/scripts/runtime-entrypoint.sh',
+      'infrastructure/deploy/configure-coops-site-route.sh',
     ],
     { cwd: root, encoding: 'utf8' },
   );
@@ -153,9 +178,45 @@ export function checkProductionCompose() {
     'migrate-entrypoint.sh',
     'redis-entrypoint.sh',
     'runtime-entrypoint.sh',
+    '../../deploy/configure-coops-site-route.sh',
   ]) {
-    const line = indexedModes.split(/\r?\n/u).find((entry) => entry.endsWith(`/scripts/${script}`));
+    const trackedPath = script.startsWith('../../deploy/')
+      ? `infrastructure/deploy/${script.slice('../../deploy/'.length)}`
+      : `infrastructure/compose/scripts/${script}`;
+    const line = indexedModes.split(/\r?\n/u).find((entry) => entry.endsWith(`\t${trackedPath}`));
     if (!line?.startsWith('100755 ')) errors.push(`${script} must be executable in Git`);
+  }
+
+  const staticServer = readFileSync(resolve(scriptsDirectory, 'static-site-server.mjs'), 'utf8');
+  for (const expected of ['/404.html', "request.method !== 'GET'", 'X-Content-Type-Options']) {
+    if (!staticServer.includes(expected)) errors.push(`static site server is missing ${expected}`);
+  }
+
+  const routeInstaller = readFileSync(
+    resolve(root, 'infrastructure/deploy/configure-coops-site-route.sh'),
+    'utf8',
+  );
+  for (const expected of [
+    'coopsmobiledetailingaledo.com',
+    'www.coopsmobiledetailingaledo.com',
+    'reverse_proxy coops-mobile-detailing:8080',
+    'caddy validate',
+    'caddy reload',
+  ]) {
+    if (!routeInstaller.includes(expected))
+      errors.push(`Coop route installer is missing ${expected}`);
+  }
+
+  const productionDockerfile = readFileSync(
+    resolve(root, 'infrastructure/compose/production.Dockerfile'),
+    'utf8',
+  );
+  if (
+    !productionDockerfile.includes(
+      'npm run build --workspace @omnireach/site-coops-mobile-detailing',
+    )
+  ) {
+    errors.push('production runtime image does not build the Coop static site');
   }
 
   if (/POSTGRES_PASSWORD:\s*(?!FILE)/u.test(source)) {

@@ -1,6 +1,6 @@
 import { loadSiteContent, textField } from '@omnireach/site-runtime';
 
-export const SITE_URL = 'https://coopsmobiledetailing.vercel.app';
+export const SITE_URL = 'https://coopsmobiledetailingaledo.com';
 export const PHONE_E164 = '+18177576030';
 export const PHONE_DISPLAY = '(817) 757-6030';
 export const CALL_HREF = `tel:${PHONE_E164}`;

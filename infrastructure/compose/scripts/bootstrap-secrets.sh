@@ -108,3 +108,15 @@ fi
 
 chmod 0700 "$secrets_dir"
 printf '%s\n' 'Secret bootstrap complete; values were not printed.'
+
+if [ "$secrets_dir" = /opt/servers/omnireach/shared/secrets ] &&
+  [ -f /opt/servers/caddy/Caddyfile ] &&
+  [ -f /opt/servers/caddy/compose.yml ]; then
+  script_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+  route_installer=$script_root/deploy/configure-coops-site-route.sh
+  [ -x "$route_installer" ] || {
+    printf '%s\n' 'Coop production route installer is missing or not executable' >&2
+    exit 69
+  }
+  "$route_installer"
+fi
