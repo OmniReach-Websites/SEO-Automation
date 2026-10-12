@@ -333,28 +333,36 @@ export class PostgresWebAuthnRepository implements WebAuthnEnrollmentRepository 
     });
     if (!validEnrollmentCompletion(input)) return false;
     return withWebAuthnTransaction(this.pool, async (client) => {
-      const account = await query<{
-        auth_state_version: string;
-        email_code_enabled: boolean;
-        password_hash: string;
-        second_step_requirement: string;
-      }>(
+      // Keep this lock sequence aligned with every authentication-state mutation:
+      // user -> password credential -> session -> authorization -> policy -> factors.
+      // Acquiring a planner-selected multi-table lock can invert that order and deadlock
+      // against recovery or policy flows.
+      const users = await query<{ id: string }>(
         client,
-        `SELECT credential.password_hash, policy.auth_state_version::text,
-                policy.email_code_enabled, policy.second_step_requirement
+        `SELECT auth_user.id
            FROM users auth_user
-           JOIN credentials credential ON credential.user_id = auth_user.id
-           JOIN account_authentication_policies policy ON policy.user_id = auth_user.id
           WHERE auth_user.id = $1 AND auth_user.status = 'active'
-          FOR UPDATE OF auth_user, credential, policy`,
+          FOR UPDATE OF auth_user`,
         [target.userId],
       );
-      const lockedAccount = account.rows[0];
+      if (users.rows.length !== 1) return false;
+
+      const credentials = await query<{ password_hash: string }>(
+        client,
+        `SELECT credential.password_hash
+           FROM credentials credential
+          WHERE credential.user_id = $1
+          FOR UPDATE OF credential`,
+        [target.userId],
+      );
+      const passwordCredential = credentials.rows[0];
       if (
-        account.rows.length !== 1 ||
-        !lockedAccount ||
-        lockedAccount.auth_state_version !== input.expectedAuthStateVersion ||
-        !input.verifyCredentialState(lockedAccount.password_hash, input.credentialStateDigest)
+        credentials.rows.length !== 1 ||
+        !passwordCredential ||
+        !input.verifyCredentialState(
+          passwordCredential.password_hash,
+          input.credentialStateDigest,
+        )
       ) {
         return false;
       }
@@ -425,6 +433,28 @@ export class PostgresWebAuthnRepository implements WebAuthnEnrollmentRepository 
         (target.tenantId
           ? !role.startsWith('customer_')
           : !role.startsWith('platform_') && role !== 'staff')
+      ) {
+        return false;
+      }
+
+      const policies = await query<{
+        auth_state_version: string;
+        email_code_enabled: boolean;
+        second_step_requirement: string;
+      }>(
+        client,
+        `SELECT policy.auth_state_version::text, policy.email_code_enabled,
+                policy.second_step_requirement
+           FROM account_authentication_policies policy
+          WHERE policy.user_id = $1
+          FOR UPDATE OF policy`,
+        [target.userId],
+      );
+      const lockedAccount = policies.rows[0];
+      if (
+        policies.rows.length !== 1 ||
+        !lockedAccount ||
+        lockedAccount.auth_state_version !== input.expectedAuthStateVersion
       ) {
         return false;
       }

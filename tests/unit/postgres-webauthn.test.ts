@@ -159,13 +159,21 @@ describe('PostgreSQL WebAuthn scope repository', () => {
 
   it('atomically enrolls, replaces recovery codes, updates policy, revokes sessions, and audits', async () => {
     const fixture = poolWith((statement) => {
-      if (statement.includes('SELECT credential.password_hash')) {
+      if (statement.includes('FROM users auth_user') && statement.includes('FOR UPDATE')) {
+        return { rows: [{ id: scopeRow.user_id }] };
+      }
+      if (statement.includes('FROM credentials credential') && statement.includes('FOR UPDATE')) {
+        return { rows: [{ password_hash: 'fictional-current-hash' }] };
+      }
+      if (
+        statement.includes('FROM account_authentication_policies policy') &&
+        statement.includes('FOR UPDATE')
+      ) {
         return {
           rows: [
             {
               auth_state_version: '7',
               email_code_enabled: true,
-              password_hash: 'fictional-current-hash',
               second_step_requirement: 'optional',
             },
           ],
@@ -232,8 +240,38 @@ describe('PostgreSQL WebAuthn scope repository', () => {
     });
 
     expect(completed).toBe(true);
-    const sql = fixture.query.mock.calls.map(([statement]) => statement).join('\n');
-    expect(sql).toContain('FOR UPDATE OF auth_user, credential, policy');
+    const statements = fixture.query.mock.calls.map(([statement]) => statement);
+    const sql = statements.join('\n');
+    const userLock = statements.findIndex(
+      (statement) => statement.includes('FROM users auth_user') && statement.includes('FOR UPDATE'),
+    );
+    const credentialLock = statements.findIndex(
+      (statement) =>
+        statement.includes('FROM credentials credential') && statement.includes('FOR UPDATE'),
+    );
+    const sessionLock = statements.findIndex(
+      (statement) => statement.includes('FROM sessions') && statement.includes('FOR UPDATE'),
+    );
+    const authorizationLock = statements.findIndex(
+      (statement) => statement.includes('SELECT membership.role') && statement.includes('FOR UPDATE'),
+    );
+    const policyLock = statements.findIndex(
+      (statement) =>
+        statement.includes('FROM account_authentication_policies policy') &&
+        statement.includes('FOR UPDATE'),
+    );
+    const factorLock = statements.findIndex(
+      (statement) => statement.includes('FROM mfa_factors') && statement.includes('FOR UPDATE'),
+    );
+    expect([
+      userLock,
+      credentialLock,
+      sessionLock,
+      authorizationLock,
+      policyLock,
+      factorLock,
+    ]).toEqual([0, 1, 2, 3, 4, 5].map((offset) => userLock + offset));
+    expect(sql).not.toContain('FOR UPDATE OF auth_user, credential');
     expect(sql).toContain('INSERT INTO webauthn_credentials');
     expect(sql).toContain('UPDATE account_recovery_codes');
     expect(sql).toContain("second_step_requirement = 'required'");
@@ -250,17 +288,11 @@ describe('PostgreSQL WebAuthn scope repository', () => {
 
   it('does not write credentials when the bound session was revoked before completion', async () => {
     const fixture = poolWith((statement) => {
-      if (statement.includes('SELECT credential.password_hash')) {
-        return {
-          rows: [
-            {
-              auth_state_version: '7',
-              email_code_enabled: true,
-              password_hash: 'fictional-current-hash',
-              second_step_requirement: 'optional',
-            },
-          ],
-        };
+      if (statement.includes('FROM users auth_user') && statement.includes('FOR UPDATE')) {
+        return { rows: [{ id: scopeRow.user_id }] };
+      }
+      if (statement.includes('FROM credentials credential') && statement.includes('FOR UPDATE')) {
+        return { rows: [{ password_hash: 'fictional-current-hash' }] };
       }
       return { rows: [] };
     });
