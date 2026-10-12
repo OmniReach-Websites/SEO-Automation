@@ -38,6 +38,7 @@ test('served ORAP and customer shells remain accessible and host isolated', asyn
         {
           baseRevision: 1,
           content: { 'home.heading': 'Welcome to Fictional Alpha' },
+          current: true,
           id: '80000000-0000-4000-8000-000000000001',
           version: 2,
         },
@@ -46,9 +47,22 @@ test('served ORAP and customer shells remain accessible and host isolated', asyn
       fieldUpdate: async () => ({}),
       history: async () => [
         {
+          active: false,
+          createdAt: new Date('2026-10-10T21:00:00.000Z'),
+          createdBy: customer.userId,
+          errorCode: 'publication_failed',
+          origin: 'human',
+          publicationPending: false,
+          publicationStatus: 'failed',
+          revision: 2,
+        },
+        {
+          active: true,
           createdAt: new Date('2026-10-10T20:00:00.000Z'),
           createdBy: customer.userId,
           origin: 'human',
+          publicationPending: false,
+          publicationStatus: 'published',
           revision: 1,
         },
       ],
@@ -178,7 +192,9 @@ test('served ORAP and customer shells remain accessible and host isolated', asyn
     await customerPage.getByRole('link', { name: 'History' }).click();
     await expect(customerPage.getByRole('heading', { level: 1 })).toHaveText('Revision history');
     await expect(customerPage.getByRole('table')).toContainText('Published content revision 1');
+    await expect(customerPage.getByRole('table')).toContainText('Failed');
     await expect(customerPage.getByRole('button', { name: 'Restore revision 1' })).toBeVisible();
+    await expect(customerPage.locator('form[action="/history/2/restore"]')).toHaveCount(0);
     await expect(
       customerPage.locator('form[action="/history/1/restore"] input[name="idempotencyKey"]'),
     ).toHaveValue(/^[0-9a-f-]{36}$/u);

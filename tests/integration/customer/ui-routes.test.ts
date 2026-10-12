@@ -3,6 +3,7 @@ import {
   type CustomerEndpointService,
   type CustomerPrincipal,
 } from '@omnireach/api';
+import { PublicationPendingError, RevisionConflictError } from '@omnireach/content';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const draftId = '80000000-0000-4000-8000-000000000001';
@@ -41,6 +42,7 @@ function service(): CustomerEndpointService & {
           'home.heading': 'Original heading',
           'site.theme': 'default',
         },
+        current: true,
         id: draftId,
         version: 2,
       },
@@ -49,9 +51,12 @@ function service(): CustomerEndpointService & {
     fieldUpdate: vi.fn(async (_principal, input) => ({ version: input.expectedVersion + 1 })),
     history: vi.fn(async () => [
       {
+        active: true,
         createdAt: new Date('2026-10-10T20:00:00.000Z'),
         createdBy: owner.userId,
         origin: 'human',
+        publicationPending: false,
+        publicationStatus: 'published',
         revision: 3,
       },
     ]),
@@ -344,6 +349,410 @@ describe('customer editor and history pages', () => {
     expect(vi.mocked(content.restore).mock.calls[1]?.[1].idempotencyKey).toBe(
       restoreIdempotencyKey,
     );
+  });
+
+  it('freezes the editor during a queued build and unlocks the same draft after failure', async () => {
+    const content = service();
+    vi.mocked(content.drafts).mockResolvedValue([
+      {
+        baseRevision: 3,
+        content: { 'home.heading': 'Frozen snapshot' },
+        current: true,
+        id: draftId,
+        publicationStatus: 'building',
+        version: 2,
+      },
+    ]);
+    vi.mocked(content.history).mockResolvedValue([
+      {
+        active: false,
+        createdAt: new Date('2026-10-11T20:00:00.000Z'),
+        createdBy: owner.userId,
+        origin: 'human',
+        publicationPending: true,
+        publicationStatus: 'building',
+        revision: 4,
+      },
+    ]);
+    const server = buildCustomerUi(content);
+
+    const building = await server.inject({
+      headers: authenticatedHeaders,
+      method: 'GET',
+      url: '/editor',
+    });
+    expect(building.body).toContain('Publication is building');
+    expect(building.body).not.toContain('Save draft');
+    const blockedSave = await server.inject({
+      headers: {
+        ...authenticatedHeaders,
+        'content-type': 'application/x-www-form-urlencoded',
+        origin: 'https://admin.alpha.test',
+      },
+      method: 'POST',
+      payload: new URLSearchParams({
+        draftId,
+        expectedVersion: '2',
+        'home.heading': 'Must not diverge',
+      }).toString(),
+      url: '/editor/draft',
+    });
+    expect(blockedSave.statusCode).toBe(409);
+    expect(content.draftUpdate).not.toHaveBeenCalled();
+
+    vi.mocked(content.drafts).mockResolvedValue([
+      {
+        baseRevision: 3,
+        content: { 'home.heading': 'Frozen snapshot' },
+        current: true,
+        id: draftId,
+        version: 2,
+      },
+    ]);
+    vi.mocked(content.history).mockResolvedValue([
+      {
+        active: false,
+        createdAt: new Date('2026-10-11T20:00:00.000Z'),
+        createdBy: owner.userId,
+        errorCode: 'publication_failed',
+        origin: 'human',
+        publicationPending: false,
+        publicationStatus: 'failed',
+        revision: 4,
+      },
+    ]);
+    const recovered = await server.inject({
+      headers: authenticatedHeaders,
+      method: 'GET',
+      url: '/editor',
+    });
+    expect(recovered.body).toContain('Save draft');
+    const failedHistory = await server.inject({
+      headers: authenticatedHeaders,
+      method: 'GET',
+      url: '/history',
+    });
+    expect(failedHistory.body).toContain('Failed');
+    expect(failedHistory.body).toContain('live content unchanged');
+    expect(failedHistory.body).not.toContain('action="/history/4/restore"');
+  });
+
+  it('fails closed instead of choosing an arbitrary duplicate or stale active draft', async () => {
+    const content = service();
+    const duplicate = {
+      baseRevision: 3,
+      content: { 'home.heading': 'Duplicate' },
+      current: true,
+      id: draftId,
+      version: 2,
+    };
+    vi.mocked(content.drafts).mockResolvedValue([
+      duplicate,
+      { ...duplicate, id: '80000000-0000-4000-8000-000000000002' },
+    ]);
+    const server = buildCustomerUi(content);
+    const conflicted = await server.inject({
+      headers: authenticatedHeaders,
+      method: 'GET',
+      url: '/editor',
+    });
+    expect(conflicted.statusCode).toBe(409);
+    expect(conflicted.body).toContain('Multiple active drafts');
+
+    vi.mocked(content.drafts).mockResolvedValue([{ ...duplicate, current: false }]);
+    const stale = await server.inject({
+      headers: authenticatedHeaders,
+      method: 'GET',
+      url: '/editor',
+    });
+    expect(stale.body).toContain('Start from latest published revision');
+    expect(stale.body).not.toContain('Save draft');
+    const staleSave = await server.inject({
+      headers: {
+        ...authenticatedHeaders,
+        'content-type': 'application/x-www-form-urlencoded',
+        origin: 'https://admin.alpha.test',
+      },
+      method: 'POST',
+      payload: new URLSearchParams({
+        draftId,
+        expectedVersion: '2',
+        'home.heading': 'Stale browser write',
+      }).toString(),
+      url: '/editor/draft',
+    });
+    expect(staleSave.statusCode).toBe(409);
+    expect(content.draftUpdate).not.toHaveBeenCalled();
+  });
+
+  it('renders safe HTML lifecycle conflicts for publish and restore forms', async () => {
+    const content = service();
+    vi.mocked(content.publish).mockRejectedValue(
+      new PublicationPendingError('private publication queue details'),
+    );
+    vi.mocked(content.restore).mockRejectedValue(
+      new RevisionConflictError('private restore eligibility details'),
+    );
+    const server = buildCustomerUi(content);
+    const headers = {
+      ...authenticatedHeaders,
+      'content-type': 'application/x-www-form-urlencoded',
+      origin: 'https://admin.alpha.test',
+    };
+    const publish = await server.inject({
+      headers,
+      method: 'POST',
+      payload: new URLSearchParams({
+        draftId,
+        idempotencyKey: '90000000-0000-4000-8000-000000000001',
+        reason: 'Approved publication',
+      }).toString(),
+      url: '/editor/publish',
+    });
+    expect(publish.statusCode).toBe(409);
+    expect(publish.headers['content-type']).toContain('text/html');
+    expect(publish.body).toContain('Another publication is already in progress');
+    expect(publish.body).not.toContain('private');
+
+    const restore = await server.inject({
+      headers,
+      method: 'POST',
+      payload: new URLSearchParams({
+        idempotencyKey: '90000000-0000-4000-8000-000000000002',
+        reason: 'Approved restore',
+      }).toString(),
+      url: '/history/3/restore',
+    });
+    expect(restore.statusCode).toBe(409);
+    expect(restore.headers['content-type']).toContain('text/html');
+    expect(restore.body).toContain('no longer eligible for restore');
+    expect(restore.body).not.toContain('private');
+  });
+
+  it('supports publish, atomic rebase, edit, and publish again', async () => {
+    const content = service();
+    let activeDraftId = draftId;
+    let current = true;
+    let version = 2;
+    let heading = 'First publish';
+    let pending = false;
+    let revision = 3;
+    const history = [
+      {
+        active: true,
+        createdAt: new Date('2026-10-10T20:00:00.000Z'),
+        createdBy: owner.userId,
+        origin: 'human',
+        publicationPending: false,
+        publicationStatus: 'published',
+        revision,
+      },
+    ];
+    vi.mocked(content.drafts).mockImplementation(async () => [
+      {
+        baseRevision: revision,
+        content: { 'home.heading': heading },
+        current,
+        id: activeDraftId,
+        ...(pending ? { publicationStatus: 'queued' as const } : {}),
+        version,
+      },
+    ]);
+    vi.mocked(content.history).mockImplementation(async () => history);
+    vi.mocked(content.createDraft).mockImplementation(async () => {
+      activeDraftId = '80000000-0000-4000-8000-000000000002';
+      current = true;
+      version = 1;
+      return { id: activeDraftId, version };
+    });
+    vi.mocked(content.draftUpdate).mockImplementation(async (_principal, input) => {
+      heading = String(input.patch['home.heading']);
+      version += 1;
+      return { version };
+    });
+    vi.mocked(content.publish).mockImplementation(async () => {
+      pending = true;
+      revision += 1;
+      history.unshift({
+        active: false,
+        createdAt: new Date('2026-10-11T20:00:00.000Z'),
+        createdBy: owner.userId,
+        origin: 'human',
+        publicationPending: true,
+        publicationStatus: 'queued',
+        revision,
+      });
+      return { contentRevision: revision, status: 'queued' };
+    });
+    const server = buildCustomerUi(content);
+    const formHeaders = {
+      ...authenticatedHeaders,
+      'content-type': 'application/x-www-form-urlencoded',
+      origin: 'https://admin.alpha.test',
+    };
+
+    const firstEditor = await server.inject({ headers: authenticatedHeaders, url: '/editor' });
+    const firstKey = formIdempotencyKey(firstEditor.body, '/editor/publish');
+    await server.inject({
+      headers: formHeaders,
+      method: 'POST',
+      payload: new URLSearchParams({
+        draftId: activeDraftId,
+        idempotencyKey: firstKey,
+        reason: 'First publication',
+      }).toString(),
+      url: '/editor/publish',
+    });
+    const queuedEditor = await server.inject({ headers: authenticatedHeaders, url: '/editor' });
+    expect(queuedEditor.body).toContain('Editing is paused');
+    expect(queuedEditor.body).not.toContain('Save draft');
+
+    pending = false;
+    current = false;
+    const completedPublication = history[0];
+    if (!completedPublication) throw new Error('Queued publication state is missing');
+    history[0] = {
+      ...completedPublication,
+      active: true,
+      publicationPending: false,
+      publicationStatus: 'published',
+    };
+    const staleEditor = await server.inject({ headers: authenticatedHeaders, url: '/editor' });
+    expect(staleEditor.body).toContain('Start from latest published revision');
+    await server.inject({ headers: formHeaders, method: 'POST', url: '/editor/draft/new' });
+    await server.inject({
+      headers: formHeaders,
+      method: 'POST',
+      payload: new URLSearchParams({
+        draftId: activeDraftId,
+        expectedVersion: '1',
+        'home.heading': 'Second publish',
+      }).toString(),
+      url: '/editor/draft',
+    });
+    const secondEditor = await server.inject({ headers: authenticatedHeaders, url: '/editor' });
+    const secondKey = formIdempotencyKey(secondEditor.body, '/editor/publish');
+    await server.inject({
+      headers: formHeaders,
+      method: 'POST',
+      payload: new URLSearchParams({
+        draftId: activeDraftId,
+        idempotencyKey: secondKey,
+        reason: 'Second publication',
+      }).toString(),
+      url: '/editor/publish',
+    });
+    expect(content.publish).toHaveBeenCalledTimes(2);
+    expect(content.draftUpdate).toHaveBeenCalledWith(
+      owner,
+      expect.objectContaining({ patch: { 'home.heading': 'Second publish' } }),
+    );
+  });
+
+  it('supports restore, atomic rebase, edit, and publish', async () => {
+    const content = service();
+    let activeDraftId = draftId;
+    let current = true;
+    let version = 2;
+    let revision = 3;
+    const history = [
+      {
+        active: true,
+        createdAt: new Date('2026-10-10T20:00:00.000Z'),
+        createdBy: owner.userId,
+        origin: 'human',
+        publicationPending: false,
+        publicationStatus: 'published',
+        revision,
+      },
+    ];
+    vi.mocked(content.drafts).mockImplementation(async () => [
+      {
+        baseRevision: revision,
+        content: { 'home.heading': 'Restored base' },
+        current,
+        id: activeDraftId,
+        version,
+      },
+    ]);
+    vi.mocked(content.history).mockImplementation(async () => history);
+    vi.mocked(content.createDraft).mockImplementation(async () => {
+      activeDraftId = '80000000-0000-4000-8000-000000000003';
+      current = true;
+      version = 1;
+      return { id: activeDraftId, version };
+    });
+    vi.mocked(content.restore).mockImplementation(async () => {
+      revision += 1;
+      const priorActive = history[0];
+      if (!priorActive) throw new Error('Published restore target is missing');
+      history[0] = { ...priorActive, active: false };
+      history.unshift({
+        active: false,
+        createdAt: new Date('2026-10-11T21:00:00.000Z'),
+        createdBy: owner.userId,
+        origin: 'restore',
+        publicationPending: true,
+        publicationStatus: 'queued',
+        revision,
+      });
+      return { contentRevision: revision, status: 'queued' };
+    });
+    const server = buildCustomerUi(content);
+    const formHeaders = {
+      ...authenticatedHeaders,
+      'content-type': 'application/x-www-form-urlencoded',
+      origin: 'https://admin.alpha.test',
+    };
+    const historyPage = await server.inject({ headers: authenticatedHeaders, url: '/history' });
+    const restoreKey = formIdempotencyKey(historyPage.body, '/history/3/restore');
+    await server.inject({
+      headers: formHeaders,
+      method: 'POST',
+      payload: new URLSearchParams({
+        idempotencyKey: restoreKey,
+        reason: 'Restore known-good revision',
+      }).toString(),
+      url: '/history/3/restore',
+    });
+
+    const completedRestore = history[0];
+    if (!completedRestore) throw new Error('Queued restore state is missing');
+    history[0] = {
+      ...completedRestore,
+      active: true,
+      publicationPending: false,
+      publicationStatus: 'published',
+    };
+    current = false;
+    const staleEditor = await server.inject({ headers: authenticatedHeaders, url: '/editor' });
+    expect(staleEditor.body).toContain('Start from latest published revision');
+    await server.inject({ headers: formHeaders, method: 'POST', url: '/editor/draft/new' });
+    await server.inject({
+      headers: formHeaders,
+      method: 'POST',
+      payload: new URLSearchParams({
+        draftId: activeDraftId,
+        expectedVersion: '1',
+        'home.heading': 'Edited after restore',
+      }).toString(),
+      url: '/editor/draft',
+    });
+    const editor = await server.inject({ headers: authenticatedHeaders, url: '/editor' });
+    const publishKey = formIdempotencyKey(editor.body, '/editor/publish');
+    await server.inject({
+      headers: formHeaders,
+      method: 'POST',
+      payload: new URLSearchParams({
+        draftId: activeDraftId,
+        idempotencyKey: publishKey,
+        reason: 'Publish edits after restore',
+      }).toString(),
+      url: '/editor/publish',
+    });
+    expect(content.restore).toHaveBeenCalledTimes(1);
+    expect(content.draftUpdate).toHaveBeenCalledTimes(1);
+    expect(content.publish).toHaveBeenCalledTimes(1);
   });
 
   it('does not expose publish or restore controls to an editor without a site grant', async () => {

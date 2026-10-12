@@ -295,6 +295,11 @@ describe('snapshot, preview, and contact boundaries', () => {
     };
     try {
       const token = await preview.create(context, '80000000-0000-4000-8000-000000000001');
+      expect(
+        query.mock.calls.some(
+          ([text]) => text.includes('FROM content_drafts') && text.includes("state = 'active'"),
+        ),
+      ).toBe(true);
       const file = await preview.read(context, { path: '', token: token.previewToken });
       expect(new TextDecoder().decode(file.body)).toContain('Draft-only preview heading');
       await expect(
