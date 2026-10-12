@@ -6,6 +6,7 @@ import {
 } from '@omnireach/tenant';
 
 import {
+  ProtectedFieldError,
   RevisionConflictError,
   updateDraft,
   type ContentRecord,
@@ -96,7 +97,8 @@ export class PostgresContentRepository {
                     'id', f.stable_id,
                     'type', f.field_type,
                     'protected', f.protected,
-                    'aiMode', f.ai_mode
+                    'aiMode', f.ai_mode,
+                    'editableBy', f.editable_by
                   ) ORDER BY f.stable_id
                 ) FILTER (WHERE f.id IS NOT NULL), '[]'::jsonb) AS fields
            FROM content_pages p
@@ -166,9 +168,26 @@ export class PostgresContentRepository {
     context: ContentActorContext,
     input: { draftId: string; expectedVersion: number; fieldId: string; value: unknown },
   ): Promise<DraftRecord> {
-    if (!isContentValue(input.value))
+    return this.updateDraftFields(context, {
+      draftId: input.draftId,
+      expectedVersion: input.expectedVersion,
+      patch: { [input.fieldId]: input.value },
+    });
+  }
+
+  async updateDraftFields(
+    context: ContentActorContext,
+    input: { draftId: string; expectedVersion: number; patch: Record<string, unknown> },
+  ): Promise<DraftRecord> {
+    const entries = Object.entries(input.patch);
+    if (entries.length === 0 || entries.length > 100) {
+      throw new Error('Draft patch must include between 1 and 100 fields');
+    }
+    if (entries.some(([, value]) => !isContentValue(value))) {
       throw new Error('Field value is not valid structured content');
-    const value: ContentValue = input.value;
+    }
+    const patch = Object.fromEntries(entries) as ContentRecord;
+    const fieldIds = entries.map(([fieldId]) => fieldId);
     return this.transaction(context, async (client) => {
       await assertSiteFeatureEnabled(client, context, 'content.edit');
       const draftResult = await query<{
@@ -187,35 +206,44 @@ export class PostgresContentRepository {
       const draft = required(draftResult.rows[0], 'Draft was not found');
       const fieldResult = await query<{
         ai_mode: FieldPolicy['aiMode'];
+        editable_by: string[];
         field_type: string;
         protected: boolean;
         stable_id: string;
       }>(
         client,
-        `SELECT stable_id, field_type, protected, ai_mode
+        `SELECT stable_id, field_type, protected, ai_mode, editable_by
            FROM content_fields
-          WHERE tenant_id = $1 AND site_id = $2 AND stable_id = $3
-          LIMIT 1`,
-        [context.tenantId, context.siteId, input.fieldId],
+          WHERE tenant_id = $1 AND site_id = $2
+            AND stable_id = ANY($3::varchar(100)[])`,
+        [context.tenantId, context.siteId, fieldIds],
       );
-      const field = required(fieldResult.rows[0], 'Content field was not found');
+      if (fieldResult.rows.length !== fieldIds.length) {
+        throw new Error('One or more content fields were not found');
+      }
+      for (const field of fieldResult.rows) {
+        if (!Array.isArray(field.editable_by) || !field.editable_by.includes(context.role)) {
+          throw new ProtectedFieldError('Role cannot edit this content field');
+        }
+      }
+      const policies = new Map(
+        fieldResult.rows.map((field) => [
+          field.stable_id,
+          {
+            aiMode: field.ai_mode,
+            id: field.stable_id,
+            protected: field.protected,
+            type: field.field_type,
+          },
+        ]),
+      );
       const changed = updateDraft({
         actor: 'human',
         current: draft.content,
         currentVersion: draft.version,
         expectedVersion: input.expectedVersion,
-        fieldPolicies: new Map([
-          [
-            field.stable_id,
-            {
-              aiMode: field.ai_mode,
-              id: field.stable_id,
-              protected: field.protected,
-              type: field.field_type,
-            },
-          ],
-        ]),
-        patch: { [field.stable_id]: value },
+        fieldPolicies: policies,
+        patch,
       });
       const updated = await query<{
         base_revision: number;
@@ -238,9 +266,15 @@ export class PostgresContentRepository {
         ],
       );
       if (!updated.rows[0]) throw new RevisionConflictError('Draft revision is stale');
+      const fieldId = fieldIds.length === 1 ? fieldIds[0] : undefined;
       await audit(client, context, {
-        action: 'content.draft.field_updated',
-        metadata: { fieldId: input.fieldId, version: changed.version },
+        action:
+          fieldIds.length === 1 ? 'content.draft.field_updated' : 'content.draft.fields_updated',
+        metadata: {
+          ...(fieldId ? { fieldId } : {}),
+          fieldIds,
+          version: changed.version,
+        },
         targetId: input.draftId,
         targetType: 'content_draft',
       });

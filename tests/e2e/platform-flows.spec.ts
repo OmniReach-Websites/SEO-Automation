@@ -49,6 +49,14 @@ test('agency onboarding and customer edit-to-restore flow stays host scoped', as
       drafts: async () => [
         { id: '80000000-0000-4000-8000-000000000001', version: state.draftVersion },
       ],
+      draftUpdate: async (_principal, input) => {
+        if (input.expectedVersion !== state.draftVersion) throw new Error('stale draft');
+        for (const [fieldId, value] of Object.entries(input.patch)) {
+          state.content[fieldId] = String(value);
+        }
+        state.draftVersion += 1;
+        return { version: state.draftVersion };
+      },
       fieldUpdate: async (_principal, input) => {
         if (input.expectedVersion !== state.draftVersion) throw new Error('stale draft');
         state.content[input.fieldId] = String(input.value);

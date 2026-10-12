@@ -11,6 +11,7 @@ import type { FastifyInstance } from 'fastify';
 import type { AuthEndpointService } from './auth-routes.ts';
 import type { CustomerEndpointService, ResolveCustomerPrincipal } from './customer-routes.ts';
 import type { OrapAdministrationEndpointService, ResolvePlatformActor } from './orap-routes.ts';
+import { registerCustomerUiRoutes } from './customer-ui-routes.ts';
 import { readCookie } from './request-auth.ts';
 
 export function registerUiRoutes(
@@ -124,6 +125,7 @@ export function registerUiRoutes(
   }
 
   if (options.customerService && options.resolveCustomerPrincipal) {
+    registerCustomerUiRoutes(server, options.customerService, options.resolveCustomerPrincipal);
     server.get('/', async (request, reply) => {
       const principal = await options.resolveCustomerPrincipal?.(request);
       if (!principal) return reply.redirect('/login');

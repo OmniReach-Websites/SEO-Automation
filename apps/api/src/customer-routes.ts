@@ -10,6 +10,9 @@ const stableId = z
   .regex(/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u)
   .max(100);
 const reason = z.string().trim().min(3).max(500);
+const draftPatch = z
+  .record(stableId, z.unknown())
+  .refine((value) => Object.keys(value).length > 0 && Object.keys(value).length <= 100);
 
 export interface CustomerPrincipal {
   editorPublishGrant: boolean;
@@ -34,6 +37,10 @@ export interface CustomerEndpointService {
   contactForms(principal: CustomerPrincipal): Promise<unknown>;
   contactSubmissions(principal: CustomerPrincipal): Promise<unknown>;
   drafts(principal: CustomerPrincipal): Promise<unknown>;
+  draftUpdate(
+    principal: CustomerPrincipal,
+    input: { draftId: string; expectedVersion: number; patch: Record<string, unknown> },
+  ): Promise<unknown>;
   fieldUpdate(
     principal: CustomerPrincipal,
     input: { draftId: string; expectedVersion: number; fieldId: string; value: unknown },
@@ -158,6 +165,23 @@ export function registerCustomerRoutes(
     },
   );
 
+  server.patch(
+    '/v1/customer/drafts/:draftId',
+    { preHandler: requireSameOrigin },
+    async (request, reply) => {
+      const principal = await authorize(request, reply, resolvePrincipal, 'content.edit');
+      if (!principal) return;
+      const params = parse(z.object({ draftId: z.string().uuid() }), request.params, reply);
+      const body = parse(
+        z.object({ expectedVersion: z.number().int().positive(), patch: draftPatch }),
+        request.body,
+        reply,
+      );
+      if (!params || !body) return;
+      return service.draftUpdate(principal, { ...params, ...body });
+    },
+  );
+
   server.post('/v1/customer/preview', { preHandler: requireSameOrigin }, async (request, reply) => {
     const principal = await authorize(request, reply, resolvePrincipal, 'content.edit');
     if (!principal) return;
@@ -168,7 +192,7 @@ export function registerCustomerRoutes(
       .setCookie('__Host-omnireach_preview', preview.previewToken, {
         httpOnly: true,
         maxAge: 900,
-        path: '/v1/customer/preview-content',
+        path: '/',
         sameSite: 'strict',
         secure: true,
       })

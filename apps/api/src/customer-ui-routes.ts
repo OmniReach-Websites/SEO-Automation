@@ -1,0 +1,472 @@
+import { randomUUID } from 'node:crypto';
+
+import { hasPermission, type Action } from '@omnireach/auth';
+import {
+  renderEditor,
+  renderRevisionHistory,
+  type EditorField,
+  type RevisionHistoryEntry,
+  type RevisionOrigin,
+} from '@omnireach/customer-admin';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { z } from 'zod';
+
+import type {
+  CustomerEndpointService,
+  CustomerPrincipal,
+  ResolveCustomerPrincipal,
+} from './customer-routes.ts';
+import { requireSameOrigin } from './request-security.ts';
+
+const draftIdSchema = z.string().uuid();
+const positiveInteger = z.coerce.number().int().positive();
+const reasonSchema = z.string().trim().min(3).max(500);
+const fieldTypes = new Set<EditorField['type']>([
+  'cards',
+  'image',
+  'link',
+  'metadata',
+  'richText',
+  'sectionOrder',
+  'text',
+  'theme',
+  'visibility',
+]);
+const humanEditorRoles = new Set([
+  'platform_owner',
+  'platform_admin',
+  'staff',
+  'customer_owner',
+  'customer_editor',
+]);
+const revisionOrigins = new Set<RevisionOrigin>([
+  'customer',
+  'orap',
+  'proposal',
+  'restore',
+  'seed',
+]);
+
+interface CustomerDraftView {
+  content: Record<string, unknown>;
+  id: string;
+  version: number;
+}
+
+interface CustomerFieldView {
+  aiMode: EditorField['aiMode'];
+  editableBy: string[];
+  id: string;
+  protected: boolean;
+  type: EditorField['type'];
+}
+
+export function registerCustomerUiRoutes(
+  server: FastifyInstance,
+  service: CustomerEndpointService,
+  resolvePrincipal: ResolveCustomerPrincipal,
+): void {
+  server.get<{ Querystring: { notice?: string } }>('/editor', async (request, reply) => {
+    const principal = await authorizeUi(request, reply, resolvePrincipal, 'content.read');
+    if (!principal) return;
+    const [rawPages, rawDrafts] = await Promise.all([
+      service.pages(principal),
+      service.drafts(principal),
+    ]);
+    const fields = parseFields(rawPages);
+    const drafts = parseDrafts(rawDrafts);
+    const draft = drafts[0];
+    const canEdit = hasPermission(principal.role, 'content.edit');
+    const canPublish = canPerform(principal, 'content.publish');
+    let content: string;
+    if (draft) {
+      const editorFields = fields.map((field): EditorField => ({
+        ...field,
+        editable: canEdit && !field.protected && field.editableBy.includes(principal.role),
+        label: fieldLabel(field.id),
+        value: draft.content[field.id],
+      }));
+      content = renderEditor(editorFields, draft.version, {
+        canEdit,
+        canPublish,
+        draftId: draft.id,
+        publishIdempotencyKey: randomUUID(),
+      });
+    } else if (canEdit) {
+      content =
+        '<p>No active draft exists. Create one from the latest published revision.</p><form method="post" action="/editor/draft/new"><button type="submit">Create draft</button></form>';
+    } else {
+      content = '<p>No active draft is available for this account.</p>';
+    }
+    return reply
+      .type('text/html; charset=utf-8')
+      .send(
+        renderCustomerDocument(
+          'Content editor',
+          'Content editor',
+          content,
+          'editor',
+          noticeText(request.query.notice),
+        ),
+      );
+  });
+
+  server.post('/editor/draft/new', { preHandler: requireSameOrigin }, async (request, reply) => {
+    const principal = await authorizeUi(request, reply, resolvePrincipal, 'content.edit');
+    if (!principal) return;
+    const drafts = parseDrafts(await service.drafts(principal));
+    if (drafts.length === 0) await service.createDraft(principal);
+    return reply.code(303).redirect('/editor?notice=draft-created');
+  });
+
+  server.post('/editor/draft', { preHandler: requireSameOrigin }, async (request, reply) => {
+    const principal = await authorizeUi(request, reply, resolvePrincipal, 'content.edit');
+    if (!principal) return;
+    const body = formBody(request.body);
+    const draftId = draftIdSchema.safeParse(body?.draftId);
+    const expectedVersion = positiveInteger.safeParse(body?.expectedVersion);
+    if (!body || !draftId.success || !expectedVersion.success) {
+      return invalidUiRequest(reply, 'The draft submission is invalid.', 'editor');
+    }
+
+    const [rawPages, rawDrafts] = await Promise.all([
+      service.pages(principal),
+      service.drafts(principal),
+    ]);
+    const draft = parseDrafts(rawDrafts).find((entry) => entry.id === draftId.data);
+    if (!draft) return invalidUiRequest(reply, 'The active draft was not found.', 'editor', 404);
+    if (draft.version !== expectedVersion.data) {
+      return invalidUiRequest(
+        reply,
+        'This draft changed after the editor was loaded. Reload it before saving.',
+        'editor',
+        409,
+      );
+    }
+
+    const changes: { fieldId: string; value: unknown }[] = [];
+    try {
+      for (const field of parseFields(rawPages)) {
+        if (field.protected || !field.editableBy.includes(principal.role)) continue;
+        const submitted = readFieldValue(body, field);
+        if (!submitted.present) continue;
+        if (!sameValue(draft.content[field.id], submitted.value)) {
+          changes.push({ fieldId: field.id, value: submitted.value });
+        }
+      }
+    } catch (error) {
+      if (error instanceof InvalidEditorValueError) {
+        return invalidUiRequest(reply, 'One or more field values are invalid.', 'editor');
+      }
+      throw error;
+    }
+
+    if (changes.length > 0) {
+      await service.draftUpdate(principal, {
+        draftId: draft.id,
+        expectedVersion: expectedVersion.data,
+        patch: Object.fromEntries(changes.map((change) => [change.fieldId, change.value])),
+      });
+    }
+    return reply.code(303).redirect('/editor?notice=draft-saved');
+  });
+
+  server.post('/editor/preview', { preHandler: requireSameOrigin }, async (request, reply) => {
+    const principal = await authorizeUi(request, reply, resolvePrincipal, 'content.edit');
+    if (!principal) return;
+    const body = formBody(request.body);
+    const draftId = draftIdSchema.safeParse(body?.draftId);
+    if (!draftId.success) {
+      return invalidUiRequest(reply, 'The preview request is invalid.', 'editor');
+    }
+    const preview = await service.preview(principal, { draftId: draftId.data });
+    return reply
+      .setCookie('__Host-omnireach_preview', preview.previewToken, {
+        httpOnly: true,
+        maxAge: 900,
+        path: '/',
+        sameSite: 'strict',
+        secure: true,
+      })
+      .code(303)
+      .redirect('/v1/customer/preview-content/');
+  });
+
+  server.post('/editor/publish', { preHandler: requireSameOrigin }, async (request, reply) => {
+    const principal = await authorizeUi(request, reply, resolvePrincipal, 'content.publish');
+    if (!principal) return;
+    const body = formBody(request.body);
+    const draftId = draftIdSchema.safeParse(body?.draftId);
+    const idempotencyKey = draftIdSchema.safeParse(body?.idempotencyKey);
+    const reason = reasonSchema.safeParse(body?.reason);
+    if (!draftId.success || !idempotencyKey.success || !reason.success) {
+      return invalidUiRequest(reply, 'The publication request is invalid.', 'editor');
+    }
+    await service.publish(principal, {
+      draftId: draftId.data,
+      idempotencyKey: idempotencyKey.data,
+      reason: reason.data,
+    });
+    return reply.code(303).redirect('/history?notice=publication-queued');
+  });
+
+  server.get<{ Querystring: { notice?: string } }>('/history', async (request, reply) => {
+    const principal = await authorizeUi(request, reply, resolvePrincipal, 'content.read');
+    if (!principal) return;
+    const entries = parseHistory(await service.history(principal));
+    const content = renderRevisionHistory(entries, {
+      canRestore: canPerform(principal, 'content.publish'),
+      restoreIdempotencyKeys: Object.fromEntries(
+        entries.map((entry) => [entry.number, randomUUID()]),
+      ),
+    });
+    return reply
+      .type('text/html; charset=utf-8')
+      .send(
+        renderCustomerDocument(
+          'Revision history',
+          'Revision history',
+          content,
+          'history',
+          noticeText(request.query.notice),
+        ),
+      );
+  });
+
+  server.post<{ Params: { revision: string } }>(
+    '/history/:revision/restore',
+    { preHandler: requireSameOrigin },
+    async (request, reply) => {
+      const principal = await authorizeUi(request, reply, resolvePrincipal, 'content.publish');
+      if (!principal) return;
+      const body = formBody(request.body);
+      const idempotencyKey = draftIdSchema.safeParse(body?.idempotencyKey);
+      const revision = positiveInteger.safeParse(request.params.revision);
+      const reason = reasonSchema.safeParse(body?.reason);
+      if (!idempotencyKey.success || !revision.success || !reason.success) {
+        return invalidUiRequest(reply, 'The restore request is invalid.', 'history');
+      }
+      await service.restore(principal, {
+        idempotencyKey: idempotencyKey.data,
+        reason: reason.data,
+        revision: revision.data,
+      });
+      return reply.code(303).redirect('/history?notice=restore-queued');
+    },
+  );
+}
+
+async function authorizeUi(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  resolvePrincipal: ResolveCustomerPrincipal,
+  action: Action,
+): Promise<CustomerPrincipal | undefined> {
+  const principal = await resolvePrincipal(request);
+  if (!principal) {
+    await reply.code(303).redirect('/login');
+    return undefined;
+  }
+  if (!canPerform(principal, action)) {
+    await reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
+    return undefined;
+  }
+  return principal;
+}
+
+function canPerform(principal: CustomerPrincipal, action: Action): boolean {
+  const grants = principal.editorPublishGrant ? new Set<Action>(['content.publish']) : undefined;
+  return hasPermission(principal.role, action, grants);
+}
+
+function parseDrafts(value: unknown): CustomerDraftView[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry): CustomerDraftView[] => {
+    if (!isRecord(entry) || !isRecord(entry.content)) return [];
+    const id = draftIdSchema.safeParse(entry.id);
+    const version = positiveInteger.safeParse(entry.version);
+    return id.success && version.success
+      ? [{ content: entry.content, id: id.data, version: version.data }]
+      : [];
+  });
+}
+
+function parseFields(value: unknown): CustomerFieldView[] {
+  if (!Array.isArray(value)) return [];
+  const byId = new Map<string, CustomerFieldView>();
+  for (const page of value) {
+    if (!isRecord(page) || !Array.isArray(page.fields)) continue;
+    for (const entry of page.fields) {
+      if (!isRecord(entry)) continue;
+      const id = typeof entry.id === 'string' ? entry.id : '';
+      const type = entry.type;
+      const aiMode = entry.aiMode;
+      const editableBy = Array.isArray(entry.editableBy)
+        ? entry.editableBy.filter(
+            (role): role is string => typeof role === 'string' && humanEditorRoles.has(role),
+          )
+        : [];
+      if (
+        !id ||
+        !fieldTypes.has(type as EditorField['type']) ||
+        !['auto', 'suggestion', 'disabled'].includes(String(aiMode)) ||
+        editableBy.length === 0 ||
+        editableBy.length !== (Array.isArray(entry.editableBy) ? entry.editableBy.length : 0) ||
+        typeof entry.protected !== 'boolean'
+      ) {
+        continue;
+      }
+      byId.set(id, {
+        aiMode: aiMode as EditorField['aiMode'],
+        editableBy,
+        id,
+        protected: entry.protected,
+        type: type as EditorField['type'],
+      });
+    }
+  }
+  return [...byId.values()];
+}
+
+function parseHistory(value: unknown): RevisionHistoryEntry[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry): RevisionHistoryEntry[] => {
+    if (!isRecord(entry)) return [];
+    const revision = positiveInteger.safeParse(entry.revision);
+    const createdAt = dateText(entry.createdAt);
+    const createdBy = typeof entry.createdBy === 'string' ? entry.createdBy : '';
+    const origin = revisionOrigin(entry.origin);
+    const restoredFrom = positiveInteger.safeParse(entry.restoredFrom);
+    if (!revision.success || !createdAt || !createdBy || !origin) return [];
+    return [
+      {
+        actorLabel: createdBy,
+        createdAt,
+        number: revision.data,
+        origin,
+        published: true,
+        ...(restoredFrom.success ? { restoredFrom: restoredFrom.data } : {}),
+        summary:
+          origin === 'restore'
+            ? `Restored content as revision ${revision.data}`
+            : `Published content revision ${revision.data}`,
+      },
+    ];
+  });
+}
+
+function revisionOrigin(value: unknown): RevisionOrigin | undefined {
+  if (value === 'human') return 'customer';
+  return revisionOrigins.has(value as RevisionOrigin) ? (value as RevisionOrigin) : undefined;
+}
+
+function readFieldValue(
+  body: Record<string, unknown>,
+  field: CustomerFieldView,
+): { present: boolean; value: unknown } {
+  if (field.type === 'visibility') {
+    return { present: true, value: body[field.id] === 'true' };
+  }
+  const raw = body[field.id];
+  if (!Object.hasOwn(body, field.id) || typeof raw !== 'string') {
+    return { present: false, value: undefined };
+  }
+  if (field.type === 'cards' || field.type === 'metadata' || field.type === 'sectionOrder') {
+    try {
+      return { present: true, value: JSON.parse(raw) as unknown };
+    } catch {
+      throw new InvalidEditorValueError();
+    }
+  }
+  if (field.type === 'link' && raw) {
+    try {
+      const parsed = new URL(raw, 'https://local.invalid');
+      if (!['http:', 'https:', 'mailto:'].includes(parsed.protocol)) {
+        throw new InvalidEditorValueError();
+      }
+    } catch {
+      throw new InvalidEditorValueError();
+    }
+  }
+  return { present: true, value: raw };
+}
+
+function formBody(value: unknown): Record<string, unknown> | undefined {
+  return isRecord(value) ? value : undefined;
+}
+
+function sameValue(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function fieldLabel(id: string): string {
+  const name = id.split('.').at(-1) ?? id;
+  const spaced = name.replace(/[-_]+/gu, ' ').replace(/([a-z])([A-Z])/gu, '$1 $2');
+  return spaced ? `${spaced[0]?.toUpperCase() ?? ''}${spaced.slice(1)}` : id;
+}
+
+function dateText(value: unknown): string | undefined {
+  const date =
+    value instanceof Date ? value : typeof value === 'string' ? new Date(value) : undefined;
+  return date && !Number.isNaN(date.getTime()) ? date.toISOString() : undefined;
+}
+
+function noticeText(value: string | undefined): string | undefined {
+  return {
+    'draft-created': 'Draft created from the latest published revision.',
+    'draft-saved': 'Draft saved.',
+    'publication-queued': 'Publication queued.',
+    'restore-queued': 'Restore queued as a new revision.',
+  }[value ?? ''];
+}
+
+function invalidUiRequest(
+  reply: FastifyReply,
+  message: string,
+  current: 'editor' | 'history',
+  statusCode = 400,
+): FastifyReply {
+  return reply
+    .code(statusCode)
+    .type('text/html; charset=utf-8')
+    .send(
+      renderCustomerDocument(
+        'Request not accepted',
+        'Request not accepted',
+        `<p>${message}</p>`,
+        current,
+      ),
+    );
+}
+
+function renderCustomerDocument(
+  title: string,
+  heading: string,
+  content: string,
+  current: 'editor' | 'history',
+  notice?: string,
+): string {
+  const editorCurrent = current === 'editor' ? ' aria-current="page"' : '';
+  const historyCurrent = current === 'history' ? ' aria-current="page"' : '';
+  const status = notice ? `<div role="status" tabindex="-1">${escapeHtml(notice)}</div>` : '';
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><title>${escapeHtml(title)} | OmniReach</title></head><body><a href="#main">Skip to content</a><header><strong>OmniReach</strong><nav aria-label="Site administration"><a href="/">Overview</a><a href="/editor"${editorCurrent}>Editor</a><a href="/history"${historyCurrent}>History</a><a href="/security">Security</a></nav></header><main id="main"><h1>${escapeHtml(heading)}</h1>${status}${content}</main></body></html>`;
+}
+
+function renderForbidden(): string {
+  return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><title>Access denied</title></head><body><main><h1>Access denied</h1><p>This action is not available to this account.</p></main></body></html>';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(
+    /[&<>"']/gu,
+    (character) =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character] ??
+      character,
+  );
+}
+
+class InvalidEditorValueError extends Error {}
