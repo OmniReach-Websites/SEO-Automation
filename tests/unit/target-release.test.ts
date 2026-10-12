@@ -31,25 +31,38 @@ describe('restricted production release wrapper', () => {
 
   it('requires contract metadata and blocks an ordinary transition from a legacy release', () => {
     expect(target).toContain('omnireach-validate-release-metadata');
+    expect(target).toContain('required_crypto_contract=2');
+    expect(target).toContain(
+      "fail 'candidate does not implement the required crypto/keyring contract'",
+    );
     expect(target).toContain(
       "fail 'active release predates contract metadata; use the reviewed bridge operation'",
     );
-    expect(target).toContain(
-      'assert_release_supports "$prior_dir" "$candidate_schema" "$candidate_auth"',
+    expect(target).toMatch(
+      /assert_release_supports\s+\\?\s*"\$prior_dir" "\$candidate_schema" "\$candidate_auth" "\$candidate_crypto"/u,
     );
     expect(validator).toContain('release metadata identity mismatch');
     expect(validator).toContain('release schema contract is incompatible');
+    expect(validator).toContain('release crypto/keyring contract is incompatible');
+    expect(target).toContain(
+      "fail 'ordinary deployment requires equal crypto write contracts; use the reviewed bridge operation'",
+    );
   });
 
   it('offers only an explicit bridge and compatible manual rollback across the v2 boundary', () => {
     expect(target).toContain('bridge_release "$2" "$3"');
+    expect(target).toMatch(
+      /assert_release_supports\s+\\?\s*"\$rollback_dir" "\$candidate_schema" "\$candidate_auth" "\$candidate_crypto"/u,
+    );
     expect(target).toContain(
-      'assert_release_supports "$rollback_dir" "$candidate_schema" "$candidate_auth"',
+      "fail 'bridge candidate and rollback must use the same crypto write contract'",
     );
     expect(target).toContain('rollback_release');
-    expect(target).toContain(
-      'assert_release_supports "$rollback_dir" "$active_schema" "$active_auth"',
+    expect(target).toMatch(
+      /assert_release_supports\s+\\?\s*"\$rollback_dir" "\$active_schema" "\$active_auth" "\$active_crypto"/u,
     );
+    expect(target).toContain("fail 'active release cannot recover from rollback writes'");
+    expect(target).toContain("fail 'rollback would lower the active crypto write contract'");
     expect(target).toContain("fail 'usage: omnireach-release rollback'");
   });
 

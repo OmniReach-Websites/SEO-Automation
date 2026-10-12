@@ -29,25 +29,68 @@ try {
   await writeFile(checksumPath, `${checksum}  artifact.tgz\n`);
   const first = 'a'.repeat(40);
   const second = 'b'.repeat(40);
+  const legacyCryptoContract = {
+    authContract: 2,
+    cryptoReadMaximum: 1,
+    cryptoReadMinimum: 1,
+    cryptoWrite: 1,
+    schemaMaximum: 2,
+    schemaMinimum: 2,
+    schemaTarget: 2,
+  };
+  const keyringCryptoContract = {
+    ...legacyCryptoContract,
+    cryptoReadMaximum: 2,
+    cryptoWrite: 2,
+  };
   const metadata = parseReleaseMetadata(
     renderReleaseMetadata({
+      contract: keyringCryptoContract,
       migrationCount: 1,
       migrationHead: '20261010250000_g05_account_authentication_policy',
       releaseId: first,
     }),
     first,
   );
-  assertReleaseMetadataSupports(metadata, { authContract: 2, schemaContract: 2 });
+  assertReleaseMetadataSupports(metadata, {
+    authContract: 2,
+    cryptoContract: 2,
+    schemaContract: 2,
+  });
   let incompatibleRollbackRejected = false;
   try {
-    assertReleaseMetadataSupports(metadata, { authContract: 2, schemaContract: 3 });
+    assertReleaseMetadataSupports(metadata, {
+      authContract: 2,
+      cryptoContract: 2,
+      schemaContract: 3,
+    });
   } catch {
     incompatibleRollbackRejected = true;
+  }
+  let preKeyringRollbackRejected = false;
+  try {
+    const preKeyringMetadata = parseReleaseMetadata(
+      renderReleaseMetadata({
+        contract: legacyCryptoContract,
+        migrationCount: 1,
+        migrationHead: '20261010250000_g05_account_authentication_policy',
+        releaseId: first,
+      }),
+      first,
+    );
+    assertReleaseMetadataSupports(preKeyringMetadata, {
+      authContract: 2,
+      cryptoContract: 2,
+      schemaContract: 2,
+    });
+  } catch {
+    preKeyringRollbackRejected = true;
   }
   let metadataIdentityRejected = false;
   try {
     parseReleaseMetadata(
       renderReleaseMetadata({
+        contract: keyringCryptoContract,
         migrationCount: 1,
         migrationHead: '20261010250000_g05_account_authentication_policy',
         releaseId: first,
@@ -94,6 +137,7 @@ try {
     !badChecksumRejected ||
     !migrationRejected ||
     !incompatibleRollbackRejected ||
+    !preKeyringRollbackRejected ||
     !metadataIdentityRejected ||
     !releaseLockRejected ||
     current.releaseId !== first ||
@@ -109,6 +153,7 @@ try {
       metadataIdentityRejected,
       migrationRejected,
       ok: true,
+      preKeyringRollbackRejected,
       releaseId: current.releaseId,
       releaseLockRejected,
       restored,

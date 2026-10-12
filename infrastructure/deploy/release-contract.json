@@ -1,0 +1,14 @@
+{
+  "manifestVersion": 1,
+  "authContract": 2,
+  "schema": {
+    "minimum": 2,
+    "maximum": 2,
+    "target": 2
+  },
+  "crypto": {
+    "readMinimum": 1,
+    "readMaximum": 2,
+    "write": 2
+  }
+}
