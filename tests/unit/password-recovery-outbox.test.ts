@@ -1,4 +1,5 @@
 import {
+  createVersionedSecretKeyring,
   decryptPasswordRecoveryDeliveryToken,
   encryptPasswordRecoveryDeliveryToken,
   PostgresPasswordRecoveryOutbox,
@@ -67,7 +68,60 @@ describe('password recovery delivery outbox', () => {
     expect(insertedValues?.[0]).toMatch(/^[a-f0-9]{64}$/u);
     expect(insertedValues?.[1]).toBeInstanceOf(Uint8Array);
     expect(Buffer.from(insertedValues?.[1] as Uint8Array).includes(Buffer.from(token))).toBe(false);
-    expect(insertedValues?.slice(2)).toEqual(['admin.alpha.test', 'owner@alpha.example.test', now]);
+    expect(insertedValues?.[2]).toBe(1);
+    expect(insertedValues?.slice(3)).toEqual(['admin.alpha.test', 'owner@alpha.example.test', now]);
+  });
+
+  it('writes with the active key and retains old-key delivery compatibility', async () => {
+    const replacementKey = 'fictional-dedicated-mfa-key-material-0002';
+    const keyring = createVersionedSecretKeyring({
+      activeVersion: 2,
+      keys: { 1: keyMaterial, 2: replacementKey },
+    });
+    let insertedValues: unknown[] | undefined;
+    const queuedWithOldKey = encryptPasswordRecoveryDeliveryToken(token, keyMaterial);
+    const provider = { send: vi.fn(async () => undefined) };
+    let selected = false;
+    const { pool } = poolFor(async (query, values) => {
+      if (query.includes('INSERT INTO password_recovery_delivery_outbox')) {
+        insertedValues = values;
+        return { rows: [{ id: 'delivery-new-key' }] };
+      }
+      if (query.includes('SELECT delivery.id') && !selected) {
+        selected = true;
+        return {
+          rows: [
+            {
+              attempts: 0,
+              encrypted_token: queuedWithOldKey,
+              encryption_key_version: 1,
+              expires_at: new Date(now.getTime() + 30 * 60_000),
+              host: 'admin.alpha.test',
+              id: 'delivery-old-key',
+              normalized_email: 'owner@alpha.example.test',
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+    const outbox = new PostgresPasswordRecoveryOutbox(pool, provider, keyring, { now: () => now });
+
+    await outbox.send({
+      host: 'admin.alpha.test',
+      normalizedEmail: 'owner@alpha.example.test',
+      token,
+    });
+    expect(insertedValues?.[2]).toBe(2);
+    expect(
+      decryptPasswordRecoveryDeliveryToken(insertedValues?.[1] as Uint8Array, replacementKey),
+    ).toBe(token);
+    await expect(outbox.processNext()).resolves.toBe('delivered');
+    expect(provider.send).toHaveBeenCalledWith({
+      host: 'admin.alpha.test',
+      normalizedEmail: 'owner@alpha.example.test',
+      token,
+    });
   });
 
   it('erases encrypted payloads for used or expired tokens before claiming work', async () => {
@@ -308,7 +362,7 @@ describe('password recovery delivery outbox', () => {
     expect(provider.send).toHaveBeenCalledTimes(3);
   });
 
-  it('terminally erases a payload encrypted with an unknown key version', async () => {
+  it('preserves a payload encrypted with a temporarily unavailable key version', async () => {
     const encrypted = encryptPasswordRecoveryDeliveryToken(token, keyMaterial);
     const provider = { send: vi.fn(async () => undefined) };
     const calls: { query: string; values?: unknown[] }[] = [];
@@ -338,19 +392,22 @@ describe('password recovery delivery outbox', () => {
       now: () => now,
     });
 
-    await expect(outbox.processNext()).resolves.toBe('failed');
+    await expect(outbox.processNext()).resolves.toBe('retrying');
 
     expect(provider.send).not.toHaveBeenCalled();
-    const terminal = calls.find(
+    const retry = calls.find(
       ({ query, values }) =>
-        query.includes("SET status = 'failed'") && values?.includes('key_version_unavailable'),
+        query.includes("SET status = 'queued'") &&
+        query.includes("last_error_code = 'key_version_unavailable'") &&
+        values?.includes('delivery-unknown-key'),
     );
-    expect(terminal?.query).toContain('encrypted_token = NULL');
-    expect(terminal?.query).toContain("WHERE id = $1 AND status = 'processing' AND attempts = $4");
-    expect(terminal?.query).toContain('AND locked_until = $5');
-    expect(terminal?.values).toEqual([
+    expect(retry?.query).not.toContain('encrypted_token = NULL');
+    expect(retry?.query).toContain('attempts = GREATEST(attempts - 1, 0)');
+    expect(retry?.query).toContain("WHERE id = $1 AND status = 'processing' AND attempts = $4");
+    expect(retry?.query).toContain('AND locked_until = $5');
+    expect(retry?.values).toEqual([
       'delivery-unknown-key',
-      'key_version_unavailable',
+      new Date(now.getTime() + 30_000),
       now,
       1,
       leaseUntil,

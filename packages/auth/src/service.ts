@@ -4,7 +4,14 @@ import { createEmailVerificationCode, digestEmailVerificationCode } from './emai
 import { createMfaEnrollment, createRecoveryCodes, verifyTotpCounter } from './mfa.ts';
 import { hashPassword, verifyPassword } from './passwords.ts';
 import type { Role } from './roles.ts';
-import { decryptMfaSecret, encryptMfaSecret } from './secrets.ts';
+import {
+  activeSecretKey,
+  decryptMfaSecret,
+  encryptMfaSecret,
+  parseVersionedSecretKeyring,
+  secretKeyForVersion,
+  type VersionedSecretKeyring,
+} from './secrets.ts';
 import { createOneTimeToken, digestToken } from './tokens.ts';
 
 export type VerificationMethod = 'email_code' | 'totp' | 'webauthn';
@@ -265,6 +272,7 @@ export interface PasswordRecoveryNotifier {
 
 export interface PendingOwnerBootstrap {
   encryptedMfaSecret?: Uint8Array;
+  keyVersion?: number;
   method: 'email_code' | 'totp';
   normalizedEmail: string;
   recoveryCodeHashes: string[];
@@ -292,6 +300,8 @@ export type EmailCodePolicyChangeResult =
 
 export class AuthenticationService {
   readonly #dummyPasswordHash: Promise<string>;
+  readonly #mfaKeyring: VersionedSecretKeyring;
+  readonly #authenticationPepper: string;
 
   constructor(
     private readonly repository: AuthenticationRepository,
@@ -299,8 +309,10 @@ export class AuthenticationService {
     private readonly recoveryNotifier: PasswordRecoveryNotifier,
     private readonly options: {
       attemptLimiter?: AuthenticationRateLimiter;
+      authenticationPepper?: string;
       emailCodeStore?: EmailCodeChallengeStore;
-      mfaEncryptionKey: string;
+      mfaEncryptionKey?: string;
+      mfaEncryptionKeyring?: VersionedSecretKeyring;
       now?: () => Date;
       orapHostname: string;
       ownerBootstrapStore?: OwnerBootstrapPendingStore;
@@ -309,6 +321,14 @@ export class AuthenticationService {
       verificationNotifier?: VerificationCodeNotifier;
     },
   ) {
+    this.#mfaKeyring =
+      options.mfaEncryptionKeyring ??
+      parseVersionedSecretKeyring(undefined, options.mfaEncryptionKey);
+    this.#authenticationPepper =
+      options.authenticationPepper ?? activeSecretKey(this.#mfaKeyring).keyMaterial;
+    if (this.#authenticationPepper.length < 32) {
+      throw new Error('Authentication pepper is too short');
+    }
     this.#dummyPasswordHash = hashPassword(`missing-${randomUUID()}-credential`);
   }
 
@@ -522,10 +542,14 @@ export class AuthenticationService {
       if (result === 'verified') method = 'email_code';
     } else if (/^\d{6}$/u.test(compactCode) && challenge.methods.includes('totp')) {
       if (currentFactor) {
-        const secret = decryptMfaSecret(
-          currentFactor.encryptedSecret,
-          this.options.mfaEncryptionKey,
-        );
+        const keyMaterial = secretKeyForVersion(this.#mfaKeyring, currentFactor.keyVersion);
+        if (!keyMaterial) return { kind: 'invalid' };
+        let secret: string;
+        try {
+          secret = decryptMfaSecret(currentFactor.encryptedSecret, keyMaterial);
+        } catch {
+          return { kind: 'invalid' };
+        }
         const counter = verifyTotpCounter(secret, compactCode, this.now().getTime());
         if (
           counter !== undefined &&
@@ -618,9 +642,11 @@ export class AuthenticationService {
     const method = input.method ?? 'totp';
     if (method === 'totp') {
       const enrollment = createMfaEnrollment(input.normalizedEmail);
+      const activeKey = activeSecretKey(this.#mfaKeyring);
       const setupId = await pendingStore.create(
         {
-          encryptedMfaSecret: encryptMfaSecret(enrollment.secret, this.options.mfaEncryptionKey),
+          encryptedMfaSecret: encryptMfaSecret(enrollment.secret, activeKey.keyMaterial),
+          keyVersion: activeKey.keyVersion,
           method,
           normalizedEmail: input.normalizedEmail,
           recoveryCodeHashes: enrollment.recoveryDigests,
@@ -695,7 +721,14 @@ export class AuthenticationService {
     let lastUsedCounter: number | undefined;
     if (pending.method === 'totp') {
       if (!pending.encryptedMfaSecret) return false;
-      const secret = decryptMfaSecret(pending.encryptedMfaSecret, this.options.mfaEncryptionKey);
+      const keyMaterial = secretKeyForVersion(this.#mfaKeyring, pending.keyVersion ?? 1);
+      if (!keyMaterial) return false;
+      let secret: string;
+      try {
+        secret = decryptMfaSecret(pending.encryptedMfaSecret, keyMaterial);
+      } catch {
+        return false;
+      }
       lastUsedCounter = verifyTotpCounter(secret, input.code, this.now().getTime());
       if (lastUsedCounter === undefined) return false;
     } else {
@@ -723,7 +756,7 @@ export class AuthenticationService {
       ...(pending.encryptedMfaSecret
         ? {
             encryptedMfaSecret: pending.encryptedMfaSecret,
-            keyVersion: 1,
+            keyVersion: pending.keyVersion ?? 1,
             ...(lastUsedCounter === undefined ? {} : { lastUsedCounter }),
           }
         : {}),
@@ -1080,7 +1113,7 @@ export class AuthenticationService {
       challengeId,
       code,
       host: challenge.host,
-      keyMaterial: this.options.mfaEncryptionKey,
+      keyMaterial: this.#authenticationPepper,
       userId: challenge.userId,
     });
   }
@@ -1090,7 +1123,7 @@ export class AuthenticationService {
     factorId: string | undefined,
     methods: VerificationMethod[],
   ): string {
-    return createHmac('sha256', this.options.mfaEncryptionKey)
+    return createHmac('sha256', this.#authenticationPepper)
       .update('omnireach-login-auth-state-v1\0', 'utf8')
       .update(target.userId, 'utf8')
       .update('\0', 'utf8')
@@ -1200,7 +1233,7 @@ export class AuthenticationService {
   }
 
   private recoverySessionTokenDigest(token: string): string {
-    return createHmac('sha256', this.options.mfaEncryptionKey)
+    return createHmac('sha256', this.#authenticationPepper)
       .update('omnireach-recovery-session-v1\0', 'utf8')
       .update(token, 'utf8')
       .digest('hex');

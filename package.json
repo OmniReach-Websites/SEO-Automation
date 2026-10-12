@@ -39,6 +39,7 @@
     "db:migrate": "prisma migrate deploy --config prisma.config.ts",
     "db:seed": "node --experimental-transform-types packages/database/src/seed.ts",
     "db:create-owner-bootstrap": "node --experimental-transform-types packages/database/src/create-owner-bootstrap.ts",
+    "auth:rotate-mfa-key": "node --experimental-transform-types --env-file-if-exists=.env.local tooling/rotate-mfa-encryption.ts",
     "publisher:run-request": "node --experimental-transform-types --env-file-if-exists=.env.local workers/publisher/src/run-publication.ts",
     "verify:local-stack": "node --experimental-transform-types tooling/verify-local-stack.mjs",
     "verify:publication-flow": "node --experimental-transform-types tooling/verify-publication-flow.ts",

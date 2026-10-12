@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 
 import {
   AuthenticationService,
+  parseVersionedSecretKeyring,
   PostgresAuthenticationRepository,
   PostgresPasswordRecoveryOutbox,
   type AuthenticationTransactionPool,
@@ -55,6 +56,10 @@ const authRepository = new PostgresAuthenticationRepository(
   database.pool as unknown as AuthenticationTransactionPool,
   config.ORAP_HOSTNAME,
 );
+const mfaEncryptionKeyring = parseVersionedSecretKeyring(
+  config.MFA_ENCRYPTION_KEYRING_JSON,
+  config.MFA_ENCRYPTION_KEY,
+);
 const redisAuth = redis as unknown as AuthRedisClient;
 const redisEmailCodes = redis as unknown as EmailCodeRedisClient;
 const tenantPool = database.pool as unknown as TenantTransactionPool;
@@ -74,7 +79,7 @@ const verificationNotifier = config.AUTH_EMAIL_DELIVERY_ENABLED
 const recoveryOutbox = new PostgresPasswordRecoveryOutbox(
   database.pool as unknown as PasswordRecoveryOutboxPool,
   recoveryDelivery,
-  config.MFA_ENCRYPTION_KEY,
+  mfaEncryptionKeyring,
 );
 const authService = new AuthenticationService(
   authRepository,
@@ -82,8 +87,9 @@ const authService = new AuthenticationService(
   recoveryOutbox,
   {
     attemptLimiter: new RedisAuthenticationRateLimiter(redisEmailCodes, config.SESSION_SECRET),
+    authenticationPepper: config.SESSION_SECRET,
     emailCodeStore: new RedisEmailCodeChallengeStore(redisEmailCodes),
-    mfaEncryptionKey: config.MFA_ENCRYPTION_KEY,
+    mfaEncryptionKeyring,
     orapHostname: config.ORAP_HOSTNAME,
     ownerBootstrapStore: new RedisOwnerBootstrapPendingStore(redisAuth),
     ...(verificationNotifier ? { verificationNotifier } : {}),

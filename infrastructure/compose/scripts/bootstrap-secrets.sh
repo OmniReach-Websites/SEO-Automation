@@ -77,6 +77,34 @@ do
   generate_secret "$secret_name"
 done
 
+keyring_target=$secrets_dir/mfa_encryption_keyring
+keyring_pattern='^\{"activeVersion":[1-9][0-9]*,"keys":\{"[1-9][0-9]*":"[a-f0-9]{64}"(,"[1-9][0-9]*":"[a-f0-9]{64}")*\}\}$'
+if [ -e "$keyring_target" ]; then
+  [ -f "$keyring_target" ] && [ ! -L "$keyring_target" ] || {
+    printf '%s\n' 'Refusing non-regular secret target: mfa_encryption_keyring' >&2
+    exit 65
+  }
+  grep -Eq "$keyring_pattern" "$keyring_target" || {
+    printf '%s\n' 'Existing MFA encryption keyring has an invalid format' >&2
+    exit 65
+  }
+  chmod 0444 "$keyring_target"
+  printf '%s\n' 'kept mfa_encryption_keyring'
+else
+  legacy_mfa_key=$(cat "$secrets_dir/mfa_encryption_key")
+  temporary=$(mktemp "$secrets_dir/.mfa_encryption_keyring.XXXXXX")
+  trap 'rm -f "$temporary"' EXIT HUP INT TERM
+  printf '{"activeVersion":1,"keys":{"1":"%s"}}\n' "$legacy_mfa_key" > "$temporary"
+  unset legacy_mfa_key
+  grep -Eq "$keyring_pattern" "$temporary" || {
+    printf '%s\n' 'Generated MFA encryption keyring failed validation' >&2
+    exit 70
+  }
+  chmod 0444 "$temporary"
+  mv "$temporary" "$keyring_target"
+  trap - EXIT HUP INT TERM
+  printf '%s\n' 'created mfa_encryption_keyring'
+fi
+
 chmod 0700 "$secrets_dir"
 printf '%s\n' 'Secret bootstrap complete; values were not printed.'
-
