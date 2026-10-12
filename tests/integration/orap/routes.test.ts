@@ -2,6 +2,8 @@ import { buildApiServer } from '@omnireach/api';
 import type { AdminActor } from '@omnireach/tenant';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { OrapResourceNotFoundError } from '../../../apps/api/src/orap-errors.ts';
+
 const actor: AdminActor = {
   id: '00000000-0000-4000-8000-000000000001',
   role: 'staff',
@@ -587,5 +589,56 @@ describe('ORAP administration routes', () => {
     expect(invalidReason.statusCode).toBe(400);
     expect(crossOrigin.statusCode).toBe(403);
     expect(administration.revokeAllCustomerSessions).not.toHaveBeenCalled();
+  });
+
+  it('returns one generic not-found result for missing scopes and unmatched sessions', async () => {
+    const administration = service();
+    const ownerActor: AdminActor = { ...actor, role: 'platform_admin' };
+    administration.listCustomerSessions.mockRejectedValueOnce(
+      new OrapResourceNotFoundError('Active customer site membership was not found'),
+    );
+    administration.revokeCustomerSession.mockRejectedValueOnce(
+      new OrapResourceNotFoundError('Customer session was not found'),
+    );
+    administration.revokeAllCustomerSessions.mockRejectedValueOnce(
+      new OrapResourceNotFoundError('Active customer site membership was not found'),
+    );
+    const server = buildApiServer({
+      logLevel: 'silent',
+      orapService: administration,
+      resolvePlatformActor: async () => ownerActor,
+    });
+    servers.push(server);
+    const sessionId = '50000000-0000-4000-8000-000000000099';
+    const baseUrl =
+      '/v1/orap/tenants/10000000-0000-4000-8000-000000000001' +
+      '/sites/20000000-0000-4000-8000-000000000001' +
+      '/users/30000000-0000-4000-8000-000000000001/sessions';
+    const sameOrigin = {
+      host: 'admin.omnireach.test',
+      origin: 'https://admin.omnireach.test',
+    };
+
+    const missingScope = await server.inject({ method: 'GET', url: baseUrl });
+    const unmatchedSession = await server.inject({
+      headers: sameOrigin,
+      method: 'POST',
+      payload: { reason: 'Reject a session identifier from a different scope' },
+      url: `${baseUrl}/${sessionId}/revoke`,
+    });
+    const missingBulkScope = await server.inject({
+      headers: sameOrigin,
+      method: 'POST',
+      payload: { reason: 'No active customer membership remains at this scope' },
+      url: `${baseUrl}/revoke-all`,
+    });
+
+    expect(missingScope.statusCode).toBe(404);
+    expect(unmatchedSession.statusCode).toBe(404);
+    expect(missingBulkScope.statusCode).toBe(404);
+    expect(missingScope.json()).toEqual({ error: 'not_found' });
+    expect(unmatchedSession.json()).toEqual({ error: 'not_found' });
+    expect(missingBulkScope.json()).toEqual({ error: 'not_found' });
+    expect(JSON.stringify(unmatchedSession.json())).not.toContain(sessionId);
   });
 });

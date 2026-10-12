@@ -351,6 +351,7 @@ describe('PostgreSQL ORAP service', () => {
     const sessionId = '50000000-0000-4000-8000-000000000001';
     const query = vi.fn(async (text: string, values?: unknown[]) => {
       void values;
+      if (text.includes('SELECT id FROM users')) return { rows: [{ id: userId }] };
       if (text.includes('FROM memberships m')) return { rows: [{ id: 'membership-a' }] };
       if (text.includes('SELECT id, host, created_at, last_seen_at, expires_at')) {
         return {
@@ -388,12 +389,23 @@ describe('PostgreSQL ORAP service', () => {
         },
       ],
     });
+    const userLockIndex = query.mock.calls.findIndex(([text]) =>
+      text.includes('SELECT id FROM users'),
+    );
+    const membershipLockIndex = query.mock.calls.findIndex(([text]) =>
+      text.includes('FROM memberships m'),
+    );
+    expect(userLockIndex).toBeGreaterThan(-1);
+    expect(membershipLockIndex).toBeGreaterThan(userLockIndex);
+    expect(query.mock.calls[userLockIndex]?.[1]).toEqual([userId]);
     const scope = query.mock.calls.find(([text]) => text.includes('FROM memberships m'));
+    expect(scope?.[0]).not.toContain('JOIN users');
     expect(scope?.[1]).toEqual([tenantId, siteId, userId]);
     const listing = query.mock.calls.find(([text]) =>
       text.includes('SELECT id, host, created_at, last_seen_at, expires_at'),
     );
     expect(listing?.[0]).not.toMatch(/token_hash|authentication_method|factor|credential/iu);
+    expect(listing?.[0]).toContain("last_seen_at > now() - interval '30 minutes'");
     expect(listing?.[1]).toEqual([tenantId, siteId, userId]);
   });
 
@@ -404,6 +416,7 @@ describe('PostgreSQL ORAP service', () => {
     const sessionId = '50000000-0000-4000-8000-000000000001';
     const query = vi.fn(async (text: string, values?: unknown[]) => {
       void values;
+      if (text.includes('SELECT id FROM users')) return { rows: [{ id: userId }] };
       if (text.includes('FROM memberships m')) return { rows: [{ id: 'membership-a' }] };
       if (text.includes("revoke_reason = 'orap-exact-site-revocation'")) {
         return { rows: [{ id: sessionId }] };
@@ -464,13 +477,13 @@ describe('PostgreSQL ORAP service', () => {
   });
 
   it('fails closed for hostile cross-site scope and denies staff before opening a transaction', async () => {
-    const connect = vi.fn(async () => ({
-      query: vi.fn(async (text: string) => {
-        if (text.includes('FROM memberships m')) return { rows: [] };
-        return { rows: [] };
-      }),
-      release: vi.fn(),
-    }));
+    const query = vi.fn(async (text: string, values?: unknown[]) => {
+      void values;
+      if (text.includes('SELECT id FROM users')) return { rows: [{ id: 'customer-a' }] };
+      if (text.includes('FROM memberships m')) return { rows: [] };
+      return { rows: [] };
+    });
+    const connect = vi.fn(async () => ({ query, release: vi.fn() }));
     const service = new PostgresOrapService({ connect }, { send: vi.fn() }, vi.fn());
     const hostileInput = {
       reason: 'Attempt to revoke a session through the wrong site',
@@ -480,16 +493,16 @@ describe('PostgreSQL ORAP service', () => {
       userId: '30000000-0000-4000-8000-000000000001',
     };
 
-    await expect(service.revokeCustomerSession(sessionAdministrator, hostileInput)).rejects.toThrow(
-      'Active customer site membership was not found',
+    await expect(
+      service.revokeCustomerSession(sessionAdministrator, hostileInput),
+    ).rejects.toMatchObject({
+      message: 'Active customer site membership was not found',
+      name: 'OrapResourceNotFoundError',
+    });
+    expect(query.mock.calls.some(([text]) => text.includes('UPDATE sessions'))).toBe(false);
+    expect(query.mock.calls.some(([text]) => text.includes('INSERT INTO audit_events'))).toBe(
+      false,
     );
-    const client = await connect.mock.results[0]?.value;
-    expect(
-      client?.query.mock.calls.some((call) => String(call[0]).includes('UPDATE sessions')),
-    ).toBe(false);
-    expect(
-      client?.query.mock.calls.some((call) => String(call[0]).includes('INSERT INTO audit_events')),
-    ).toBe(false);
 
     const callsBeforeStaff = connect.mock.calls.length;
     expect(() =>
@@ -510,6 +523,7 @@ describe('PostgreSQL ORAP service', () => {
     const crossSiteSessionId = '50000000-0000-4000-8000-000000000099';
     const query = vi.fn(async (text: string, values?: unknown[]) => {
       void values;
+      if (text.includes('SELECT id FROM users')) return { rows: [{ id: userId }] };
       if (text.includes('FROM memberships m')) return { rows: [{ id: 'membership-a' }] };
       return { rows: [] };
     });
@@ -527,19 +541,14 @@ describe('PostgreSQL ORAP service', () => {
         tenantId,
         userId,
       }),
-    ).resolves.toEqual({ revokedSessions: 0 });
+    ).rejects.toMatchObject({
+      message: 'Customer session was not found',
+      name: 'OrapResourceNotFoundError',
+    });
     const update = query.mock.calls.find(([text]) => text.includes('UPDATE sessions'));
     expect(update?.[0]).toContain('id = $1 AND tenant_id = $2 AND site_id = $3 AND user_id = $4');
     expect(update?.[1]).toEqual([crossSiteSessionId, tenantId, siteId, userId]);
     const audit = query.mock.calls.find(([text]) => text.includes('INSERT INTO audit_events'));
-    expect(audit?.[1]).toEqual(
-      expect.arrayContaining([
-        tenantId,
-        siteId,
-        'customer.session.revoked',
-        crossSiteSessionId,
-        expect.stringContaining('"revokedSessions":0'),
-      ]),
-    );
+    expect(audit).toBeUndefined();
   });
 });

@@ -11,6 +11,7 @@ import {
   type TenantTransactionPool,
 } from '@omnireach/tenant';
 
+import { OrapResourceNotFoundError } from './orap-errors.ts';
 import type { OrapAdministrationEndpointService, PlanEntitlementsInput } from './orap-routes.ts';
 
 export interface InvitationNotifier {
@@ -504,6 +505,7 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
            FROM sessions
           WHERE tenant_id = $1 AND site_id = $2 AND user_id = $3
             AND revoked_at IS NULL AND expires_at > now()
+            AND last_seen_at > now() - interval '30 minutes'
           ORDER BY last_seen_at DESC, id`,
         [input.tenantId, input.siteId, input.userId],
       );
@@ -542,6 +544,9 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
           RETURNING id`,
         [input.sessionId, input.tenantId, input.siteId, input.userId],
       );
+      if (revoked.rows.length !== 1) {
+        throw new OrapResourceNotFoundError('Customer session was not found');
+      }
       await audit(client, actor, {
         action: 'customer.session.revoked',
         after: { revokedSessions: revoked.rows.length },
@@ -1398,11 +1403,23 @@ async function lockCustomerSessionScope(
   client: TenantTransactionClient,
   input: { siteId: string; tenantId: string; userId: string },
 ): Promise<void> {
+  // Authentication and customer recovery establish the account row as the first
+  // identity lock. Keep the same user -> membership -> tenant/site order here so
+  // this control cannot deadlock a recovery transaction that already holds the user.
+  const user = await query<{ id: string }>(
+    client,
+    `SELECT id FROM users
+      WHERE id = $1 AND status = 'active'
+      FOR SHARE`,
+    [input.userId],
+  );
+  if (user.rows.length !== 1) {
+    throw new OrapResourceNotFoundError('Active customer site membership was not found');
+  }
   const result = await query<{ id: string }>(
     client,
     `SELECT m.id
        FROM memberships m
-       JOIN users u ON u.id = m.user_id AND u.status = 'active'
        JOIN tenants t ON t.id = m.tenant_id AND t.status = 'active'
        JOIN sites s ON s.tenant_id = m.tenant_id AND s.id = m.site_id
          AND s.status = 'active'
@@ -1410,10 +1427,12 @@ async function lockCustomerSessionScope(
         AND m.active
         AND m.role IN ('customer_owner', 'customer_editor', 'customer_viewer')
       LIMIT 2
-      FOR SHARE OF m, u, t, s`,
+      FOR SHARE OF m, t, s`,
     [input.tenantId, input.siteId, input.userId],
   );
-  if (result.rows.length !== 1) throw new Error('Active customer site membership was not found');
+  if (result.rows.length !== 1) {
+    throw new OrapResourceNotFoundError('Active customer site membership was not found');
+  }
 }
 
 async function membership(

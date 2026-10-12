@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 
 import { clientNetworkIdentifier } from './client-network.ts';
+import { OrapResourceNotFoundError } from './orap-errors.ts';
 import { requireSameOrigin } from './request-security.ts';
 
 const reason = z.string().trim().min(3).max(500);
@@ -411,7 +412,7 @@ export function registerOrapRoutes(
         reply,
       );
       if (!params) return;
-      return service.listCustomerSessions(actor, params);
+      return respondToOrapOperation(reply, service.listCustomerSessions(actor, params));
     },
   );
 
@@ -436,7 +437,10 @@ export function registerOrapRoutes(
       );
       const body = parse(z.object({ reason }), request.body, reply);
       if (!params || !body) return;
-      return service.revokeCustomerSession(actor, { ...params, ...body });
+      return respondToOrapOperation(
+        reply,
+        service.revokeCustomerSession(actor, { ...params, ...body }),
+      );
     },
   );
 
@@ -460,7 +464,10 @@ export function registerOrapRoutes(
       );
       const body = parse(z.object({ reason }), request.body, reply);
       if (!params || !body) return;
-      return service.revokeAllCustomerSessions(actor, { ...params, ...body });
+      return respondToOrapOperation(
+        reply,
+        service.revokeAllCustomerSessions(actor, { ...params, ...body }),
+      );
     },
   );
 
@@ -714,6 +721,20 @@ async function authorizedCustomerSessionAdministrator(
     return undefined;
   }
   return actor;
+}
+
+async function respondToOrapOperation(
+  reply: FastifyReply,
+  operation: Promise<unknown>,
+): Promise<unknown> {
+  try {
+    return await operation;
+  } catch (error) {
+    if (error instanceof OrapResourceNotFoundError) {
+      return reply.code(404).send({ error: 'not_found' });
+    }
+    throw error;
+  }
 }
 
 function parse<T>(
