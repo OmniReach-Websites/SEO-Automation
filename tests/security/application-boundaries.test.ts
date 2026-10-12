@@ -138,6 +138,18 @@ describe('application security boundaries', () => {
     expect(acceptedWithReferer.statusCode).toBe(200);
     expect(login).toHaveBeenCalledTimes(2);
 
+    const acceptedLocalDevelopmentOrigin = await server.inject({
+      headers: {
+        host: 'admin.fixture.test:4123',
+        origin: 'http://admin.fixture.test:4123',
+      },
+      method: 'POST',
+      payload: { email: 'owner@fixture.test', password: 'fictional-password' },
+      url: '/auth/login',
+    });
+    expect(acceptedLocalDevelopmentOrigin.statusCode).toBe(200);
+    expect(login).toHaveBeenCalledTimes(3);
+
     for (const headers of [
       { host: 'admin.fixture.test' },
       { host: 'admin.fixture.test', referer: 'https://attacker.test/login' },
@@ -159,7 +171,7 @@ describe('application security boundaries', () => {
       });
       expect(rejected.statusCode).toBe(403);
     }
-    expect(login).toHaveBeenCalledTimes(2);
+    expect(login).toHaveBeenCalledTimes(3);
   });
 
   it('blocks forbidden crawl networks and site-crossing asset paths', async () => {

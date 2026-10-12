@@ -59,7 +59,7 @@ describe('ORAP operations views', () => {
     });
     expect(html).toContain('$5.00 USD');
     expect(html).toContain('trace-fixture-1234');
-    expect(html).toContain('(3)');
+    expect(html).toContain('3 occurrences');
     expect(html).toContain('<caption>');
     expect(html).toContain('/acknowledge');
     expect(html).toContain('/resolve');

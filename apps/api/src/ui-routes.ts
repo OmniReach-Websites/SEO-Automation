@@ -1,18 +1,26 @@
 import {
+  adminStylesheet,
   renderCustomerDashboard,
   renderOperationsCenter,
   renderOrapDashboard,
+  renderOrapNotFound,
+  renderOrapShell,
+  renderOrapSiteDetails,
+  renderOrapSiteForm,
   type AlertRow,
   type BudgetView,
   type JobRow,
+  type OrapSiteSummary,
 } from '@omnireach/ui';
 import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
 
 import type { AuthEndpointService } from './auth-routes.ts';
 import type { CustomerEndpointService, ResolveCustomerPrincipal } from './customer-routes.ts';
 import type { OrapAdministrationEndpointService, ResolvePlatformActor } from './orap-routes.ts';
 import { registerCustomerUiRoutes } from './customer-ui-routes.ts';
 import { readCookie } from './request-auth.ts';
+import { requireSameOrigin } from './request-security.ts';
 import { webAuthnEnrollmentBrowserScript } from './webauthn-browser.ts';
 
 export function registerUiRoutes(
@@ -25,6 +33,12 @@ export function registerUiRoutes(
     resolvePlatformActor?: ResolvePlatformActor;
   },
 ): void {
+  server.get('/assets/admin.css', async (_request, reply) =>
+    reply
+      .type('text/css; charset=utf-8')
+      .header('Cache-Control', 'public, max-age=300')
+      .send(adminStylesheet),
+  );
   server.get('/login', async (request, reply) =>
     reply.type('text/html; charset=utf-8').send(renderLogin(request.hostname)),
   );
@@ -74,7 +88,7 @@ export function registerUiRoutes(
       if (settings.webauthnEnrollmentAvailable) {
         reply.header(
           'Content-Security-Policy',
-          "default-src 'none'; script-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+          "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
         );
       }
       return reply.type('text/html; charset=utf-8').send(renderSecuritySettings(settings));
@@ -107,38 +121,101 @@ export function registerUiRoutes(
   }
 
   if (options.orapService && options.resolvePlatformActor) {
-    server.get('/orap/sites', async (request, reply) => {
+    server.get<{ Querystring: { notice?: string } }>('/orap/sites', async (request, reply) => {
       const actor = await options.resolvePlatformActor?.(request);
       if (!actor || !['platform_owner', 'platform_admin', 'staff'].includes(actor.role)) {
         return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
       }
-      const raw = await options.orapService?.listSites(actor);
-      const sites = Array.isArray(raw)
-        ? raw.flatMap((entry) => {
-            if (!isRecord(entry)) return [];
-            const name = stringValue(entry.name);
-            const tenantName = stringValue(entry.tenantName);
-            const status =
-              entry.status === 'disabled' ? ('disabled' as const) : ('active' as const);
-            return name && tenantName ? [{ name, status, tenantName }] : [];
-          })
-        : [];
-      return reply.type('text/html; charset=utf-8').send(renderOrapDashboard(sites));
+      const sites = parseSiteSummaries(await options.orapService?.listSites(actor));
+      return reply
+        .type('text/html; charset=utf-8')
+        .send(renderOrapDashboard(sites, siteNotice(request.query.notice)));
     });
 
-    server.get('/orap/operations', async (request, reply) => {
+    server.get('/orap/sites/new', async (request, reply) => {
+      const actor = await options.resolvePlatformActor?.(request);
+      if (!actor || !['platform_owner', 'platform_admin', 'staff'].includes(actor.role)) {
+        return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
+      }
+      return reply.type('text/html; charset=utf-8').send(renderOrapSiteForm());
+    });
+
+    server.post<{ Body: unknown }>(
+      '/orap/sites',
+      { preHandler: requireSameOrigin },
+      async (request, reply) => {
+        const actor = await options.resolvePlatformActor?.(request);
+        if (!actor || !['platform_owner', 'platform_admin', 'staff'].includes(actor.role)) {
+          return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
+        }
+        const parsed = siteCreationInput.safeParse(request.body);
+        if (!parsed.success) {
+          return reply
+            .code(400)
+            .type('text/html; charset=utf-8')
+            .send(
+              renderOrapSiteForm(
+                'Check every field and use a repository path such as sites/customer-name.',
+              ),
+            );
+        }
+        try {
+          await options.orapService?.createTenantAndSite(actor, parsed.data);
+          return reply.code(303).redirect('/orap/sites?notice=created');
+        } catch (error) {
+          request.log.error({ error }, 'ORAP site creation failed');
+          return reply
+            .code(500)
+            .type('text/html; charset=utf-8')
+            .send(
+              renderOrapSiteForm(
+                'The site record could not be created. No DNS or deployment changes were made.',
+              ),
+            );
+        }
+      },
+    );
+
+    server.get<{ Params: { siteIdentifier: string } }>(
+      '/orap/sites/:siteIdentifier',
+      async (request, reply) => {
+        const actor = await options.resolvePlatformActor?.(request);
+        if (!actor || !['platform_owner', 'platform_admin', 'staff'].includes(actor.role)) {
+          return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
+        }
+        const sites = parseSiteSummaries(await options.orapService?.listSites(actor));
+        const site = sites.find(
+          (entry) =>
+            entry.id === request.params.siteIdentifier ||
+            entry.name === request.params.siteIdentifier,
+        );
+        return site
+          ? reply.type('text/html; charset=utf-8').send(renderOrapSiteDetails(site))
+          : reply.code(404).type('text/html; charset=utf-8').send(renderOrapNotFound());
+      },
+    );
+
+    server.get<{ Querystring: { notice?: string } }>('/orap/operations', async (request, reply) => {
       const actor = await options.resolvePlatformActor?.(request);
       if (!actor || !['platform_owner', 'platform_admin', 'staff'].includes(actor.role)) {
         return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
       }
       if (!options.orapService?.listOperations) return reply.code(404).send();
       const model = parseOperationsModel(await options.orapService.listOperations(actor));
-      return reply
-        .type('text/html; charset=utf-8')
-        .send(
-          `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><title>Operations | OmniReach</title></head><body><a href="#operations-heading">Skip to content</a>${renderOperationsCenter(model)}</body></html>`,
-        );
+      const notice = operationNotice(request.query.notice);
+      return reply.type('text/html; charset=utf-8').send(
+        renderOrapShell({
+          content: renderOperationsCenter(model),
+          current: 'operations',
+          eyebrow: 'Platform health',
+          heading: 'Operations',
+          ...(notice ? { notice } : {}),
+          title: 'Operations',
+        }),
+      );
     });
+
+    registerOrapOperationForms(server, options);
   }
 
   if (options.customerService && options.resolveCustomerPrincipal) {
@@ -319,6 +396,169 @@ function parseOperationsModel(value: unknown): {
     },
     jobs,
   };
+}
+
+const siteCreationInput = z.object({
+  reason: z.string().trim().min(3).max(500),
+  siteName: z.string().trim().min(1).max(160),
+  sourcePath: z
+    .string()
+    .trim()
+    .regex(/^sites\/[a-z0-9_-]+$/u)
+    .max(300),
+  tenantName: z.string().trim().min(1).max(160),
+});
+
+const operationReason = z.object({ reason: z.string().trim().min(3).max(500) });
+
+function parseSiteSummaries(value: unknown): OrapSiteSummary[] {
+  return Array.isArray(value)
+    ? value.flatMap((entry) => {
+        if (!isRecord(entry)) return [];
+        const id = stringValue(entry.id);
+        const name = stringValue(entry.name);
+        const tenantId = stringValue(entry.tenantId);
+        const tenantName = stringValue(entry.tenantName);
+        const status = entry.status === 'disabled' ? ('disabled' as const) : ('active' as const);
+        return name && tenantName
+          ? [{ ...(id ? { id } : {}), name, status, ...(tenantId ? { tenantId } : {}), tenantName }]
+          : [];
+      })
+    : [];
+}
+
+function siteNotice(value: string | undefined): string | undefined {
+  return value === 'created'
+    ? 'Site record created. No DNS or deployment changes were made.'
+    : undefined;
+}
+
+function operationNotice(
+  value: string | undefined,
+): { kind?: 'error' | 'success'; message: string } | undefined {
+  if (value === 'updated') return { message: 'The operational record was updated.' };
+  if (value === 'unavailable') {
+    return { kind: 'error', message: 'That action is not available in this deployment.' };
+  }
+  if (value === 'failed') {
+    return {
+      kind: 'error',
+      message: 'The action could not be completed. No unrelated platform state was changed.',
+    };
+  }
+  return undefined;
+}
+
+function registerOrapOperationForms(
+  server: FastifyInstance,
+  options: {
+    orapService?: OrapAdministrationEndpointService;
+    resolvePlatformActor?: ResolvePlatformActor;
+  },
+): void {
+  server.post<{ Body: unknown; Params: { jobId: string } }>(
+    '/orap/operations/jobs/:jobId/cancel',
+    { preHandler: requireSameOrigin },
+    async (request, reply) => {
+      const actor = await options.resolvePlatformActor?.(request);
+      if (!actor || !['platform_owner', 'platform_admin', 'staff'].includes(actor.role)) {
+        return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
+      }
+      const body = operationReason.safeParse(request.body);
+      if (!body.success) return reply.code(303).redirect('/orap/operations?notice=failed');
+      if (!options.orapService?.cancelJob) {
+        return reply.code(303).redirect('/orap/operations?notice=unavailable');
+      }
+      try {
+        await options.orapService.cancelJob(actor, {
+          jobId: request.params.jobId,
+          reason: body.data.reason,
+        });
+        return reply.code(303).redirect('/orap/operations?notice=updated');
+      } catch (error) {
+        request.log.error({ error }, 'ORAP job cancellation failed');
+        return reply.code(303).redirect('/orap/operations?notice=failed');
+      }
+    },
+  );
+
+  server.post<{ Body: unknown; Params: { jobId: string } }>(
+    '/orap/operations/jobs/:jobId/replay',
+    { preHandler: requireSameOrigin },
+    async (request, reply) => {
+      const actor = await options.resolvePlatformActor?.(request);
+      if (!actor || !['platform_owner', 'platform_admin', 'staff'].includes(actor.role)) {
+        return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
+      }
+      const body = operationReason.safeParse(request.body);
+      if (!body.success) return reply.code(303).redirect('/orap/operations?notice=failed');
+      if (!options.orapService?.replayJob) {
+        return reply.code(303).redirect('/orap/operations?notice=unavailable');
+      }
+      try {
+        await options.orapService.replayJob(actor, {
+          jobId: request.params.jobId,
+          reason: body.data.reason,
+        });
+        return reply.code(303).redirect('/orap/operations?notice=updated');
+      } catch (error) {
+        request.log.error({ error }, 'ORAP job replay failed');
+        return reply.code(303).redirect('/orap/operations?notice=failed');
+      }
+    },
+  );
+
+  server.post<{ Body: unknown; Params: { alertId: string } }>(
+    '/orap/operations/alerts/:alertId/acknowledge',
+    { preHandler: requireSameOrigin },
+    async (request, reply) => {
+      const actor = await options.resolvePlatformActor?.(request);
+      if (!actor || !['platform_owner', 'platform_admin', 'staff'].includes(actor.role)) {
+        return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
+      }
+      const body = operationReason.safeParse(request.body);
+      if (!body.success) return reply.code(303).redirect('/orap/operations?notice=failed');
+      if (!options.orapService?.acknowledgeAlert) {
+        return reply.code(303).redirect('/orap/operations?notice=unavailable');
+      }
+      try {
+        await options.orapService.acknowledgeAlert(actor, {
+          alertId: request.params.alertId,
+          reason: body.data.reason,
+        });
+        return reply.code(303).redirect('/orap/operations?notice=updated');
+      } catch (error) {
+        request.log.error({ error }, 'ORAP alert acknowledgement failed');
+        return reply.code(303).redirect('/orap/operations?notice=failed');
+      }
+    },
+  );
+
+  server.post<{ Body: unknown; Params: { alertId: string } }>(
+    '/orap/operations/alerts/:alertId/resolve',
+    { preHandler: requireSameOrigin },
+    async (request, reply) => {
+      const actor = await options.resolvePlatformActor?.(request);
+      if (!actor || !['platform_owner', 'platform_admin', 'staff'].includes(actor.role)) {
+        return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
+      }
+      const body = operationReason.safeParse(request.body);
+      if (!body.success) return reply.code(303).redirect('/orap/operations?notice=failed');
+      if (!options.orapService?.resolveAlert) {
+        return reply.code(303).redirect('/orap/operations?notice=unavailable');
+      }
+      try {
+        await options.orapService.resolveAlert(actor, {
+          alertId: request.params.alertId,
+          reason: body.data.reason,
+        });
+        return reply.code(303).redirect('/orap/operations?notice=updated');
+      } catch (error) {
+        request.log.error({ error }, 'ORAP alert resolution failed');
+        return reply.code(303).redirect('/orap/operations?notice=failed');
+      }
+    },
+  );
 }
 
 function escapeHtml(value: string): string {
