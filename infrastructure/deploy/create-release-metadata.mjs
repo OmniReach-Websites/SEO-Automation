@@ -210,12 +210,22 @@ export function assertReleaseMetadataSupports(
 export async function verifyReleaseContract({ authSecretsPath, authWebAuthnPath, manifestPath }) {
   const [authSecretsSource, authWebAuthnSource, contractSource] = await Promise.all([
     readFile(authSecretsPath, 'utf8'),
-    authWebAuthnPath ? readFile(authWebAuthnPath, 'utf8') : Promise.resolve(''),
+    readOptionalCapabilitySource(authWebAuthnPath),
     readFile(manifestPath, 'utf8'),
   ]);
   const contract = parseReleaseContractManifest(contractSource);
   assertManifestMatchesSourceCapabilities(contract, authSecretsSource, authWebAuthnSource);
   return contract;
+}
+
+async function readOptionalCapabilitySource(path) {
+  if (!path) return '';
+  try {
+    return await readFile(path, 'utf8');
+  } catch (error) {
+    if (error && typeof error === 'object' && error.code === 'ENOENT') return '';
+    throw error;
+  }
 }
 
 export async function createReleaseMetadata({
