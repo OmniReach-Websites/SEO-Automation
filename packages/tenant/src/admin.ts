@@ -154,16 +154,20 @@ export class CustomerAccessAdministrationService {
     return this.store.transaction(async (commands) => {
       const result = await commands.changeMembershipRole(input);
       assertSameSite(input.siteId, result.before, result.after);
+      const revokedSessions = await commands.revokeUserSiteSessions({
+        siteId: input.siteId,
+        userId: result.after.userId,
+      });
       await commands.audit({
         action: 'membership.role_changed',
         actorId: actor.id,
-        after: result.after,
+        after: { membership: result.after, revokedSessions },
         before: result.before,
         reason: input.reason.trim(),
         targetId: input.membershipId,
         traceId: actor.traceId,
       });
-      return result.after;
+      return { membership: result.after, revokedSessions };
     });
   }
 

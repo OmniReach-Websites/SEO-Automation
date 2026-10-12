@@ -88,6 +88,26 @@ for (const fragment of [
   'ALTER TABLE platform_memberships FORCE ROW LEVEL SECURITY',
   'ALTER TABLE credentials FORCE ROW LEVEL SECURITY',
   'ALTER TABLE owner_bootstrap FORCE ROW LEVEL SECURITY',
+  'CREATE TABLE account_authentication_policies',
+  'ALTER TABLE account_authentication_policies FORCE ROW LEVEL SECURITY',
+  'CREATE TABLE account_recovery_codes',
+  'set_version integer NOT NULL DEFAULT 1 CHECK (set_version > 0)',
+  'ALTER TABLE account_recovery_codes FORCE ROW LEVEL SECURITY',
+  'platform_membership_requires_second_step',
+  'authentication_policy_protects_platform_membership',
+  'legacy_mfa_recovery_codes_account_sync',
+  "authentication_method IN ('password', 'email_code', 'totp', 'webauthn', 'recovery_code')",
+  "authentication_assurance IN ('basic', 'baseline', 'strong', 'recovery')",
+  'ADD COLUMN verified_at timestamptz(3)',
+  'ADD COLUMN recovery_restricted boolean NOT NULL DEFAULT false',
+  'authentication-policy-upgrade',
+  'password_recovery_tokens_host_check',
+  'CREATE TABLE password_recovery_delivery_outbox',
+  'password_recovery_delivery_outbox_payload_lifecycle',
+  'ALTER TABLE password_recovery_delivery_outbox FORCE ROW LEVEL SECURITY',
+  'auth_only_password_recovery_delivery_outbox',
+  'GRANT SELECT, INSERT, UPDATE ON password_recovery_delivery_outbox TO omnireach_auth',
+  'GRANT SELECT, INSERT, UPDATE ON account_authentication_policies, account_recovery_codes',
   'GRANT INSERT ON audit_events TO omnireach_auth',
   "OR pg_has_role(current_user, 'omnireach_auth', 'member')",
 ]) {
@@ -96,6 +116,14 @@ for (const fragment of [
 
 if (/GRANT[^;]*credentials[^;]*TO omnireach_app/isu.test(sql)) {
   errors.push('omnireach_app must not receive credential-table grants');
+}
+
+if (
+  /GRANT[^;]*(?:account_authentication_policies|account_recovery_codes)[^;]*TO omnireach_(?:app|platform|worker)/isu.test(
+    sql,
+  )
+) {
+  errors.push('account authentication data must be granted only to omnireach_auth');
 }
 
 const result = {

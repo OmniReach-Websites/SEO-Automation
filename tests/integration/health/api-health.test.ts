@@ -30,7 +30,11 @@ describe('API health contract', () => {
     servers.push(server);
     const response = await server.inject({ method: 'GET', url: '/health/ready' });
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ dependencies: ['postgres', 'redis'], status: 'ready' });
+    expect(response.json()).toEqual({
+      authContract: 2,
+      dependencies: ['postgres', 'redis'],
+      status: 'ready',
+    });
   });
 
   it('reports dependency names but never error details when degraded', async () => {

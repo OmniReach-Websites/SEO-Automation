@@ -39,8 +39,9 @@ compose() {
 wait_for_readiness() {
   attempts=0
   while [ "$attempts" -lt 60 ]; do
-    if curl --fail --silent --show-error --max-time 3 \
-      "http://127.0.0.1:$api_port/health/ready" >/dev/null 2>&1; then
+    readiness=$(curl --fail --silent --show-error --max-time 3 \
+      "http://127.0.0.1:$api_port/health/ready" 2>/dev/null || true)
+    if printf '%s' "$readiness" | grep -Eq '"authContract"[[:space:]]*:[[:space:]]*2'; then
       return 0
     fi
     attempts=$((attempts + 1))
@@ -119,6 +120,20 @@ deploy_release() {
       "$releases_root"/*) : ;;
       *) fail 'current release pointer is outside the release root' ;;
     esac
+  fi
+
+  # This migration establishes a fail-closed authentication contract that a
+  # pre-v2 binary cannot satisfy. Refuse to let the ordinary auto-deploy path
+  # cross that one-way boundary: doing so would make its automatic rollback
+  # target unable to pass authentication readiness. The first transition must
+  # use the separately reviewed bridge/forward-recovery runbook.
+  auth_contract_migration="$release_dir/packages/database/prisma/migrations/20261010250000_g05_account_authentication_policy/migration.sql"
+  if [ -n "$previous" ] && [ -f "$auth_contract_migration" ]; then
+    current_readiness=$(curl --fail --silent --show-error --max-time 3 \
+      "http://127.0.0.1:$api_port/health/ready" 2>/dev/null || true)
+    if ! printf '%s' "$current_readiness" | grep -Eq '"authContract"[[:space:]]*:[[:space:]]*2'; then
+      fail 'authentication contract v2 is a forward-only boundary; deploy a reviewed bridge release before this artifact'
+    fi
   fi
 
   if ! compose "$release_dir" "$release_id" up --detach --no-build; then

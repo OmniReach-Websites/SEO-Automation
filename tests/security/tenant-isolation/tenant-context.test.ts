@@ -109,7 +109,12 @@ describe('tenant isolation boundaries', () => {
     };
     const pool: TenantTransactionPool = { connect: vi.fn(async () => client) };
     await withAuthTransaction(pool, async () => 'ok');
-    expect(queries).toEqual(['BEGIN', 'SET LOCAL ROLE omnireach_auth', 'COMMIT']);
+    expect(queries).toEqual([
+      'BEGIN',
+      'SET LOCAL ROLE omnireach_auth',
+      `SELECT set_config('app.authentication_contract_version', '2', true)`,
+      'COMMIT',
+    ]);
     expect(client.release).toHaveBeenCalledOnce();
   });
 

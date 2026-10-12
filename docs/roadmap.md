@@ -2,7 +2,7 @@
 
 **Status:** Approved architecture roadmap; implementation state is tracked in Section 7  
 **Source of truth:** `docs/masterplan.md` version 1.0 (2026-10-10)  
-**Last reviewed against master plan:** 2026-10-10  
+**Last reviewed against master plan:** 2026-10-11
 **Progress values:** `not started`, `in progress`, `blocked`, `complete`  
 **Planning constraint:** The architecture decisions in Section 3 are approved. On 2026-10-11
 the owner authorized G31 production completion work. That authorization does not invent
@@ -35,69 +35,72 @@ Every goal below must preserve these invariants:
 
 The architecture choices below are approved and are no longer open design questions. ADRs created by G01 must record these decisions rather than reconsider them. Only the concrete production information in Section 3.2 remains unresolved.
 
-| ID    | Status                                | Approved decision                                                                                                                                                                                                                                                                                                          | Applies to            |
-| ----- | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
-| D-001 | Approved, production value supplied   | Use `admin.<OmniReach-domain>` for ORAP. The approved V1 base domain is `omnireach.cloud`, making the canonical ORAP hostname `admin.omnireach.cloud`; keep both values configurable.                                                                                                                                      | G01, G17–G19, G31–G32 |
-| D-002 | Approved                              | Use email/password with Argon2id, mandatory authenticator-app MFA for ORAP staff, recovery codes, and secure one-time owner setup.                                                                                                                                                                                         | G05, G07, G31–G32     |
-| D-003 | Approved                              | Use a central identity database with separate secure, host-only sessions for each `admin.<customer-domain>`.                                                                                                                                                                                                               | G05, G14              |
-| D-004 | Approved                              | Enforce PostgreSQL RLS, composite foreign keys, transaction-scoped tenant context, and API authorization.                                                                                                                                                                                                                  | G04, G06              |
-| D-005 | Approved; four-tier proposal selected | Use one subscription per website, four versioned configurable plan proposals, and per-site ORAP feature/quota overrides that cannot weaken mandatory security rules.                                                                                                                                                       | G04, G08, G21         |
-| D-006 | Approved                              | Roles are Platform Owner, Platform Admin, Staff, Customer Owner, Customer Editor, and Customer Viewer. Customer Owners and explicitly authorized Editors can publish. All action grants remain deny-by-default and site-scoped.                                                                                            | G05–G08, G14–G16      |
-| D-007 | Approved                              | Store live editable content in PostgreSQL using stable field IDs, versioned structured JSON, optimistic concurrency, and immutable revisions.                                                                                                                                                                              | G09, G11, G15–G16     |
-| D-008 | Approved                              | Store prices, hours, addresses, contact details, legal facts, and other protected information separately. AI can never modify or suggest replacements for them; protect the entire field when safe separation is impossible. Authorized Customer Owners and ORAP staff may edit facts through a separate audited workflow. | G11, G26              |
-| D-009 | Approved                              | Publish immutable static website builds from versioned content snapshots, activate atomically, and roll back automatically on failure.                                                                                                                                                                                     | G13, G16, G19, G31    |
-| D-010 | Approved                              | Use authenticated, expiring, no-index previews isolated from production pages.                                                                                                                                                                                                                                             | G13, G15              |
-| D-011 | Approved                              | Use a persistent local filesystem initially behind an object-storage adapter, with site isolation, upload validation, integrity checks, retention, and backups.                                                                                                                                                            | G12, G29              |
-| D-012 | Approved                              | GitHub Actions builds and tests verified commits, then transfers immutable artifacts to the VPS over SSH. Only `main` can deploy, and deploys are push-triggered.                                                                                                                                                          | G03, G19, G31         |
-| D-013 | Approved                              | Reuse Caddy, keep Christians Reunite isolated and untouched, and require a read-only infrastructure inventory before any production integration.                                                                                                                                                                           | G18–G19, G29–G32      |
-| D-014 | Approved                              | Automate Cloudflare DNS records and domain verification. Handle domain purchasing and renewal manually in V1.                                                                                                                                                                                                              | G17–G18, G31–G32      |
-| D-015 | Approved                              | Default to a hard cap of $5 USD per website per UTC calendar month, resetting at 00:00 UTC on the first day. Allow audited ORAP configuration.                                                                                                                                                                             | G21, G25–G26          |
-| D-016 | Approved; R2 proposed, proof pending  | Create daily encrypted database/content/media/configuration backups, retain 7 daily and 4 weekly copies, keep an encrypted off-server copy in proposed Cloudflare R2, and perform a full isolated restoration test monthly.                                                                                                | G29, G31–G32          |
-| D-017 | Approved                              | Keep code, templates, manifests, and sanitized configuration in GitHub. Never commit customer data, uploads, secrets, tokens, backups, or unsanitized runtime exports.                                                                                                                                                     | G02, G09, G12, G19    |
-| D-018 | Approved; Texas, policy text pending  | Use consent-aware analytics, configurable retention, and minimal collection. Initial operation is in Texas, USA; owner-approved legal policies are required before customer launch.                                                                                                                                        | G27–G29, G32          |
-| D-019 | Approved; project strategy supplied   | Integrate Search Console and GA4 through one owner-controlled OmniReach Google Cloud OAuth project, encrypted tokens, least-privilege scopes, and individually authorized verified site/property mappings.                                                                                                                 | G27–G28               |
-| D-020 | Approved                              | Permit completely custom customer frontend designs that comply with the OmniReach integration contract. V1 supports static pages and bounded contact forms; complex applications require separate approval, adapters, data stores, backups, and security review.                                                           | G09–G10, G13, G32     |
-| D-021 | Approved; Resend selected             | Provide an ORAP alert center plus Resend email for critical errors, with fingerprinting, deduplication, acknowledgment, assignment, and resolution.                                                                                                                                                                        | G22, G28–G32          |
-| D-022 | Approved                              | Report verifiable AI referral traffic, structured-data completeness, and clearly labeled sampled AI mentions. Never promise rankings or present proxy measures as established external ranking.                                                                                                                            | G24, G27–G28          |
-| D-023 | Approved                              | Use configurable retention categories with defaults of 30 days for operational logs, 90 days for detailed job records, and 12 months for audit records. Preserve content revisions according to site policy and never silently prune them.                                                                                 | G11, G20, G22, G29    |
-| D-024 | Approved                              | G01 creates architecture, security, operations, integration-contract, and ADR documentation before application implementation.                                                                                                                                                                                             | G01–G02               |
+| ID    | Status                                | Approved decision                                                                                                                                                                                                                                                                                                                                                                                                                                               | Applies to                     |
+| ----- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| D-001 | Approved, production value supplied   | Use `admin.<OmniReach-domain>` for ORAP. The approved V1 base domain is `omnireach.cloud`, making the canonical ORAP hostname `admin.omnireach.cloud`; keep both values configurable and reserve the canonical ORAP hostname from every customer-domain mapping.                                                                                                                                                                                                | G01, G05–G06, G17–G19, G31–G32 |
+| D-002 | Approved; revised 2026-10-11          | Use email/password with Argon2id and account-level authentication policy. Platform Owner, Platform Admin, and Staff require two steps; a five-minute hash-only email code may be the routine second step, while TOTP and WebAuthn remain optional stronger methods. Customers are password-only by default with voluntary methods. Sensitive owner recovery/security changes require recent stronger verification or an approved audited break-glass procedure. | G05, G07, G14, G31–G32         |
+| D-003 | Approved                              | Use a central identity database with separate secure, host-only sessions for each `admin.<customer-domain>`.                                                                                                                                                                                                                                                                                                                                                    | G05, G14                       |
+| D-004 | Approved                              | Enforce PostgreSQL RLS, composite foreign keys, transaction-scoped tenant context, and API authorization.                                                                                                                                                                                                                                                                                                                                                       | G04, G06                       |
+| D-005 | Approved; four-tier proposal selected | Use one subscription per website, four versioned configurable plan proposals, and per-site ORAP feature/quota overrides that cannot weaken mandatory security rules.                                                                                                                                                                                                                                                                                            | G04, G08, G21                  |
+| D-006 | Approved                              | Roles are Platform Owner, Platform Admin, Staff, Customer Owner, Customer Editor, and Customer Viewer. Customer Owners and explicitly authorized Editors can publish. All action grants remain deny-by-default and site-scoped.                                                                                                                                                                                                                                 | G05–G08, G14–G16               |
+| D-007 | Approved                              | Store live editable content in PostgreSQL using stable field IDs, versioned structured JSON, optimistic concurrency, and immutable revisions.                                                                                                                                                                                                                                                                                                                   | G09, G11, G15–G16              |
+| D-008 | Approved                              | Store prices, hours, addresses, contact details, legal facts, and other protected information separately. AI can never modify or suggest replacements for them; protect the entire field when safe separation is impossible. Authorized Customer Owners and ORAP staff may edit facts through a separate audited workflow.                                                                                                                                      | G11, G26                       |
+| D-009 | Approved                              | Publish immutable static website builds from versioned content snapshots, activate atomically, and roll back automatically on failure.                                                                                                                                                                                                                                                                                                                          | G13, G16, G19, G31             |
+| D-010 | Approved                              | Use authenticated, expiring, no-index previews isolated from production pages.                                                                                                                                                                                                                                                                                                                                                                                  | G13, G15                       |
+| D-011 | Approved                              | Use a persistent local filesystem initially behind an object-storage adapter, with site isolation, upload validation, integrity checks, retention, and backups.                                                                                                                                                                                                                                                                                                 | G12, G29                       |
+| D-012 | Approved                              | GitHub Actions builds and tests verified commits, then transfers immutable artifacts to the VPS over SSH. Only `main` can deploy, and deploys are push-triggered.                                                                                                                                                                                                                                                                                               | G03, G19, G31                  |
+| D-013 | Approved                              | Reuse Caddy, keep Christians Reunite isolated and untouched, and require a read-only infrastructure inventory before any production integration.                                                                                                                                                                                                                                                                                                                | G18–G19, G29–G32               |
+| D-014 | Approved                              | Automate Cloudflare DNS records and domain verification. Handle domain purchasing and renewal manually in V1.                                                                                                                                                                                                                                                                                                                                                   | G17–G18, G31–G32               |
+| D-015 | Approved                              | Default to a hard cap of $5 USD per website per UTC calendar month, resetting at 00:00 UTC on the first day. Allow audited ORAP configuration.                                                                                                                                                                                                                                                                                                                  | G21, G25–G26                   |
+| D-016 | Approved; R2 proposed, proof pending  | Create daily encrypted database/content/media/configuration backups, retain 7 daily and 4 weekly copies, keep an encrypted off-server copy in proposed Cloudflare R2, and perform a full isolated restoration test monthly.                                                                                                                                                                                                                                     | G29, G31–G32                   |
+| D-017 | Approved                              | Keep code, templates, manifests, and sanitized configuration in GitHub. Never commit customer data, uploads, secrets, tokens, backups, or unsanitized runtime exports.                                                                                                                                                                                                                                                                                          | G02, G09, G12, G19             |
+| D-018 | Approved; Texas, policy text pending  | Use consent-aware analytics, configurable retention, and minimal collection. Initial operation is in Texas, USA; owner-approved legal policies are required before customer launch.                                                                                                                                                                                                                                                                             | G27–G29, G32                   |
+| D-019 | Approved; project strategy supplied   | Integrate Search Console and GA4 through one owner-controlled OmniReach Google Cloud OAuth project, encrypted tokens, least-privilege scopes, and individually authorized verified site/property mappings.                                                                                                                                                                                                                                                      | G27–G28                        |
+| D-020 | Approved                              | Permit completely custom customer frontend designs that comply with the OmniReach integration contract. V1 supports static pages and bounded contact forms; complex applications require separate approval, adapters, data stores, backups, and security review.                                                                                                                                                                                                | G09–G10, G13, G32              |
+| D-021 | Approved; Resend selected             | Provide an ORAP alert center plus Resend email for critical errors, with fingerprinting, deduplication, acknowledgment, assignment, and resolution.                                                                                                                                                                                                                                                                                                             | G22, G28–G32                   |
+| D-022 | Approved                              | Report verifiable AI referral traffic, structured-data completeness, and clearly labeled sampled AI mentions. Never promise rankings or present proxy measures as established external ranking.                                                                                                                                                                                                                                                                 | G24, G27–G28                   |
+| D-023 | Approved                              | Use configurable retention categories with defaults of 30 days for operational logs, 90 days for detailed job records, and 12 months for audit records. Preserve content revisions according to site policy and never silently prune them.                                                                                                                                                                                                                      | G11, G20, G22, G29             |
+| D-024 | Approved                              | G01 creates architecture, security, operations, integration-contract, and ADR documentation before application implementation.                                                                                                                                                                                                                                                                                                                                  | G01–G02                        |
 
 ### 3.1 Additional approved product and delivery decisions
 
-| Topic                  | Approved decision                                                                                                                                                 |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Operating model        | OmniReach remains agency-first permanently and does not become a self-service SaaS site builder.                                                                  |
-| Customer editor        | Use structured form-based editing with live preview; do not expose arbitrary source, DOM, HTML, CSS, or JavaScript editing.                                       |
-| AI text editing        | Enable AUTO by default only for eligible fields; turning it off changes the field to SUGGEST, not disabled.                                                       |
-| Protected fact editing | Authorized Customer Owners and ORAP staff can manually edit protected facts through a dedicated audited workflow. AI remains categorically unable to change them. |
-| Nonpayment             | Keep public websites running. Suspend new automation and editing only according to an explicit grace-period policy.                                               |
-| Subscription proposal  | Use STARTER, GROWTH, PRO, and ELITE as configurable per-website plans; proposed prices require final commercial approval.                                         |
-| Git branching          | Only `main` deploys to production; testing branches run CI without deployment.                                                                                    |
-| Deployment timing      | Use push-triggered GitHub Actions, not periodic repository polling.                                                                                               |
-| Deployment sequencing  | Implement the GitHub Actions/SSH foundation early, but make full production release activation a separate late goal after backup and release-gate validation.     |
-| OpenAI models          | Keep model selections configurable behind one provider integration with per-site cost tracking.                                                                   |
-| Reporting              | Show traffic, search performance, completed improvements, and defined AIO measurements with provenance and limitations.                                           |
-| Scaling                | Start on the existing 2-core, approximately 8 GiB VPS; cap worker resources and retain independently scalable worker/storage adapters.                            |
+| Topic                  | Approved decision                                                                                                                                                                      |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Operating model        | OmniReach remains agency-first permanently and does not become a self-service SaaS site builder.                                                                                       |
+| Customer editor        | Use structured form-based editing with live preview; do not expose arbitrary source, DOM, HTML, CSS, or JavaScript editing.                                                            |
+| AI text editing        | Enable AUTO by default only for eligible fields; turning it off changes the field to SUGGEST, not disabled.                                                                            |
+| Protected fact editing | Authorized Customer Owners and ORAP staff can manually edit protected facts through a dedicated audited workflow. AI remains categorically unable to change them.                      |
+| Nonpayment             | Keep public websites running. Suspend new automation and editing only according to an explicit grace-period policy.                                                                    |
+| Subscription proposal  | Use STARTER, GROWTH, PRO, and ELITE as configurable per-website plans; proposed prices require final commercial approval.                                                              |
+| Git branching          | Only `main` deploys to production; testing branches run CI without deployment.                                                                                                         |
+| Deployment timing      | Use push-triggered GitHub Actions, not periodic repository polling.                                                                                                                    |
+| Deployment sequencing  | Implement the GitHub Actions/SSH foundation early, but make full production release activation a separate late goal after backup and release-gate validation.                          |
+| OpenAI models          | Keep model selections configurable behind one provider integration with per-site cost tracking.                                                                                        |
+| Reporting              | Show traffic, search performance, completed improvements, and defined AIO measurements with provenance and limitations.                                                                |
+| Scaling                | Start on the existing 2-core, approximately 8 GiB VPS; cap worker resources and retain independently scalable worker/storage adapters.                                                 |
+| ORAP verification      | Require account-level two-step policy for every active platform account. Permit five-minute Resend email codes for routine verification; retain TOTP and WebAuthn as stronger options. |
+| Customer verification  | Default customer accounts to password-only; allow voluntary email-code, TOTP, or WebAuthn enrollment and management through tenant-safe security settings.                             |
+| Sensitive auth changes | Require recent TOTP/WebAuthn or an explicitly approved, one-time audited break-glass procedure for owner recovery and security changes; email alone is insufficient.                   |
 
 ### 3.2 Remaining owner-supplied production information
 
 These are not architecture choices for Codex to invent. A goal may implement a configurable interface or local fixture without them, but any affected production step remains blocked.
 
-| ID    | Owner input still required                                                                                                                                                                                                                                                                                                                                                                  | Needed before                                                  |
-| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| R-001 | Complete: base domain and DNS zone `omnireach.cloud`; canonical ORAP hostname `admin.omnireach.cloud`.                                                                                                                                                                                                                                                                                      | Production domain/routing setup in G31                         |
-| R-002 | Complete: owner account is `rhajj@omnireach.cloud`; owner retains MFA recovery codes in encrypted storage and is the sole initial break-glass approver. Protected GitHub Actions secrets and host-only restricted environment files or Docker/Compose secret mounts are approved.                                                                                                           | Production identity bootstrap in G31/G32                       |
-| R-003 | Complete: owner-authorized read-only inventory and supplemental runtime/SSH evidence reviewed; no production mutation performed.                                                                                                                                                                                                                                                            | G18 design finalization and all production work                |
-| R-004 | Complete: owner controls `omnireach.cloud`; the ignored token/account pair resolved exactly one active matching zone in a read-only 2026-10-11 check without logging identifiers. The DNS adapter repeats this fail-closed lookup. Every concrete DNS mutation remains separately approved.                                                                                                 | Production DNS in G31/G32                                      |
-| R-005 | Partial: Cloudflare R2 is the proposed production off-server provider with a proposed $5 monthly budget. Owner is sole encryption-key custodian/manual-deletion approver. Least-privilege setup, separate credentials/keys, automated 7-daily/4-weekly upload, cost validation, and a successful real restore remain pending; no spending is authorized.                                    | Production backup activation in G29/G31                        |
-| R-006 | Partial: initially operate in Texas, USA. Privacy, cookie-consent, terms, and deletion policies require business-owner review before launch; exact approved policy text, incident notification, and revision-retention rules remain pending.                                                                                                                                                | Real analytics or customer launch in G27/G32                   |
-| R-007 | Partial: use one owner-controlled OmniReach Google Cloud OAuth project and connect each customer's Search Console/GA4 properties individually through authorized accounts. Project ID, redirect URIs, consent-screen status, concrete properties, and access remain pending.                                                                                                                | Live Search Console/GA4 connection in G27/G32                  |
-| R-008 | Planned: Resend free plan with `updates.omnireach.cloud`; alert sender `alerts@updates.omnireach.cloud`; auth sender `auth@updates.omnireach.cloud`; testing recipient `rhajj@omnireach.cloud`; $0 spend, 3 retries, dedupe, and ORAP delivery-failure history. Verification, provider setup, credentials, final production recipient confirmation, and activation remain pending.          | Production email alerts in G22/G31                             |
-| R-009 | Partial: optional reusable centralized forms use Resend with selected sender `forms@updates.omnireach.cloud`, verified per-site recipients, 30-day retention except legal/security holds, Turnstile, honeypots, rate limits, and confirmation email off by default. Recipient verification, provider/DNS setup, credentials, explicit activation, and legal consent wording remain pending. | Live contact forms in G31/G32                                  |
-| R-010 | In progress: repository, restricted `omnireach-deploy` identity, verified ED25519 host key, protected `production` environment, main-only deployment policy, and key custody are configured. The owner authorized end-to-end G31 completion on 2026-10-11. The one-time root install, live permission/prechecks, deployment, and rollback evidence remain pending.                          | Production release activation in G31                           |
-| R-011 | Selected proposal: STARTER $500/2 seats/5 pages/weekly SEO/2 AI cycles; GROWTH $1,000/5/10/daily/8; PRO $1,500/10/20/daily/16; ELITE $2,000/20/30/daily/30. One site/location by default, ORAP configuration/overrides, $5 site AI budget, and 14-day grace apply. Final prices, setup/bespoke fees, definitions, and overage policy remain pending.                                        | Commercial customer onboarding in G32                          |
-| R-012 | Partial: dedicated project/key is host-configured; owner controls spend. Atomic $5/site and $50 platform caps apply. Candidate aliases map balanced content review to `gpt-6.1-sol` and economy to `gpt-6-luna`; `OPENAI_PROVIDER_ENABLED=false` until representative cost/quality tests and explicit paid-call activation.                                                                 | Live OpenAI calls in G25/G32                                   |
-| R-013 | Approved 2026-10-10: 99.5% monthly availability; Sun 02:00–04:00 America/Chicago maintenance; RPO 24h; RTO 8h; critical/noncritical acknowledgment 30m/24h; initial ~10-site capacity.                                                                                                                                                                                                      | Release thresholds in G30 and production activation in G31/G32 |
+| ID    | Owner input still required                                                                                                                                                                                                                                                                                                                                                                                                            | Needed before                                                          |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| R-001 | Complete: base domain and DNS zone `omnireach.cloud`; canonical ORAP hostname `admin.omnireach.cloud`.                                                                                                                                                                                                                                                                                                                                | Production domain/routing setup in G31                                 |
+| R-002 | Complete: owner account is `rhajj@omnireach.cloud`; owner approved mandatory account-level ORAP two-step with routine five-minute email codes plus optional TOTP/WebAuthn, retains account recovery codes in encrypted storage, and is the sole initial break-glass approver. Protected GitHub Actions secrets and host-only restricted environment files or Docker/Compose secret mounts are approved.                               | Revised auth implementation in G05 and production bootstrap in G31/G32 |
+| R-003 | Complete: owner-authorized read-only inventory and supplemental runtime/SSH evidence reviewed; no production mutation performed.                                                                                                                                                                                                                                                                                                      | G18 design finalization and all production work                        |
+| R-004 | Complete: owner controls `omnireach.cloud`; the ignored token/account pair resolved exactly one active matching zone in a read-only 2026-10-11 check without logging identifiers. The DNS adapter repeats this fail-closed lookup. Every concrete DNS mutation remains separately approved.                                                                                                                                           | Production DNS in G31/G32                                              |
+| R-005 | Partial: Cloudflare R2 is the proposed production off-server provider with a proposed $5 monthly budget. Owner is sole encryption-key custodian/manual-deletion approver. Least-privilege setup, separate credentials/keys, automated 7-daily/4-weekly upload, cost validation, and a successful real restore remain pending; no spending is authorized.                                                                              | Production backup activation in G29/G31                                |
+| R-006 | Partial: initially operate in Texas, USA. Privacy, cookie-consent, terms, and deletion policies require business-owner review before launch; exact approved policy text, incident notification, and revision-retention rules remain pending.                                                                                                                                                                                          | Real analytics or customer launch in G27/G32                           |
+| R-007 | Partial: use one owner-controlled OmniReach Google Cloud OAuth project and connect each customer's Search Console/GA4 properties individually through authorized accounts. Project ID, redirect URIs, consent-screen status, concrete properties, and access remain pending.                                                                                                                                                          | Live Search Console/GA4 connection in G27/G32                          |
+| R-008 | Planned: Resend free plan with `updates.omnireach.cloud`; alert sender `alerts@updates.omnireach.cloud`; auth sender `auth@updates.omnireach.cloud`; testing recipient `rhajj@omnireach.cloud`; $0 spend, 3 alert retries, dedupe, and ORAP delivery-failure history. Authentication email, including verification codes, remains inactive pending sender verification, provider setup, credentials, limits, and explicit activation. | Production email alerts/authentication in G05/G22/G31                  |
+| R-009 | Partial: optional reusable centralized forms use Resend with selected sender `forms@updates.omnireach.cloud`, verified per-site recipients, 30-day retention except legal/security holds, Turnstile, honeypots, rate limits, and confirmation email off by default. Recipient verification, provider/DNS setup, credentials, explicit activation, and legal consent wording remain pending.                                           | Live contact forms in G31/G32                                          |
+| R-010 | In progress: repository, restricted `omnireach-deploy` identity, verified ED25519 host key, protected `production` environment, main-only deployment policy, and key custody are configured. The owner authorized end-to-end G31 completion on 2026-10-11. The one-time root install, live permission/prechecks, deployment, and rollback evidence remain pending.                                                                    | Production release activation in G31                                   |
+| R-011 | Selected proposal: STARTER $500/2 seats/5 pages/weekly SEO/2 AI cycles; GROWTH $1,000/5/10/daily/8; PRO $1,500/10/20/daily/16; ELITE $2,000/20/30/daily/30. One site/location by default, ORAP configuration/overrides, $5 site AI budget, and 14-day grace apply. Final prices, setup/bespoke fees, definitions, and overage policy remain pending.                                                                                  | Commercial customer onboarding in G32                                  |
+| R-012 | Partial: dedicated project/key is host-configured; owner controls spend. Atomic $5/site and $50 platform caps apply. Candidate aliases map balanced content review to `gpt-6.1-sol` and economy to `gpt-6-luna`; `OPENAI_PROVIDER_ENABLED=false` until representative cost/quality tests and explicit paid-call activation.                                                                                                           | Live OpenAI calls in G25/G32                                           |
+| R-013 | Approved 2026-10-10: 99.5% monthly availability; Sun 02:00–04:00 America/Chicago maintenance; RPO 24h; RTO 8h; critical/noncritical acknowledgment 30m/24h; initial ~10-site capacity.                                                                                                                                                                                                                                                | Release thresholds in G30 and production activation in G31/G32         |
 
 #### R-011 selected subscription proposal
 
@@ -431,60 +434,219 @@ The detailed cases listed under each goal's **Validation tests** are the minimum
 
 ### G05 — Identity, credentials, sessions, password recovery, and platform MFA
 
-**Status:** `complete`
+**Status:** `in progress` — the account-policy, five-minute email-code, assurance-aware
+session, customer email-policy, exact-host session-management, and restricted customer
+recovery foundations are implemented and validated locally. Customer TOTP management,
+WebAuthn/FIDO2, strong owner step-up/break-glass, method-specific durable audit coverage,
+MFA encryption-key rotation, explicit Auth Contract v2 artifact metadata, and the
+reviewed first-transition bridge/forward-recovery runbook remain. The ordinary release
+path now refuses to cross the pre-v2-to-v2 boundary.
+
 **Priority:** P0  
 **Dependencies:** G04  
-**Decision basis / remaining inputs:** D-002, D-003, and D-006 are approved. R-002 is required only for production bootstrap.
+**Decision basis / remaining inputs:** D-002, D-003, and D-006 are approved. R-002
+supplies the owner policy and custody decision. R-008 selects Resend and
+`auth@updates.omnireach.cloud`, but sender verification, credentials, provider limits,
+and activation remain production gates. Local implementation uses a non-delivering test
+adapter and does not wait for Resend activation.
 
 **Requirements**
 
 - Implement secure centralized identities with site-scoped host-only sessions.
-- Require authenticator-app MFA for every ORAP role (Platform Owner, Platform Admin, and Staff) and support secure reset/revocation flows.
-- Never expose stored passwords or recovery tokens.
+- Enforce an account-level two-step policy for Platform Owner, Platform Admin, and Staff;
+  never issue a full ORAP session after password verification alone.
+- Support five-minute, single-use, hash-only email verification codes with atomic attempt
+  and resend limits. Retain TOTP and support WebAuthn/FIDO2 as optional stronger methods.
+- Keep Customer Owner, Customer Editor, and Customer Viewer password-only by default,
+  with voluntary email-code, TOTP, and WebAuthn enrollment and management through an
+  exact-host, tenant-safe customer security settings page.
+- Require recent TOTP/WebAuthn verification for sensitive owner recovery and security
+  changes, or use an explicitly approved, short-lived, single-use, reason-bearing,
+  audited break-glass procedure. Email or an ordinary recovery-code session is not
+  sufficient for those actions.
+- Never expose stored passwords, verification-code hashes, factor secrets, session
+  values, reset tokens, or recovery material.
+- Reserve the canonical ORAP hostname for platform authentication. Customer domain
+  resolution, recovery, security settings, and session issuance must reject it even if a
+  conflicting customer-domain record exists.
+- Revalidate the credential/password-hash state, active membership, exact verified host, account
+  policy, and selected factor while holding database locks immediately before session
+  insertion. Any state change or lock/revalidation failure creates no session.
+- Bind each pending login to a monotonic account authentication-state version and
+  compare that version again during session insertion. Password, account, membership,
+  platform-role, policy, and factor changes must invalidate an outstanding challenge.
 
 **Prerequisites**
 
-- Approved role/action matrix, session architecture, bootstrap, MFA, and recovery design.
+- Approved role/action matrix and ADR 0003's account policy, assurance, exact-host,
+  bootstrap, verification, recovery, and revocation design.
+- A mock/sink authentication-email adapter for local and CI testing; real Resend
+  credentials and activation are not prerequisites.
 
 **Expected files and components**
 
 - `packages/auth/`
 - Auth routes/services in `apps/api/`
 - Auth migrations under `packages/database/`
+- ORAP and customer security settings surfaces
+- Resend verification-message adapter behind `AUTH_EMAIL_DELIVERY_ENABLED=false`
 - `tests/integration/auth/` and security fixtures
 - Security and operations documentation updates
 
 **Implementation tasks**
 
-1. Implement normalized identity uniqueness, Argon2id parameters, password policy, and safe timing behavior.
-2. Add rotating hashed sessions, host-only cookie configuration, expiry, revocation, and device/session listing.
-3. Add rate-limited login and recovery with non-enumerating responses and one-time hashed tokens.
-4. Add authenticator-app MFA enrollment, challenge, recovery codes, and enforcement for all ORAP staff roles.
-5. Implement one-time owner bootstrap without a committed/default credential.
-6. Define the fixed role identifiers Platform Owner, Platform Admin, Staff, Customer Owner, Customer Editor, and Customer Viewer, with deny-by-default action grants rather than role-name shortcuts in business services.
-7. Audit sign-in, failure threshold, reset, MFA, bootstrap, and revocation events without logging secrets.
+1. Preserve normalized identity uniqueness, Argon2id parameters, password policy, dummy
+   verification for missing accounts, and safe timing behavior.
+2. Add an account authentication policy with `required` and `optional` behavior. Backfill
+   every active platform account to required, default customer-only accounts to optional,
+   and enforce that platform membership activation cannot weaken the policy. The stricter
+   policy wins for a global identity with both platform and customer memberships.
+3. Generalize pending authentication challenges by method and exact host. Do not create a
+   session until the selected verified method succeeds. At issuance, lock and revalidate
+   the credential, active membership, exact host, policy, and selected factor so a
+   concurrent password/factor/policy/membership change fails closed. Maintain and bind a
+   monotonic authentication-state version so an ABA change cannot restore a stale
+   challenge, and compare it again in the session transaction.
+4. Add cryptographically random email codes stored only as digests with a five-minute
+   TTL, atomic per-challenge attempt budget, resend cooldown/count, account/network
+   admission limits, old-code invalidation on resend, and challenge invalidation on
+   delivery failure. Derive the recipient and permitted host server-side.
+5. Preserve TOTP and implement WebAuthn/FIDO2 enrollment, authentication, replacement,
+   and revocation with exact RP ID/origin, user verification, one-use challenges,
+   supported algorithms, and counter/credential replay protections.
+6. Move recovery codes to an account-level versioned set. Show plaintext once, require a
+   saved acknowledgment, store only hashes, consume atomically, and revoke/replace the
+   complete prior set after a recovery use. A customer account that has recovery codes
+   but no deliverable email/TOTP method may receive a recovery-only pending challenge;
+   only a valid code may turn it into the existing restricted 15-minute recovery
+   session. Preliminary validation must not consume the code; final consumption,
+   sibling revocation, and restricted-session insertion commit or roll back together.
+   Never provide this ordinary fallback to a platform account.
+7. Persist authentication method, assurance class, and verification time on sessions.
+   Add current-password plus recent TOTP/WebAuthn step-up for sensitive owner security
+   changes, bound to the current session, exact host, and purpose. Implement the approved
+   break-glass path as a separate one-use audited recovery authorization, never a reusable
+   bypass.
+8. Bind password reset and invitation material to the server-resolved identity and exact
+   verified host. Password reset never issues a session, removes required verification,
+   or accepts email as the strong owner recovery proof; completion revokes sessions and
+   outstanding auth challenges. Put password-recovery delivery behind a restricted
+   PostgreSQL outbox so requests never wait on the provider and missing identities never
+   generate decoy mail. Encrypt the short-lived delivery copy, use expiring leases and
+   at most three attempts, persist only non-secret error codes, and erase ciphertext on
+   success, token use/expiry, or terminal failure. The current recovery-token issuance
+   and encrypted outbox enqueue are consecutive transactions, not one atomic
+   transaction; preserve the generic response and safe-retry behavior while this known
+   delivery-gap limitation remains.
+   Apply atomic token-digest and client-network admission limits before Argon2id during
+   invitation acceptance and reset completion. After locking the user, reset and
+   customer security-policy mutation must recheck active platform membership in a fresh
+   statement so concurrent promotion fails closed.
+9. Revise one-time owner bootstrap for the exact ORAP host with bounded attempts,
+   verified selected method, confirmed recovery-code custody, and atomic consumption.
+10. Add customer security settings for voluntary methods and ORAP exact-site customer
+    session listing/revocation. Require reason-bearing audit events without exposing
+    credentials or factor material.
+11. Preserve the fixed roles and deny-by-default action grants. Audit method-specific
+    sign-in, threshold, resend, reset, enrollment, replacement, recovery, bootstrap,
+    step-up, and revocation outcomes without logging secrets.
+12. Keep Resend authentication delivery disabled in every production example until
+    R-008 activation is separately approved; provider unavailability fails closed.
+13. Introduce a versioned MFA encryption-key keyring and tested re-encryption/retirement
+    procedure. The current single `MFA_ENCRYPTION_KEY` cannot be rotated safely and is a
+    production-activation blocker, not an operator rotation procedure.
+14. Complete Auth Contract v2 compatibility handling. The ordinary release target now
+    performs a fail-closed readiness preflight and refuses the first pre-v2-to-v2
+    transition. Add explicit artifact compatibility metadata plus the reviewed bridge
+    and forward-recovery runbook. Once the v2 schema or any v2 authentication state
+    exists, activation and rollback may select only v2-compatible artifacts; use a
+    forward fix or compatible restore rather than a pre-v2 binary.
 
 **Database impact**
 
-- Add credentials, sessions, recovery tokens, MFA factors/recovery material, and auth audit metadata.
-- Store secrets encrypted or irreversibly hashed as appropriate.
+- Preserve credentials and add account authentication policy, method/factor metadata,
+  account-level recovery-code sets, exact-host recovery scope, and session
+  method/assurance/verification metadata.
+- Store email codes, authoritative bearer-token/session values, and recovery codes only
+  as irreversible hashes. The recovery-delivery outbox may hold one purpose-bound
+  encrypted token copy only until delivery or another terminal outcome. Encrypt TOTP
+  secrets and store WebAuthn public credential data; never persist plaintext
+  verification or recovery values.
+- Extend restricted auth-role grants and RLS without granting tenant/application roles
+  ambient access to authentication material.
 
-**Rollback:** Disable new login entry points, revoke sessions, and roll back only before real accounts exist; later schema rollback requires a data-preservation migration.
+**Rollback:** Disable new login entry points and revoke sessions. A pre-v2 artifact may
+be restored only before the v2 schema/state cutoff and before real accounts exist. After
+that cutoff, roll back only to an Auth Contract v2-compatible artifact; otherwise use a
+forward fix or compatible backup restore. Later schema rollback requires a
+data-preservation migration.
 
 **Validation tests**
 
-- Unit tests for hashing, token expiry, cookie flags, and permission predicates.
-- Integration tests for login, logout, global/site revocation, reset reuse, lock/rate limits, and mandatory admin MFA.
-- Security tests for user enumeration, session fixation, CSRF, open redirect, and cookie leakage across unrelated hosts.
+- Unit tests for Argon2id, pre-Argon invitation/reset admission, digest-only code
+  storage, five-minute expiry, atomic attempt and resend limits, old-code invalidation,
+  cookie flags, account policy, assurance, and permission predicates.
+- Integration tests prove password success for a required account creates no cookie;
+  correct email/TOTP/WebAuthn verification creates one session; expired, wrong,
+  replayed, over-attempt, over-resend, wrong-host, and provider-failure cases do not.
+- Race tests prove session issuance locks and revalidates credential, policy,
+  membership, exact-host, factor, and monotonic authentication-version state immediately
+  before insertion; mixed-identity promotion blocks customer reset/security changes;
+  and the canonical ORAP hostname can never resolve as a customer host.
+- Customer tests prove password-only default, verified opt-in/disable/replace flows,
+  tenant-safe security settings, stricter mixed-identity policy, and audited exact-site
+  administrator session revocation.
+- Recovery tests prove privileged reset cannot complete with email alone, reset never
+  creates a session, recovery codes are account-bound and single-use, old sets and
+  sessions/challenges are revoked, customer recovery-only fallback creates at most a
+  restricted 15-minute session, code consumption and restricted-session insertion are
+  atomic, platform accounts cannot use that fallback, and approved break-glass
+  authorization cannot replay.
+- Step-up tests prove email and ordinary recovery assurance cannot authorize sensitive
+  owner security changes; recent session/host/purpose-bound TOTP or WebAuthn can.
+- Security tests cover enumeration, session fixation, CSRF, open redirect, WebAuthn
+  origin/RP/signature/counter failures, cross-host/cross-tenant access, and absence of
+  codes, tokens, credentials, and recovery material from logs, audit JSON, fixtures, and
+  provider error output.
+- Recovery-delivery tests prove the request does not wait on provider I/O; leases recover
+  interrupted work, retries are bounded, provider errors are not retained, and terminal
+  paths erase ciphertext. Fault injection between the consecutive, non-atomic token and
+  outbox transactions proves no session or secret leaks, the response remains generic,
+  and a retry safely replaces/invalidates the undelivered token.
+- Audit tests require durable method-specific events for code issuance/resend/delivery
+  failure/exhaustion, limiter denial, bootstrap, recovery, enrollment/revocation,
+  authentication, and session revocation outcomes without secret material.
+- Compatibility tests reject a pre-v2 activation or rollback after the v2 cutoff, and
+  key-rotation tests prove old and new encrypted records remain readable through a
+  versioned migration and retirement sequence.
+- Regression tests preserve TOTP, host-only cookie, session-revocation, RLS, and current
+  owner-bootstrap safety.
 
 **Definition of done**
 
-- Privileged login requires configured MFA; recovery and revocation are audited and tested.
-- No session cookie is shared across unrelated customer domains, and no secret appears in responses or logs.
+- Every active ORAP account requires a verified second step and no full session exists
+  before it. Customer accounts remain password-only unless their account policy is
+  voluntarily enabled.
+- Email codes satisfy the exact five-minute/hash-only/single-use/attempt/resend contract;
+  TOTP and WebAuthn stronger paths and assurance-aware sensitive-action gates pass.
+- Recovery, break-glass, method management, and account/site/global revocation are
+  audited and tested without an authentication bypass.
+- All required method-specific outcomes are durably auditable, Auth Contract v2 release
+  compatibility fails closed, and a tested MFA encryption-key rotation/retirement
+  procedure exists before production activation.
+- Password-recovery response timing is independent of email-provider latency, no decoy
+  mail is sent, and queued secret material is encrypted, auth-role restricted, and
+  erased on every terminal outcome.
+- No session cookie is shared across unrelated customer domains, no caller chooses an
+  arbitrary tenant/host, and no authentication secret appears in logs, Git, audit
+  records, or ordinary responses. The sole exception is the deliberate one-time,
+  no-store display of newly generated recovery codes to their authenticated owner.
 
 ### G06 — Tenant isolation, verified host resolution, authorization, and RLS
 
-**Status:** `complete`
+**Status:** `in progress` — the original RLS and exact-host isolation evidence remains
+valid, but the revised Auth Contract v2 requires security revalidation before G06 can be
+signed off again.
 **Priority:** P0  
 **Dependencies:** G04, G05  
 **Decision basis / remaining inputs:** D-004 and D-006 are approved. No production input is required for isolated tests.
@@ -493,6 +655,8 @@ The detailed cases listed under each goal's **Validation tests** are the minimum
 
 - Enforce tenant/site isolation in API services, relational constraints, worker context, and PostgreSQL defense-in-depth.
 - Resolve customer context from an exact verified host mapping.
+- Reserve the canonical ORAP hostname from customer resolution and prove authentication
+  session issuance cannot race credential, membership, host, policy, or factor changes.
 
 **Prerequisites**
 
@@ -513,6 +677,8 @@ The detailed cases listed under each goal's **Validation tests** are the minimum
 4. Apply composite keys/constraints and RLS policies to all current site-scoped tables.
 5. Define controlled worker/service roles and prohibit ambient superuser access.
 6. Create a reusable cross-tenant adversarial test harness for future tables and endpoints.
+7. Revalidate role grants, RLS paths, exact-host resolution, and pooled-connection cleanup
+   against the Auth Contract v2 migrations and session-issuance transaction.
 
 **Database impact**
 
@@ -525,11 +691,17 @@ The detailed cases listed under each goal's **Validation tests** are the minimum
 - Site A versus Site B read/write/delete tests at API and direct database-policy layers.
 - Host-header spoofing, unknown host, Unicode/punycode, inactive domain, sister-site membership, and worker payload tests.
 - Connection-pool reuse test proving tenant context cannot leak between requests.
+- Canonical ORAP-host reservation and concurrent credential/membership/domain/policy/factor
+  mutation tests proving session creation fails closed.
+- Direct PostgreSQL privilege tests proving each runtime role has only its documented
+  authentication and tenant access after the v2 migration.
 
 **Definition of done**
 
 - Acceptance scenario A passes for every existing site-scoped resource.
 - Unknown or ambiguous hosts fail closed without revealing another tenant's existence.
+- Auth Contract v2 isolation and role-grant revalidation passes in a real disposable
+  PostgreSQL instance; mocks alone do not restore G06 to `complete`.
 
 ### G07 — ORAP tenant, site, user, and audit administration slice
 
@@ -1740,8 +1912,24 @@ functions. The in-memory ledger is limited to unit tests; it is not a production
 
 **Status:** `in progress`
 **Priority:** P0 production gate  
-**Dependencies:** G16, G18, G19, G29, G30  
-**Decision basis / remaining inputs:** D-001, D-002, D-009, D-012 through D-014, D-016, D-017, and D-021 are approved, and G30's pre-production gate is complete. The owner authorized end-to-end G31 completion on 2026-10-11. R-010 fixes the repository as `OmniReach-Websites/SEO-Automation`, the owner as approver/deploy-key custodian, and the account as `omnireach-deploy`. The SSH host key, GitHub production environment, main-only policy, and encrypted deploy secret are configured. Execution still requires the one-time root bootstrap, live prechecks/rollback evidence, backup readiness, and validation of each DNS/Caddy mutation; paid provider activation and real-customer onboarding remain gated.
+**Dependencies:** G05, G06, G16, G18, G19, G29, G30
+
+**Decision basis / remaining inputs:** D-001, revised D-002, D-009, D-012 through
+D-014, D-016, D-017, and D-021 are approved, and G30's pre-production gate is
+complete. The owner authorized end-to-end G31 completion on 2026-10-11. R-010 fixes the
+repository as `OmniReach-Websites/SEO-Automation`, the owner as
+approver/deploy-key custodian, and the account as `omnireach-deploy`. The SSH host key,
+GitHub production environment, main-only policy, and encrypted deploy secret are
+configured. G31 cannot complete until the reopened G05 authentication revision passes.
+Resend authentication delivery remains inactive until R-008's sender/provider/credential
+checks and explicit activation; the platform must not bypass two-step verification while
+it is inactive. Production authentication also remains gated until versioned MFA
+encryption-key rotation, explicit Auth Contract v2 artifact metadata, and the reviewed
+first-transition bridge/forward-recovery procedure are implemented and tested. The
+ordinary target script already refuses to cross from a running pre-v2 release into v2.
+Execution also requires the one-time owner bootstrap, live
+prechecks/rollback evidence, backup readiness, and validation of each DNS/Caddy mutation;
+paid provider activation and real-customer onboarding remain gated.
 
 **Requirements**
 
@@ -1750,12 +1938,18 @@ functions. The in-memory ledger is limited to unit tests; it is not a production
   sudo or Docker-daemon access.
 - Provision/activate OmniReach production services and routes without replacing shared Caddy, altering Christians Reunite, exposing Postgres/Redis, or onboarding a real customer.
 - Require reviewed checkpoints for credentials, migrations, backup readiness, Caddy validation/reload, activation, health checks, and rollback.
+- Declare an Auth Contract v2 compatibility cutoff. After its schema or state exists,
+  activation and automatic rollback must reject every artifact that does not explicitly
+  declare v2 compatibility.
 
 **Prerequisites**
 
-- G30 release gate is signed off with no critical/high launch blocker.
+- G05's revised account policy, email/TOTP/WebAuthn, recovery, and assurance security
+  suite and G30's release gate are signed off with no critical/high launch blocker.
 - The read-only infrastructure inventory is current, R-series production inputs listed above are supplied through approved secret/config channels, and the owner explicitly authorizes the scheduled activation window.
 - A pre-activation backup and tested rollback target exist.
+- The target and rollback artifacts both declare Auth Contract v2 compatibility, and the
+  versioned MFA encryption-key rotation/retirement drill has passed.
 
 **Expected files and components**
 
@@ -1772,17 +1966,35 @@ functions. The in-memory ledger is limited to unit tests; it is not a production
    SSH host key, and least-privilege GitHub production environment without recording
    secrets in Git. Do not grant unrestricted sudo or Docker-daemon access.
 3. Bind the G19 reusable workflow to protected `main` pushes and a separately permissioned manual recovery action; do not permit branch or pull-request deployment.
-4. Install isolated OmniReach production service definitions, private networks, persistent volumes, health checks, resource caps, and log limits without reusing existing project ownership.
-5. Complete the one-time owner bootstrap through the approved secret channel, require authenticator-app MFA, hand off recovery codes to the designated custodian, and verify session revocation without exposing credentials.
-6. Verify encrypted backup/off-server copy readiness before applying forward-compatible production migrations.
-7. Stage the exact verified artifact, validate the generated Caddy fragment, activate services/routes atomically, and run API/admin/static/contact-form-disabled health checks.
-8. Confirm Christians Reunite and all preexisting Caddy routes before and after activation.
-9. On any failed gate, restore the prior Caddy config/release pointer, stop only the explicitly named OmniReach services, preserve evidence, and alert through approved channels.
-10. Only after the non-root deployment path and emergency recovery are tested, present a
+4. Preserve the implemented fail-closed readiness preflight that refuses the first
+   pre-v2-to-v2 transition. Add explicit release-manifest compatibility metadata, record
+   the cutoff, and implement the reviewed bridge/forward-recovery procedure so
+   activation and rollback reject every pre-v2 artifact after the cutoff.
+5. Install isolated OmniReach production service definitions, private networks, persistent volumes, health checks, resource caps, and log limits without reusing existing project ownership.
+6. Complete the one-time owner bootstrap through the approved secret channel and exact
+   ORAP host. Verify the selected mandatory second step without issuing a pre-verification
+   session, confirm account recovery-code custody, and verify assurance and revocation
+   without exposing credentials. If email is selected, activate it only through the
+   separate R-008 gate; otherwise use a verified TOTP/WebAuthn method. Never bypass the
+   requirement because a provider or authenticator is unavailable.
+7. Prove the versioned MFA encryption-key rotation/reencryption/retirement procedure in
+   an isolated production-equivalent dataset. Do not activate with the current
+   single-key, non-rotatable design.
+8. Verify encrypted backup/off-server copy readiness before applying forward-compatible production migrations.
+9. Stage the exact verified artifact, validate the generated Caddy fragment, activate services/routes atomically, and run API/admin/static/contact-form-disabled health checks.
+10. Confirm Christians Reunite and all preexisting Caddy routes before and after activation.
+11. On any failed gate, restore only a v2-compatible prior release and the prior Caddy
+    config, stop only the explicitly named OmniReach services, preserve evidence, and
+    alert through approved channels.
+12. Only after the non-root deployment path and emergency recovery are tested, present a
     separate owner-authorized SSH-hardening change; do not silently disable root/password access.
 
 **Database impact:** Apply the reviewed baseline/forward-compatible production migrations to the isolated OmniReach database with no real customer records. Record exact migration and release versions.  
-**Rollback:** Restore the prior route/release pointer and stop only OmniReach's explicitly resolved services. Never roll back a schema destructively; use the approved forward-recovery plan and verified backup.
+**Rollback:** Restore the prior route and only an Auth Contract v2-compatible release
+pointer, then stop only OmniReach's explicitly resolved services. After the v2 cutoff,
+the deployment controller must reject a pre-v2 target even if it is the immediately
+prior artifact. Never roll back a schema destructively; use a compatible forward fix or
+the approved recovery plan and verified backup.
 
 **Validation tests**
 
@@ -1790,7 +2002,21 @@ functions. The in-memory ledger is limited to unit tests; it is not a production
 - Permission tests prove `omnireach-deploy` cannot obtain a root shell, unrestricted sudo,
   arbitrary Docker control, or write outside approved release paths.
 - Exact-SHA/checksum, host-key, release-lock, migration-preflight, health, rollback, secret-redaction, and audit-event checks pass.
-- The production owner can sign in only after authenticator-app MFA; bootstrap material is one-time, recovery custody is recorded outside Git, and revocation works.
+- Auth Contract v2 cutoff tests prove activation and automatic/manual rollback fail
+  closed for incompatible artifacts, while an explicitly v2-compatible prior artifact
+  can be restored.
+- The production owner can sign in only after the approved account-level second step;
+  bootstrap material and email codes are one-time, recovery custody is recorded outside
+  Git, session assurance is correct, sensitive owner changes reject email-only
+  assurance, and revocation works. If authentication email is activated, five-minute
+  expiry, attempt/resend limits, sender verification, redaction, and fail-closed provider
+  behavior are proven in production without recording a real code.
+- The canonical ORAP hostname cannot be assigned to or resolved as a customer admin
+  domain; concurrent credential, policy, membership, domain, and factor mutation cannot
+  produce a stale session.
+- Versioned MFA-key rotation/reencryption/retirement succeeds without losing TOTP or
+  pending encrypted delivery records, and durable method-specific auth audit events are
+  queryable without secrets.
 - Public ORAP/static health endpoints work on the supplied domain with correct TLS; unknown/unverified hosts fail closed.
 - Postgres/Redis remain private, urgent-alert email and backup status are verified, and no real contact form is enabled without R-009.
 - Christians Reunite and every inventoried existing Caddy route remain healthy and semantically unchanged.
@@ -1856,7 +2082,8 @@ The following are intentionally outside the V1 critical path and must not be pul
 - Payment-provider automation.
 - SMS/chat alert delivery and non-urgent email notification campaigns beyond the approved urgent-error adapter.
 - Google Business Profile integration.
-- Customer MFA enforcement beyond the supported foundation.
+- Mandatory customer two-step policy beyond the approved voluntary security-settings
+  foundation.
 - S3-compatible media migration after the storage adapter is proven.
 - Worker/hosting separation or CDN migration based on measured load.
 - Custom transactional site adapters, commerce, reservations, or separate application databases.
@@ -1867,40 +2094,46 @@ The following are intentionally outside the V1 critical path and must not be pul
 
 Update this table in the same change that changes a goal status. A goal marked `blocked` must name the unresolved R-ID or other concrete external prerequisite in Notes; approved D-series decisions are constraints, not blockers.
 
-| Goal | Status      | Depends on                   | Notes                                                                                                                                                                  |
-| ---- | ----------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| G01  | complete    | —                            | Architecture/security/operations/contract baseline and 9 ADRs validated 2026-10-10                                                                                     |
-| G02  | complete    | G01                          | Repository/toolchain baseline and validation registry complete; all checks pass                                                                                        |
-| G03  | complete    | G02                          | Branch CI and supply-chain policy validated; remote protection remains owner action                                                                                    |
-| G04  | complete    | G02                          | Loopback Docker stack, 10 idempotent migrations, seed, health, and API verified                                                                                        |
-| G05  | complete    | G04                          | Argon2id auth, staff MFA, recovery, owner bootstrap, sessions, and audit verified                                                                                      |
-| G06  | complete    | G04, G05                     | Direct PostgreSQL RLS attacks, context reset, exact-host resolution, and roles pass                                                                                    |
-| G07  | complete    | G06                          | Agency-operated site/user/invitation/audit APIs and served ORAP shell verified                                                                                         |
-| G08  | complete    | G07                          | Exact plans/grace, seat/page/location locks, schedule admission, AI-cycle quotas, and readiness gates pass                                                             |
-| G09  | complete    | G02, G06                     | Contract schema, hashes, compatibility rules, and three fixtures validate                                                                                              |
-| G10  | complete    | G09                          | Starter plus distinct restaurant/custom sites build and pass static accessibility                                                                                      |
-| G11  | complete    | G06, G09                     | Structured drafts/revisions/facts/proposals, CAS, restore, and protection verified                                                                                     |
-| G12  | complete    | G06, G11                     | Site-isolated validated media storage, routes, and hostile fixtures verified                                                                                           |
-| G13  | complete    | G10, G11, G12                | Reusable centralized forms, contract fields, Turnstile, views, delivery, holds, retention, and artifacts pass                                                          |
-| G14  | complete    | G06, G08, G13                | Exact-host API isolation and real-browser customer/ORAP shell isolation pass                                                                                           |
-| G15  | complete    | G12, G14                     | Bounded controls, optimistic drafts, media, preview, permissions, and E2E pass                                                                                         |
-| G16  | complete    | G13, G15                     | Live DB publish/restore/failure rehearsal preserves immutable rollback trail                                                                                           |
-| G17  | complete    | G08, G14                     | Mock DNS state machine, dry-run/idempotency, takeover/IDN checks, ORAP view pass                                                                                       |
-| G18  | complete    | G13, G14, G17                | R-001/R-003 evidence, isolated exact-host fragment, validation, and non-regression plan pass; activation is G31                                                        |
-| G19  | complete    | G03, G13                     | Inert reusable workflow and isolated checksum/lock/rollback harness pass                                                                                               |
-| G20  | complete    | G04, G06                     | Opaque BullMQ jobs, durable dispatch claims, effect keys, stalled recovery, drain/dead-letter, retention, and RLS pass                                                 |
-| G21  | complete    | G08, G20                     | Atomic site/platform caps, cross-site concurrency, UTC reset, and audited owner/admin controls pass                                                                    |
-| G22  | complete    | G20, G21                     | Durable timezone scheduler, alert/email history, and audited ORAP acknowledge/resolve/cancel/replay controls pass                                                      |
-| G23  | complete    | G13, G20                     | Bounded crawler, robots/query/timeout limits, and redirect/DNS SSRF regressions pass                                                                                   |
-| G24  | complete    | G10, G22, G23                | Versioned deterministic SEO/AIO evidence rules and safe remediation classes pass                                                                                       |
-| G25  | complete    | G11, G21, G24                | Official Responses SDK adapter, typed schema, mocks, redaction, and budget flow pass                                                                                   |
-| G26  | complete    | G16, G25                     | AUTO/SUGGEST/PROTECTED policy, fact corpus, review, and rollback path pass                                                                                             |
-| G27  | complete    | G06, G22                     | OAuth/PKCE/replay/property/token/metric mock foundation passes; live access is R-007                                                                                   |
-| G28  | complete    | G08, G16, G22, G24, G26, G27 | Source/window/freshness/caveat reporting and browser accessibility pass                                                                                                |
-| G29  | complete    | G12, G19, G22                | Encrypted nested-media/off-server copy, retention, corruption, and isolated restore pass                                                                               |
-| G30  | complete    | G19, G21, G26, G28, G29      | Full local gate and isolated ten-site load pass; nine healthy pre-deployment samples recorded; representative live soak moves to G31                                   |
-| G31  | in progress | G16, G18, G19, G29, G30      | Main-only workflow/environment and pinned restricted SSH identity configured; one-time root bootstrap, live release/rollback, backups, Caddy/DNS, and owner MFA remain |
-| G32  | not started | G31                          | Fictional rehearsal and pilot onboarding                                                                                                                               |
+Reopening G06 for the revised authentication contract does not erase the already tested
+artifacts produced by its downstream goals, so those historical implementation scopes
+remain `complete`. It does suspend any production-readiness conclusion that depends on
+the old G06 evidence. G31 therefore depends directly on the reopened G05 and G06 gates,
+and the affected integration/security checks must be rerun before activation.
+
+| Goal | Status      | Depends on                        | Notes                                                                                                                                                                                                                                                  |
+| ---- | ----------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| G01  | complete    | —                                 | Architecture/security/operations/contract baseline and 9 ADRs validated 2026-10-10                                                                                                                                                                     |
+| G02  | complete    | G01                               | Repository/toolchain baseline and validation registry complete; all checks pass                                                                                                                                                                        |
+| G03  | complete    | G02                               | Branch CI and supply-chain policy validated; remote protection remains owner action                                                                                                                                                                    |
+| G04  | complete    | G02                               | Loopback Docker stack, 10 idempotent migrations, seed, health, and API verified                                                                                                                                                                        |
+| G05  | in progress | G04                               | Core account policy/email/recovery/session controls pass locally; customer TOTP, WebAuthn, owner step-up/break-glass, durable method audits, MFA-key rotation, explicit v2 artifact metadata, and the first-transition runbook remain                  |
+| G06  | in progress | G04, G05                          | Prior RLS/context/host evidence remains; Auth Contract v2 role grants, ORAP-host reservation, session issuance races, and live disposable-Postgres isolation require revalidation                                                                      |
+| G07  | complete    | G06                               | Agency-operated site/user/invitation/audit APIs and served ORAP shell verified                                                                                                                                                                         |
+| G08  | complete    | G07                               | Exact plans/grace, seat/page/location locks, schedule admission, AI-cycle quotas, and readiness gates pass                                                                                                                                             |
+| G09  | complete    | G02, G06                          | Contract schema, hashes, compatibility rules, and three fixtures validate                                                                                                                                                                              |
+| G10  | complete    | G09                               | Starter plus distinct restaurant/custom sites build and pass static accessibility                                                                                                                                                                      |
+| G11  | complete    | G06, G09                          | Structured drafts/revisions/facts/proposals, CAS, restore, and protection verified                                                                                                                                                                     |
+| G12  | complete    | G06, G11                          | Site-isolated validated media storage, routes, and hostile fixtures verified                                                                                                                                                                           |
+| G13  | complete    | G10, G11, G12                     | Reusable centralized forms, contract fields, Turnstile, views, delivery, holds, retention, and artifacts pass                                                                                                                                          |
+| G14  | complete    | G06, G08, G13                     | Exact-host API isolation and real-browser customer/ORAP shell isolation pass                                                                                                                                                                           |
+| G15  | complete    | G12, G14                          | Bounded controls, optimistic drafts, media, preview, permissions, and E2E pass                                                                                                                                                                         |
+| G16  | complete    | G13, G15                          | Live DB publish/restore/failure rehearsal preserves immutable rollback trail                                                                                                                                                                           |
+| G17  | complete    | G08, G14                          | Mock DNS state machine, dry-run/idempotency, takeover/IDN checks, ORAP view pass                                                                                                                                                                       |
+| G18  | complete    | G13, G14, G17                     | R-001/R-003 evidence, isolated exact-host fragment, validation, and non-regression plan pass; activation is G31                                                                                                                                        |
+| G19  | complete    | G03, G13                          | Inert reusable workflow and isolated checksum/lock/rollback harness pass                                                                                                                                                                               |
+| G20  | complete    | G04, G06                          | Opaque BullMQ jobs, durable dispatch claims, effect keys, stalled recovery, drain/dead-letter, retention, and RLS pass                                                                                                                                 |
+| G21  | complete    | G08, G20                          | Atomic site/platform caps, cross-site concurrency, UTC reset, and audited owner/admin controls pass                                                                                                                                                    |
+| G22  | complete    | G20, G21                          | Durable timezone scheduler, alert/email history, and audited ORAP acknowledge/resolve/cancel/replay controls pass                                                                                                                                      |
+| G23  | complete    | G13, G20                          | Bounded crawler, robots/query/timeout limits, and redirect/DNS SSRF regressions pass                                                                                                                                                                   |
+| G24  | complete    | G10, G22, G23                     | Versioned deterministic SEO/AIO evidence rules and safe remediation classes pass                                                                                                                                                                       |
+| G25  | complete    | G11, G21, G24                     | Official Responses SDK adapter, typed schema, mocks, redaction, and budget flow pass                                                                                                                                                                   |
+| G26  | complete    | G16, G25                          | AUTO/SUGGEST/PROTECTED policy, fact corpus, review, and rollback path pass                                                                                                                                                                             |
+| G27  | complete    | G06, G22                          | OAuth/PKCE/replay/property/token/metric mock foundation passes; live access is R-007                                                                                                                                                                   |
+| G28  | complete    | G08, G16, G22, G24, G26, G27      | Source/window/freshness/caveat reporting and browser accessibility pass                                                                                                                                                                                |
+| G29  | complete    | G12, G19, G22                     | Encrypted nested-media/off-server copy, retention, corruption, and isolated restore pass                                                                                                                                                               |
+| G30  | complete    | G19, G21, G26, G28, G29           | Full local gate and isolated ten-site load pass; nine healthy pre-deployment samples recorded; representative live soak moves to G31                                                                                                                   |
+| G31  | in progress | G05, G06, G16, G18, G19, G29, G30 | Main-only workflow/environment and pinned restricted SSH identity configured; G05/G06 signoff, v2 metadata/bridge validation, MFA-key rotation, owner bootstrap, live release/rollback, backups, Caddy/DNS, and verified second-step activation remain |
+| G32  | not started | G31                               | Fictional rehearsal and pilot onboarding                                                                                                                                                                                                               |
 
 ## 8. Definition of roadmap completion
 

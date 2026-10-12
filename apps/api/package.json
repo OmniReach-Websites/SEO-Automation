@@ -5,6 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/server.ts",
+    "./auth-rate-limit": "./src/auth-rate-limit.ts",
+    "./client-network": "./src/client-network.ts",
     "./postgres-contact": "./src/postgres-contact.ts",
     "./postgres-orap": "./src/postgres-orap.ts",
     "./redis-auth": "./src/redis-auth.ts"

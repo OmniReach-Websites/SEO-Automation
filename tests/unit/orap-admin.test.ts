@@ -111,6 +111,50 @@ describe('ORAP administration slice', () => {
     ]);
   });
 
+  it('revokes site sessions when a customer role changes', async () => {
+    const audit: AdminAuditEvent[] = [];
+    const before: CustomerMembership = {
+      active: true,
+      id: 'membership-a',
+      role: 'customer_viewer',
+      siteId: 'site-a',
+      tenantId: 'tenant-a',
+      userId: 'user-a',
+    };
+    const after = { ...before, role: 'customer_editor' as const };
+    const revokeUserSiteSessions = vi.fn(async () => 2);
+    const service = new CustomerAccessAdministrationService({
+      transaction: async (operation) =>
+        operation({
+          audit: async (event) => void audit.push(event),
+          changeMembershipRole: vi.fn(async () => ({ after, before })),
+          createInvitation: vi.fn(),
+          disableMembership: vi.fn(),
+          initiatePasswordReset: vi.fn(),
+          revokeUserSiteSessions,
+        }),
+    });
+
+    await expect(
+      service.changeRole(
+        { id: 'staff-a', role: 'staff', traceId: 'trace-role-change' },
+        {
+          membershipId: before.id,
+          reason: 'Approved access adjustment',
+          role: 'customer_editor',
+          siteId: before.siteId,
+        },
+      ),
+    ).resolves.toEqual({ membership: after, revokedSessions: 2 });
+    expect(revokeUserSiteSessions).toHaveBeenCalledWith({ siteId: 'site-a', userId: 'user-a' });
+    expect(audit).toEqual([
+      expect.objectContaining({
+        action: 'membership.role_changed',
+        after: { membership: after, revokedSessions: 2 },
+      }),
+    ]);
+  });
+
   it('normalizes invitations and rejects cross-site membership results', async () => {
     const base: CustomerMembership = {
       active: true,

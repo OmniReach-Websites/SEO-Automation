@@ -91,24 +91,24 @@ Trust boundaries:
 
 ## 4. Component responsibilities
 
-| Component                | Owns                                                                          | Must not own                                                        |
-| ------------------------ | ----------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| `apps/api`               | Validated HTTP contracts, authenticated context, authorization, orchestration | UI state, arbitrary tenant selection, provider secrets in responses |
-| `apps/orap`              | Staff workflows, operations views, audited controls                           | Direct DB/provider access, customer password visibility             |
-| `apps/customer-admin`    | Site-resolved dashboard/editor/proposal UI                                    | Cross-site selection, raw code editing, shared-domain cookies       |
-| `sites/*`                | Custom frontend source, manifest, safe render/build hooks                     | Live editable content, credentials, arbitrary production mutation   |
-| `packages/database`      | Prisma schema, migrations, roles, RLS, constraints                            | Authorization shortcuts based only on IDs supplied by callers       |
-| `packages/auth`          | Credentials, MFA, sessions, reset/revocation                                  | Tenant entitlement decisions                                        |
-| `packages/tenant`        | Tenant/site context, memberships, entitlements, overrides                     | Content rendering or provider calls                                 |
-| `packages/contracts`     | Versioned site manifest and field/component schemas                           | Inference from arbitrary DOM                                        |
-| `packages/content`       | Facts, drafts, revisions, proposals, publication state                        | Source-code edits or direct provider side effects                   |
-| `packages/queue`         | Job schemas, idempotency, retries, locks, opaque BullMQ transport             | Secrets or large content payloads                                   |
-| `packages/ai`            | OpenAI adapter, schemas, prompt/model versions, reservations/usage            | Authorization, fact policy, direct publication                      |
-| `packages/seo-core`      | Deterministic crawl/audit rules and evidence                                  | Ranking guarantees or invented facts                                |
-| `packages/integrations`  | Scoped Cloudflare/Google/email adapters                                       | Global credentials in browsers or logs                              |
-| `packages/observability` | Structured logs, traces, alerts, redaction                                    | Sensitive content by default                                        |
-| `workers/*`              | Bounded execution of registered job types                                     | Ambient superuser access or direct source-tree writes               |
-| `infrastructure/*`       | Isolated compose, routes, release, backup scripts                             | Ownership of shared Caddy/Christians Reunite projects               |
+| Component                | Owns                                                                                          | Must not own                                                        |
+| ------------------------ | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `apps/api`               | Validated HTTP contracts, authenticated context, authorization, orchestration                 | UI state, arbitrary tenant selection, provider secrets in responses |
+| `apps/orap`              | Staff workflows, operations views, audited controls                                           | Direct DB/provider access, customer password visibility             |
+| `apps/customer-admin`    | Site-resolved dashboard/editor/proposal UI                                                    | Cross-site selection, raw code editing, shared-domain cookies       |
+| `sites/*`                | Custom frontend source, manifest, safe render/build hooks                                     | Live editable content, credentials, arbitrary production mutation   |
+| `packages/database`      | Prisma schema, migrations, roles, RLS, constraints                                            | Authorization shortcuts based only on IDs supplied by callers       |
+| `packages/auth`          | Credentials, account auth policy, verification methods, assurance, sessions, reset/revocation | Tenant entitlement decisions                                        |
+| `packages/tenant`        | Tenant/site context, memberships, entitlements, overrides                                     | Content rendering or provider calls                                 |
+| `packages/contracts`     | Versioned site manifest and field/component schemas                                           | Inference from arbitrary DOM                                        |
+| `packages/content`       | Facts, drafts, revisions, proposals, publication state                                        | Source-code edits or direct provider side effects                   |
+| `packages/queue`         | Job schemas, idempotency, retries, locks, opaque BullMQ transport                             | Secrets or large content payloads                                   |
+| `packages/ai`            | OpenAI adapter, schemas, prompt/model versions, reservations/usage                            | Authorization, fact policy, direct publication                      |
+| `packages/seo-core`      | Deterministic crawl/audit rules and evidence                                                  | Ranking guarantees or invented facts                                |
+| `packages/integrations`  | Scoped Cloudflare/Google/email adapters                                                       | Global credentials in browsers or logs                              |
+| `packages/observability` | Structured logs, traces, alerts, redaction                                                    | Sensitive content by default                                        |
+| `workers/*`              | Bounded execution of registered job types                                                     | Ambient superuser access or direct source-tree writes               |
+| `infrastructure/*`       | Isolated compose, routes, release, backup scripts                                             | Ownership of shared Caddy/Christians Reunite projects               |
 
 ## 5. Data ownership and lifecycle
 
@@ -141,7 +141,44 @@ No process writes runtime content to `main`. Optional future sanitized exports u
 ## 6. Identity, tenancy, subscriptions, and policy
 
 - Identities are global; authorization comes from Platform Owner, Platform Admin, Staff, Customer Owner, Customer Editor, or Customer Viewer grants.
-- ORAP staff use authenticator-app MFA. Customer sessions are separate host-only secure sessions for each `admin.<customer-domain>`.
+- Authentication policy is account-level and evaluated with the exact resolved login
+  host and membership. Platform Owner, Platform Admin, and Staff accounts require two
+  steps. Their routine second step may be a five-minute, single-use, hash-only email code
+  with strict atomic attempt and resend limits; no full ORAP session exists before the
+  challenge succeeds.
+- The configured canonical ORAP hostname is a reserved platform identifier. It cannot be
+  assigned to or resolved through a customer domain, including recovery and security
+  settings paths.
+- TOTP remains available and WebAuthn/FIDO2 passkeys are the optional stronger methods.
+  Sensitive owner recovery or security changes require a recent TOTP/WebAuthn step or an
+  explicitly approved, one-time audited break-glass procedure. Email verification and
+  an ordinary recovery-code session do not provide that stronger authorization.
+- Customer Owner, Customer Editor, and Customer Viewer accounts are password-only by
+  default. They may voluntarily enable email-code verification, TOTP, or WebAuthn from
+  tenant-safe security settings. A method is not active until verified, and a customer
+  setting cannot weaken a stricter policy on the same global identity.
+- Sessions record method, assurance, and verification time. Customer sessions remain
+  separate host-only secure sessions for each verified `admin.<customer-domain>`; ORAP
+  session revocation of customer access is exact-site and audited. Session creation
+  locks and revalidates the credential/password-hash state, membership, exact verified
+  host, account policy, and selected factor immediately before insertion. Pending
+  challenges bind a monotonic account authentication-state version that is compared
+  again during session insertion, so password, membership, platform-role, policy, or
+  factor changes invalidate stale challenges and concurrent changes fail closed.
+- Recovery codes are the only ordinary fallback when an eligible customer has no
+  deliverable email/TOTP method: password success may create a recovery-only pending
+  challenge, but only a valid code can create the restricted 15-minute recovery session.
+  Final code consumption, sibling revocation, and restricted-session insertion are one
+  database transaction. Platform accounts never receive this fallback, and customer
+  recovery or security-policy mutation rechecks platform membership after locking the
+  identity so concurrent promotion fails closed.
+- Some method-specific durable audit outcomes—such as issuance/resend failures, limiter
+  denial, delivery exhaustion, bootstrap failure, and method change—remain G05 work.
+  Generic request logs are not the authoritative security audit trail.
+- Login, email issuance, verification, recovery issuance, invitation acceptance, and
+  reset completion use atomic account/token-digest and client-network limits. Invitation
+  and reset-completion admission happens before Argon2id work, limiting unauthenticated
+  CPU and memory amplification across API processes.
 - Customer Owners can publish. Customer Editors can publish only with an explicit site-scoped grant. Customer Viewers are read-only.
 - A tenant may own multiple sites. Each website has exactly one subscription record, independent entitlements/overrides, and one AI budget period.
 - Effective policy order is: nonoverrideable safety rules, platform kill switches, ORAP site overrides, plan defaults, customer field preferences, safe defaults.
@@ -173,7 +210,18 @@ Protected prices, hours, addresses, contact details, legal text, and other mater
 - **OpenAI:** one server-side provider adapter; configurable model aliases; official SDK/Responses API; Structured Outputs where supported; refusal/incomplete handling; no direct side effects. Application policy remains authoritative.
 - **Cloudflare:** DNS record planning/apply/verification only in V1. Domain purchase and renewal are manual and audited.
 - **Search Console/GA4:** OAuth, encrypted token references, least-privilege scopes, exact property mapping, consent, provenance, and not-connected states.
-- **Email:** internal alert adapter sends only policy-defined urgent errors; delivery is deduplicated and audited.
+- **Email:** internal alert delivery sends only policy-defined urgent errors, and the
+  authentication adapter can deliver invitation, recovery, and five-minute verification
+  messages. Authentication delivery is disabled by default until separately activated;
+  failure never bypasses required ORAP verification. Codes and provider credentials are
+  excluded from logs and audit payloads. Password-recovery requests commit a restricted
+  recovery-token record and then enqueue the purpose-bound encrypted, short-lived
+  delivery copy in a second consecutive transaction before a lease-based processor calls
+  the provider. Those two transactions are not atomic: a narrow failure can leave a
+  valid but undelivered token until expiry, while the response remains generic and a
+  retry safely replaces it. Provider latency is outside the request path, failures have
+  bounded retries, terminal records erase ciphertext, and nonexistent identities never
+  generate decoy messages.
 - **Contact forms:** contract-declared fields, verified site/origin, rate limits, abuse hooks, minimal retention, delivery adapter, and no attachments by default.
 
 Production credentials, accounts, hostnames, providers, permissions, legal text, and spending commitments remain R-001 through R-012 in the roadmap.
@@ -189,18 +237,27 @@ Production credentials, accounts, hostnames, providers, permissions, legal text,
 
 Environment names are logical contracts, not evidence that any environment has been provisioned. G19 creates an inert deployment foundation; G31 is the separately authorized production activation.
 
+Auth Contract v2 is a release compatibility boundary, not merely a schema version.
+Applying its schema or writing v2 authentication state establishes the cutoff. From that
+point, deployment and rollback may activate only artifacts that explicitly declare v2
+compatibility; missing or incompatible metadata fails closed. Production authentication
+also remains gated on a versioned keyring and tested rotation/retirement procedure for
+the current single `MFA_ENCRYPTION_KEY`. The ordinary release script already refuses to
+cross from a running pre-v2 release to a v2 artifact; the first bridge/forward-recovery
+runbook and explicit release metadata still require validation before activation.
+
 ## 10. Failure behavior
 
-| Failure                                | Required behavior                                                               |
-| -------------------------------------- | ------------------------------------------------------------------------------- |
-| API/admin unavailable                  | Published public artifacts remain available                                     |
-| Redis/worker unavailable               | Serving continues; durable state remains; jobs recover/dedupe                   |
-| OpenAI unavailable or budget exhausted | Deterministic checks continue; no unsafe publication; alert/status recorded     |
-| Google/Cloudflare/email unavailable    | No fabricated success; retry bounded; public serving unaffected                 |
-| Build/validation/health failure        | Prior artifact remains active; draft/proposal preserved; actionable alert       |
-| Bad code release                       | Automatic prior-pointer rollback; forward-safe DB recovery                      |
-| Backup failure                         | Critical alert; no destructive pruning; production readiness fails              |
-| Caddy/config failure                   | Validation prevents reload or prior config is restored; existing routes checked |
+| Failure                                | Required behavior                                                                                            |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| API/admin unavailable                  | Published public artifacts remain available                                                                  |
+| Redis/worker unavailable               | Serving continues; durable state remains; jobs recover/dedupe                                                |
+| OpenAI unavailable or budget exhausted | Deterministic checks continue; no unsafe publication; alert/status recorded                                  |
+| Google/Cloudflare/email unavailable    | No fabricated success; retry bounded; public serving unaffected                                              |
+| Build/validation/health failure        | Prior artifact remains active; draft/proposal preserved; actionable alert                                    |
+| Bad code release                       | Automatic rollback only to a contract-compatible prior artifact; otherwise forward fix or compatible restore |
+| Backup failure                         | Critical alert; no destructive pruning; production readiness fails                                           |
+| Caddy/config failure                   | Validation prevents reload or prior config is restored; existing routes checked                              |
 
 ## 11. Architecture invariants traceability
 

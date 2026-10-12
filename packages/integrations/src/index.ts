@@ -33,6 +33,11 @@ export {
   type AuthenticationEmailKind,
   type ResendAuthenticationOptions,
 } from './resend-auth.ts';
+export {
+  ResendVerificationCodeNotifier,
+  type ResendVerificationCodeOptions,
+  type VerificationCodeEmailInput,
+} from './resend-verification-code.ts';
 export { ResendUrgentEmailAdapter, type ResendUrgentEmailOptions } from './resend-alert.ts';
 export {
   EncryptedTokenVault,

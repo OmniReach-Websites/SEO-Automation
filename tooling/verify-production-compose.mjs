@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { cp, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -113,6 +113,11 @@ try {
   );
 
   await cp(environmentExample, environmentFile);
+  const fixtureEnvironment = (await readFile(environmentFile, 'utf8')).replace(
+    /^TRUSTED_PROXY_CIDRS=.*$/mu,
+    'TRUSTED_PROXY_CIDRS=127.0.0.1/32',
+  );
+  await writeFile(environmentFile, fixtureEnvironment, { encoding: 'utf8', mode: 0o600 });
   const rendered = dockerCompose(['config', '--format', 'json'], { capture: true });
   const configuration = JSON.parse(rendered.stdout);
   assert.equal(configuration.networks.backend.internal, true);
@@ -257,6 +262,7 @@ try {
   assert.ok(readiness, 'API readiness endpoint did not respond');
   assert.equal(readiness.status, 200);
   assert.deepEqual(await readiness.json(), {
+    authContract: 2,
     dependencies: ['postgres', 'redis'],
     status: 'ready',
   });

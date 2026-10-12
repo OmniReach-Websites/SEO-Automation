@@ -1,6 +1,8 @@
 # Production Compose and Datastore Runbook
 
-**Status:** Production release automation implemented; activation still requires an authorized change
+**Status:** Production Compose/release foundation implemented; authentication activation
+is not ready and still requires the documented compatibility, key-rotation, security,
+and authorized-change gates
 **Authority:** The owner authorized production completion on 2026-10-11. Provider spending
 and destructive backup operations remain separately controlled by their documented gates.
 
@@ -55,10 +57,20 @@ general sudo.
 1. Re-run the read-only inventory and verify available CPU, RAM, disk, ports, Docker
    version, Christians Reunite health, and shared Caddy state.
 2. Verify the exact release SHA and archive checksum. Extract only into the new immutable
-   release directory; never update an active checkout.
+   release directory; never update an active checkout. Verify that both the candidate and
+   rollback release manifests explicitly declare Auth Contract v2 compatibility before
+   applying the v2 schema or writing v2 authentication state. Missing or older metadata
+   fails closed after that cutoff.
 3. Create `/opt/servers/omnireach/shared/config/production.env` from
    `infrastructure/compose/production.env.example`. Keep providers disabled and do not
-   place passwords or tokens in that file.
+   place passwords or tokens in that file. Populate `TRUSTED_PROXY_CIDRS` only after a
+   read-only network inspection identifies the exact Caddy peer address/CIDR. If
+   Cloudflare remains proxied, also verify that Caddy accepts forwarding data only from
+   current Cloudflare source ranges and include those verified intermediate ranges so
+   the API can walk the chain from right to left. Do not use `private_ranges` or a whole
+   Docker subnet merely for convenience.
+   Production configuration validation fails closed while this value is empty or
+   malformed; the blank repository example is intentional and is not deployable as-is.
 4. Generate internal credentials directly on the host without displaying them:
 
    ```bash
@@ -95,8 +107,18 @@ general sudo.
 8. Verify PostgreSQL/Redis have no host port, the API is loopback-only, readiness returns
    `200`, migrations completed, the restricted role is not privileged, Redis rejects
    unauthenticated/admin commands, persistent volumes are attached, and no secret appears
-   in logs or container configuration.
+   in logs or container configuration. From an external test client, prove two distinct
+   client networks produce distinct authentication limiter buckets, and prove a direct
+   or untrusted peer cannot select its bucket with a forged `X-Forwarded-For` header.
+   Also prove the canonical ORAP hostname cannot resolve as a customer host and that
+   concurrent credential, membership, domain, policy, or factor changes prevent stale
+   session issuance.
 9. Continue to Caddy or DNS integration only under their separate explicit approvals.
+
+Do not activate production authentication with the current single
+`MFA_ENCRYPTION_KEY`. Versioned key selection, re-encryption, retirement, recovery, and
+rollback must first be implemented and proven in an isolated production-equivalent
+rotation drill. Local bootstrap generation of that file is not rotation support.
 
 The runtime entrypoint reads mounted files and constructs these values inside the API or
 worker process:
@@ -151,6 +173,21 @@ official image consumes bootstrap values only for an empty data directory.
    regenerates the ACL with only the current password, removing the prior credential.
 5. Verify unauthenticated, prior-password, and prohibited administrative commands fail.
 
+### MFA encryption key — rotation not yet supported
+
+The `mfa_encryption_key` secret backs persistent TOTP secrets and domain-separated
+encrypted password-recovery delivery payloads. Those records currently carry only the
+single version-1 key contract; there is no deployed keyring, bulk re-encryption process,
+or safe retirement procedure. Do not replace, delete, or regenerate this file on an
+initialized environment. Doing so can make existing TOTP factors and queued recovery
+deliveries unreadable.
+
+Production authentication activation remains blocked until G05 provides versioned
+decrypt/read support, new-key writes, controlled re-encryption, old-key retirement,
+failure recovery, and tests covering records created under both keys. Rotation must then
+run under the deployment lock and an owner-approved maintenance record without printing
+key material.
+
 ## Backups
 
 The persistent sources are:
@@ -182,10 +219,15 @@ isolated restore have passed. Manual deletion still requires owner authorization
    authoritative PostgreSQL job records.
 4. Run forward-compatible migrations, role provisioning, and application readiness.
 5. Verify schema/reference counts, RLS isolation, one published site, media hashes,
-   authentication, Redis ACL denial, and release/schema compatibility.
+   authentication, Redis ACL denial, and release/schema/Auth Contract v2 compatibility.
 6. Activate the restored release/volumes only after owner approval and a rollback point.
 7. Record RPO/RTO, checksums, release identity, validation evidence, and any data loss.
 
 `npm run verify:production-compose` performs the corresponding local destructive/restart
 exercise only against its unique ephemeral test project. It is intentionally not a
 production restoration test.
+
+After the Auth Contract v2 cutoff, a recovered database may be activated only with a
+v2-compatible artifact. A backup containing v2 schema/state does not make a pre-v2
+binary safe. If the prior pointer is incompatible, use a v2-compatible forward fix or
+restore pair and keep authentication closed until validation passes.

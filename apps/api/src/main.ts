@@ -4,7 +4,9 @@ import { resolve } from 'node:path';
 import {
   AuthenticationService,
   PostgresAuthenticationRepository,
+  PostgresPasswordRecoveryOutbox,
   type AuthenticationTransactionPool,
+  type PasswordRecoveryOutboxPool,
 } from '@omnireach/auth';
 import { createDatabase } from '@omnireach/database';
 import {
@@ -19,6 +21,7 @@ import {
   MockTurnstileVerifier,
   ResendAuthenticationNotifier,
   ResendContactDelivery,
+  ResendVerificationCodeNotifier,
 } from '@omnireach/integrations';
 import { parseConfig, redactConfig } from '@omnireach/shared';
 import type { TenantTransactionPool } from '@omnireach/tenant';
@@ -28,10 +31,13 @@ import { createClient } from 'redis';
 import {
   LocalRedisPasswordRecoveryNotifier,
   LocalRedisInvitationNotifier,
+  RedisEmailCodeChallengeStore,
   RedisMfaChallengeStore,
   RedisOwnerBootstrapPendingStore,
   type AuthRedisClient,
+  type EmailCodeRedisClient,
 } from './redis-auth.ts';
+import { RedisAuthenticationRateLimiter } from './auth-rate-limit.ts';
 import {
   buildApiServer,
   PostgresCustomerService,
@@ -50,21 +56,37 @@ const authRepository = new PostgresAuthenticationRepository(
   config.ORAP_HOSTNAME,
 );
 const redisAuth = redis as unknown as AuthRedisClient;
+const redisEmailCodes = redis as unknown as EmailCodeRedisClient;
 const tenantPool = database.pool as unknown as TenantTransactionPool;
-const recoveryNotifier = config.AUTH_EMAIL_DELIVERY_ENABLED
+const recoveryDelivery = config.AUTH_EMAIL_DELIVERY_ENABLED
   ? new ResendAuthenticationNotifier({
       apiKey: config.RESEND_API_KEY ?? '',
       from: config.RESEND_AUTH_FROM ?? '',
       kind: 'password-recovery',
     })
   : new LocalRedisPasswordRecoveryNotifier(redisAuth, config.OMNIREACH_ENV);
+const verificationNotifier = config.AUTH_EMAIL_DELIVERY_ENABLED
+  ? new ResendVerificationCodeNotifier({
+      apiKey: config.RESEND_API_KEY ?? '',
+      from: config.RESEND_AUTH_FROM ?? '',
+    })
+  : undefined;
+const recoveryOutbox = new PostgresPasswordRecoveryOutbox(
+  database.pool as unknown as PasswordRecoveryOutboxPool,
+  recoveryDelivery,
+  config.MFA_ENCRYPTION_KEY,
+);
 const authService = new AuthenticationService(
   authRepository,
   new RedisMfaChallengeStore(redisAuth),
-  recoveryNotifier,
+  recoveryOutbox,
   {
+    attemptLimiter: new RedisAuthenticationRateLimiter(redisEmailCodes, config.SESSION_SECRET),
+    emailCodeStore: new RedisEmailCodeChallengeStore(redisEmailCodes),
     mfaEncryptionKey: config.MFA_ENCRYPTION_KEY,
+    orapHostname: config.ORAP_HOSTNAME,
     ownerBootstrapStore: new RedisOwnerBootstrapPendingStore(redisAuth),
+    ...(verificationNotifier ? { verificationNotifier } : {}),
   },
 );
 const requestContext = new PostgresRequestContextResolver(
@@ -155,11 +177,13 @@ const server = buildApiServer({
   resolveCustomerPrincipal: (request) => requestContext.customer(request),
   resolveContactSite: (request) => requestContext.contact(request),
   resolvePlatformActor: (request) => requestContext.platform(request),
+  trustedProxyCidrs: config.TRUSTED_PROXY_CIDRS,
 });
 
 async function shutdown(signal: string): Promise<void> {
   server.log.info({ signal }, 'Shutting down API');
   await server.close();
+  await recoveryOutbox.stop();
   if (redis.isOpen) await redis.quit();
   await database.close();
 }
@@ -170,6 +194,9 @@ process.once('SIGTERM', () => void shutdown('SIGTERM'));
 try {
   await redis.connect();
   await server.listen({ host: config.API_HOST, port: config.API_PORT });
+  recoveryOutbox.start(() =>
+    server.log.error('Password-recovery outbox processing failed; delivery remains queued'),
+  );
   server.log.info({ config: redactConfig(config) }, 'API started');
 } catch (error) {
   server.log.fatal({ error }, 'API startup failed');

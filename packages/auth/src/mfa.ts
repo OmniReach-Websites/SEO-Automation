@@ -11,6 +11,11 @@ export interface MfaEnrollment {
   uri: string;
 }
 
+export interface RecoveryCodeSet {
+  recoveryCodes: string[];
+  recoveryDigests: string[];
+}
+
 export function createMfaEnrollment(label: string, issuer = 'OmniReach'): MfaEnrollment {
   const secret = new OTPAuth.Secret({ size: 20 });
   const totp = new OTPAuth.TOTP({
@@ -21,6 +26,16 @@ export function createMfaEnrollment(label: string, issuer = 'OmniReach'): MfaEnr
     period: 30,
     secret,
   });
+  const { recoveryCodes, recoveryDigests } = createRecoveryCodes();
+  return {
+    recoveryCodes,
+    recoveryDigests,
+    secret: secret.base32,
+    uri: totp.toString(),
+  };
+}
+
+export function createRecoveryCodes(): RecoveryCodeSet {
   const recoveryCodes = Array.from({ length: 10 }, () => {
     const value = randomBytes(8).toString('hex').toUpperCase();
     return `${value.slice(0, 4)}-${value.slice(4, 8)}-${value.slice(8, 12)}-${value.slice(12)}`;
@@ -28,12 +43,18 @@ export function createMfaEnrollment(label: string, issuer = 'OmniReach'): MfaEnr
   return {
     recoveryCodes,
     recoveryDigests: recoveryCodes.map(digestToken),
-    secret: secret.base32,
-    uri: totp.toString(),
   };
 }
 
 export function verifyTotp(secret: string, token: string, timestamp = Date.now()): boolean {
+  return verifyTotpCounter(secret, token, timestamp) !== undefined;
+}
+
+export function verifyTotpCounter(
+  secret: string,
+  token: string,
+  timestamp = Date.now(),
+): number | undefined {
   const totp = new OTPAuth.TOTP({
     algorithm: 'SHA1',
     digits: 6,
@@ -42,5 +63,6 @@ export function verifyTotp(secret: string, token: string, timestamp = Date.now()
     period: 30,
     secret: OTPAuth.Secret.fromBase32(secret),
   });
-  return totp.validate({ timestamp, token, window: 1 }) !== null;
+  const delta = totp.validate({ timestamp, token, window: 1 });
+  return delta === null ? undefined : Math.floor(timestamp / 30_000) + delta;
 }

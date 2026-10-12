@@ -9,14 +9,16 @@ datasource db {
 }
 
 model User {
-  id                 String              @id @default(uuid()) @db.Uuid
-  normalizedEmail    String              @unique @map("normalized_email") @db.VarChar(320)
-  displayName        String              @map("display_name") @db.VarChar(160)
-  status             String              @default("active") @db.VarChar(32)
-  createdAt          DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt          DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
-  memberships        Membership[]
-  platformMembership PlatformMembership?
+  id                   String                       @id @default(uuid()) @db.Uuid
+  normalizedEmail      String                       @unique @map("normalized_email") @db.VarChar(320)
+  displayName          String                       @map("display_name") @db.VarChar(160)
+  status               String                       @default("active") @db.VarChar(32)
+  createdAt            DateTime                     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime                     @updatedAt @map("updated_at") @db.Timestamptz(3)
+  memberships          Membership[]
+  platformMembership   PlatformMembership?
+  authenticationPolicy AccountAuthenticationPolicy?
+  accountRecoveryCodes AccountRecoveryCode[]
 
   @@map("users")
 }
@@ -176,18 +178,22 @@ model Credential {
 }
 
 model Session {
-  id            String    @id @default(uuid()) @db.Uuid
-  userId        String    @map("user_id") @db.Uuid
-  tenantId      String?   @map("tenant_id") @db.Uuid
-  siteId        String?   @map("site_id") @db.Uuid
-  host          String    @db.VarChar(253)
-  tokenHash     String    @unique @map("token_hash") @db.Char(64)
-  rotatedFromId String?   @map("rotated_from_id") @db.Uuid
-  expiresAt     DateTime  @map("expires_at") @db.Timestamptz(3)
-  lastSeenAt    DateTime  @default(now()) @map("last_seen_at") @db.Timestamptz(3)
-  revokedAt     DateTime? @map("revoked_at") @db.Timestamptz(3)
-  revokeReason  String?   @map("revoke_reason") @db.VarChar(160)
-  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  id                      String    @id @default(uuid()) @db.Uuid
+  userId                  String    @map("user_id") @db.Uuid
+  tenantId                String?   @map("tenant_id") @db.Uuid
+  siteId                  String?   @map("site_id") @db.Uuid
+  host                    String    @db.VarChar(253)
+  tokenHash               String    @unique @map("token_hash") @db.Char(64)
+  rotatedFromId           String?   @map("rotated_from_id") @db.Uuid
+  authenticationMethod    String    @default("password") @map("authentication_method") @db.VarChar(32)
+  authenticationAssurance String    @default("basic") @map("authentication_assurance") @db.VarChar(16)
+  verifiedAt              DateTime? @map("verified_at") @db.Timestamptz(3)
+  recoveryRestricted      Boolean   @default(false) @map("recovery_restricted")
+  expiresAt               DateTime  @map("expires_at") @db.Timestamptz(3)
+  lastSeenAt              DateTime  @default(now()) @map("last_seen_at") @db.Timestamptz(3)
+  revokedAt               DateTime? @map("revoked_at") @db.Timestamptz(3)
+  revokeReason            String?   @map("revoke_reason") @db.VarChar(160)
+  createdAt               DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
 
   @@index([userId, expiresAt])
   @@index([tenantId, siteId, expiresAt])
@@ -197,6 +203,7 @@ model Session {
 model PasswordRecoveryToken {
   id              String    @id @default(uuid()) @db.Uuid
   userId          String    @map("user_id") @db.Uuid
+  host            String?   @db.VarChar(253)
   tokenHash       String    @unique @map("token_hash") @db.Char(64)
   expiresAt       DateTime  @map("expires_at") @db.Timestamptz(3)
   usedAt          DateTime? @map("used_at") @db.Timestamptz(3)
@@ -207,15 +214,34 @@ model PasswordRecoveryToken {
   @@map("password_recovery_tokens")
 }
 
+model PasswordRecoveryDeliveryOutbox {
+  id                   String    @id @default(uuid()) @db.Uuid
+  recoveryTokenId      String    @unique @map("recovery_token_id") @db.Uuid
+  encryptedToken       Bytes?    @map("encrypted_token")
+  encryptionKeyVersion Int       @default(1) @map("encryption_key_version")
+  status               String    @default("queued") @db.VarChar(24)
+  attempts             Int       @default(0)
+  availableAt          DateTime  @default(now()) @map("available_at") @db.Timestamptz(3)
+  lockedUntil          DateTime? @map("locked_until") @db.Timestamptz(3)
+  lastErrorCode        String?   @map("last_error_code") @db.VarChar(64)
+  deliveredAt          DateTime? @map("delivered_at") @db.Timestamptz(3)
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("password_recovery_delivery_outbox")
+}
+
 model MfaFactor {
-  id              String    @id @default(uuid()) @db.Uuid
-  userId          String    @map("user_id") @db.Uuid
-  kind            String    @db.VarChar(32)
-  encryptedSecret Bytes     @map("encrypted_secret")
-  keyVersion      Int       @map("key_version")
-  verifiedAt      DateTime? @map("verified_at") @db.Timestamptz(3)
-  revokedAt       DateTime? @map("revoked_at") @db.Timestamptz(3)
-  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  id                   String                @id @default(uuid()) @db.Uuid
+  userId               String                @map("user_id") @db.Uuid
+  kind                 String                @db.VarChar(32)
+  encryptedSecret      Bytes                 @map("encrypted_secret")
+  keyVersion           Int                   @map("key_version")
+  lastUsedCounter      BigInt?               @map("last_used_counter")
+  verifiedAt           DateTime?             @map("verified_at") @db.Timestamptz(3)
+  revokedAt            DateTime?             @map("revoked_at") @db.Timestamptz(3)
+  createdAt            DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  accountRecoveryCodes AccountRecoveryCode[]
 
   @@map("mfa_factors")
 }
@@ -228,6 +254,36 @@ model MfaRecoveryCode {
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
 
   @@map("mfa_recovery_codes")
+}
+
+model AccountAuthenticationPolicy {
+  userId                String   @id @map("user_id") @db.Uuid
+  authStateVersion      BigInt   @default(1) @map("auth_state_version")
+  secondStepRequirement String   @default("optional") @map("second_step_requirement") @db.VarChar(16)
+  emailCodeEnabled      Boolean  @default(false) @map("email_code_enabled")
+  preferredMethod       String?  @map("preferred_method") @db.VarChar(32)
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("account_authentication_policies")
+}
+
+model AccountRecoveryCode {
+  id             String     @id @default(uuid()) @db.Uuid
+  userId         String     @map("user_id") @db.Uuid
+  setVersion     Int        @default(1) @map("set_version")
+  codeHash       String     @unique @map("code_hash") @db.Char(64)
+  sourceFactorId String?    @map("source_factor_id") @db.Uuid
+  usedAt         DateTime?  @map("used_at") @db.Timestamptz(3)
+  revokedAt      DateTime?  @map("revoked_at") @db.Timestamptz(3)
+  createdAt      DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  user           User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sourceFactor   MfaFactor? @relation(fields: [sourceFactorId], references: [id], onDelete: SetNull)
+
+  @@index([userId, setVersion, createdAt])
+  @@index([sourceFactorId])
+  @@map("account_recovery_codes")
 }
 
 model OwnerBootstrap {

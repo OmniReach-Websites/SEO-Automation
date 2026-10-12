@@ -241,23 +241,43 @@ gates.
 Preconditions:
 
 - G30 release gate signed off.
+- G05 and the reopened G06 Auth Contract v2 revalidation signed off. Current local
+  foundations do not satisfy this production precondition.
 - R-001 through R-005, R-008, and R-010 supplied as applicable.
 - Current read-only inventory reviewed for drift and headroom.
 - Latest backup/off-server copy verified and rollback target healthy.
 - Protected `main`, required reviews/checks, production environment approvers, scoped non-root SSH identity, and host key verified.
 - Caddy fragment validates; exact prior config/release pointers recorded.
+- The exact Caddy-to-API peer CIDR and every trusted upstream proxy CIDR are recorded in
+  `TRUSTED_PROXY_CIDRS`. If Cloudflare proxying is active, Caddy accepts forwarding data
+  only from verified Cloudflare ranges. Empty, broad-private, or guessed proxy trust
+  configuration blocks authentication activation.
+- The candidate and rollback artifacts explicitly declare Auth Contract v2
+  compatibility. The compatibility cutoff is recorded, and the preflight rejects a
+  missing/older contract after the v2 schema or state exists.
+- A versioned MFA encryption-key keyring, re-encryption/retirement procedure, and
+  isolated rotation drill have passed. The current single-key implementation is not
+  rotatable and blocks production authentication activation.
+- `admin.omnireach.cloud` (or the configured canonical ORAP hostname) is reserved and
+  absent from all customer-domain mappings.
 
 Sequence:
 
 1. Resolve and record exact commit SHA, workflow run, artifact hash, release ID, actor, and change scope.
 2. Acquire deployment lock; reject or queue overlap.
-3. Verify SHA/ancestry, checksums, manifest, target paths, and migration compatibility.
+3. Verify SHA/ancestry, checksums, manifest, target paths, migration compatibility, and
+   Auth Contract v2 compatibility for both the candidate and rollback artifact. Fail
+   closed if either target is incompatible after the cutoff.
 4. Stage to a new versioned release path; do not edit the active checkout/path.
 5. Run service and static artifact health checks before switching.
 6. Validate the additive Caddy fragment in the actual supported configuration context.
 7. Apply forward-compatible migrations under the approved backup/compatibility plan.
 8. Atomically switch the release and minimally reload/import Caddy as reviewed.
-9. Check ORAP/API/customer-admin/static pages, TLS/headers, Postgres/Redis privacy, queue/worker health, backup/alert state, and unknown-host rejection.
+9. Check ORAP/API/customer-admin/static pages, TLS/headers, Postgres/Redis privacy,
+   queue/worker health, backup/alert state, unknown-host rejection, distinct external
+   client-network limiter buckets, and rejection of forged forwarding headers from an
+   untrusted peer. Verify the canonical ORAP hostname cannot resolve as a customer host
+   and stale credential/policy/membership/domain/factor state cannot issue a session.
 10. Check every inventoried Christians Reunite service and existing route.
 11. Record success or execute rollback; release lock only after terminal state.
 
@@ -269,7 +289,9 @@ Rollback triggers include failed build verification, migration compatibility, se
 
 1. Stop new publishes/deploys at the narrowest scope.
 2. Keep the deployment lock.
-3. Restore the exact prior release/artifact pointer.
+3. Restore the exact prior release/artifact pointer only if it declares compatibility
+   with the active Auth Contract v2 cutoff. If it does not, keep authentication traffic
+   closed and use a compatible forward fix or restore; never start the pre-v2 artifact.
 4. Restore the prior validated Caddy config/import if it changed.
 5. Restart/reload only explicitly named OmniReach/Caddy targets under the reviewed procedure.
 6. Re-run platform, public-site, and Christians Reunite checks.
@@ -333,9 +355,35 @@ Production email paths are fail-closed and disabled by default. Contact delivery
 `AUTH_EMAIL_DELIVERY_ENABLED`; urgent alerts use `ALERT_EMAIL_DELIVERY_ENABLED`. Enabling
 a path requires `RESEND_API_KEY` plus its verified sender/recipient configuration.
 Authentication emails use the database-resolved exact customer admin hostname and
-time-limited one-time tokens; request URLs are redacted from application logs. Terminal
-urgent-email failure is recorded against the incident and never propagates into public
-website availability.
+time-limited one-time tokens; request URLs are redacted from application logs.
+Password-recovery delivery is queued in the restricted PostgreSQL outbox before the
+provider is called, but recovery-token issuance and encrypted outbox enqueue currently
+commit as two consecutive, non-atomic transactions. A process/database failure between
+them can leave a valid token with no delivery row until expiry. The caller still receives
+the generic response; do not reveal whether this occurred. A retry safely issues a new
+token and invalidates/replaces the earlier one. Token issuance serializes on the
+identity and rechecks exact-host customer eligibility after taking that lock, so
+simultaneous requests leave only the newest token active. The API processor uses
+expiring leases, retries at most three times with exponential backoff, and stores only
+fixed non-secret failure codes. The encrypted delivery token is erased on success,
+token use/expiry, or terminal failure. Inspect outbox status and error codes, never
+ciphertext or provider request bodies, when diagnosing delivery. Terminal urgent-email
+failure is recorded against the incident and never propagates into public website
+availability.
+
+Authentication transactions retry PostgreSQL deadlock (`40P01`) and serialization
+(`40001`) failures at most three times as complete transactions. Customer recovery-code
+claims also serialize on the account identity before locking the active code set and
+authentication policy. If retries are exhausted, the request fails closed: no recovery
+code consumption, sibling revocation, or session insertion is committed. Investigate
+repeated exhaustion as a database-contention incident without logging credentials,
+codes, tokens, or query parameter values.
+
+Method-specific durable authentication audit coverage is not complete. Until G05 adds
+and tests non-secret events for code issuance/resend, limiter denial, delivery
+failure/exhaustion, bootstrap, recovery, method changes, and revocation, operators must
+not treat generic HTTP/application logs as equivalent evidence or mark the production
+authentication gate complete.
 
 ## 9. Emergency procedures
 
@@ -367,7 +415,11 @@ Retention is configurable and respects active incidents, legal/site holds, custo
 
 ## 11. Human review points
 
-Human approval is mandatory for production credentials, external account connection, domain purchase/DNS mutation, Caddy reload, first migration, production activation, destructive schema/data changes, backup key/provider changes, customer/legal policy, contact-form destination, plan/pricing/grace policy, and real pilot onboarding.
+Human approval is mandatory for production credentials, external account connection,
+domain purchase/DNS mutation, Caddy reload, first migration, production activation,
+destructive schema/data changes, backup key/provider changes, MFA key
+rotation/retirement, customer/legal policy, contact-form destination,
+plan/pricing/grace policy, and real pilot onboarding.
 
 ## 12. Completion evidence by goal
 

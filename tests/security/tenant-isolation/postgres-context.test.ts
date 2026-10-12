@@ -17,6 +17,9 @@ function contextPool(rows: Record<string, unknown>[]) {
   const query = vi.fn(async (text: string, values?: unknown[]) => {
     void values;
     if (text.trimStart().startsWith('SELECT s.user_id')) return { rows };
+    if (text.trimStart().startsWith('UPDATE sessions')) {
+      return { rows: rows.length === 1 ? [{ id: 'session-a' }] : [] };
+    }
     return { rows: [] };
   });
   return {
@@ -47,15 +50,25 @@ describe('PostgreSQL-backed request context', () => {
       traceId: 'trace-context-0001',
       userId: 'user-a',
     });
-    expect(query.mock.calls.slice(0, 2).map(([text]) => text)).toEqual([
+    expect(query.mock.calls.slice(0, 3).map(([text]) => text)).toEqual([
       'BEGIN',
       'SET LOCAL ROLE omnireach_auth',
+      `SELECT set_config('app.authentication_contract_version', '2', true)`,
     ]);
-    const values = query.mock.calls[2]?.[1];
+    const values = query.mock.calls[3]?.[1];
     expect(values).toEqual([
       createHash('sha256').update('fictional-session').digest('hex'),
       'admin.alpha.test',
     ]);
+    const contextSql = String(query.mock.calls[3]?.[0]);
+    expect(contextSql).toContain('account_authentication_policies');
+    expect(contextSql).toContain("authentication_assurance IN ('baseline', 'strong')");
+    expect(contextSql).toContain('s.verified_at IS NOT NULL');
+    expect(contextSql).toContain("s.last_seen_at > now() - interval '30 minutes'");
+    const refreshSql = String(query.mock.calls[4]?.[0]);
+    expect(refreshSql).toContain('SET last_seen_at = now()');
+    expect(refreshSql).toContain('token_hash = $1 AND host = $2');
+    expect(refreshSql).toContain("last_seen_at > now() - interval '30 minutes'");
     expect(JSON.stringify(query.mock.calls)).not.toContain('fictional-session"');
   });
 
@@ -67,12 +80,15 @@ describe('PostgreSQL-backed request context', () => {
       tenant_id: 'tenant-a',
       user_id: 'user-a',
     };
-    const { pool: customerPool } = contextPool([duplicate, duplicate]);
+    const { pool: customerPool, query: customerQuery } = contextPool([duplicate, duplicate]);
     await expect(
       new PostgresRequestContextResolver(customerPool, 'admin.omnireach.test').customer(
         request('admin.alpha.test'),
       ),
     ).resolves.toBeUndefined();
+    expect(
+      customerQuery.mock.calls.some(([sql]) => String(sql).includes('SET last_seen_at = now()')),
+    ).toBe(false);
 
     const { pool: platformPool, query: platformQuery } = contextPool([]);
     const resolver = new PostgresRequestContextResolver(platformPool, 'admin.omnireach.test');
@@ -81,12 +97,18 @@ describe('PostgreSQL-backed request context', () => {
   });
 
   it('resolves active global platform membership only on the configured ORAP host', async () => {
-    const { pool } = contextPool([{ role: 'platform_admin', user_id: 'staff-a' }]);
+    const { pool, query } = contextPool([{ role: 'platform_admin', user_id: 'staff-a' }]);
     const resolver = new PostgresRequestContextResolver(pool, 'ADMIN.OMNIREACH.TEST');
     await expect(resolver.platform(request('admin.omnireach.test'))).resolves.toEqual({
       id: 'staff-a',
       role: 'platform_admin',
       traceId: 'trace-context-0001',
     });
+    const contextSql = String(query.mock.calls[3]?.[0]);
+    expect(contextSql).toContain("s.authentication_assurance IN ('baseline', 'strong')");
+    expect(contextSql).toContain('s.verified_at IS NOT NULL');
+    expect(contextSql).toContain('NOT s.recovery_restricted');
+    expect(contextSql).toContain("s.last_seen_at > now() - interval '30 minutes'");
+    expect(String(query.mock.calls[4]?.[0])).toContain('SET last_seen_at = now()');
   });
 });

@@ -2,17 +2,29 @@ import { domainToASCII } from 'node:url';
 
 import { roles, type Role } from './roles.ts';
 import type {
+  AuthenticationAssurance,
   AuthenticationRepository,
+  AccountSecurityTarget,
   LoginTarget,
   MfaFactorRecord,
+  SessionAuthenticationMethod,
+  SessionOwner,
   SessionRecord,
+  VerificationMethod,
 } from './service.ts';
 
 interface LoginRow extends Record<string, unknown> {
+  auth_state_version: string;
   blocked_until: Date | null;
+  email_code_enabled: boolean;
+  has_recovery_codes: boolean;
   host: string;
+  normalized_email: string;
   password_hash: string;
+  preferred_method: string | null;
+  privileged_recovery_required: boolean;
   role: string;
+  second_step_requirement: string;
   site_id: string | null;
   tenant_id: string | null;
   user_id: string;
@@ -47,6 +59,7 @@ export class PostgresAuthenticationRepository implements AuthenticationRepositor
     traceId: string;
   }): Promise<LoginTarget | undefined> {
     const host = normalizeHost(input.host);
+    if (host === this.#orapHostname) return undefined;
     return withAuthTransaction(this.pool, async (client) => {
       const invitation = await query<{
         id: string;
@@ -155,6 +168,13 @@ export class PostgresAuthenticationRepository implements AuthenticationRepositor
            SET role = EXCLUDED.role, active = true, updated_at = now()`,
         [invited.tenant_id, invited.site_id, user.id, role],
       );
+      await client.query(
+        `INSERT INTO account_authentication_policies
+           (user_id, second_step_requirement, email_code_enabled)
+         VALUES ($1, 'optional', false)
+         ON CONFLICT (user_id) DO NOTHING`,
+        [user.id],
+      );
       await client.query(`UPDATE customer_invitations SET accepted_at = $1 WHERE id = $2`, [
         input.now,
         invited.id,
@@ -169,13 +189,50 @@ export class PostgresAuthenticationRepository implements AuthenticationRepositor
         tenantId: invited.tenant_id,
         traceId: input.traceId,
       });
+      const policy = requiredRow(
+        await query<{
+          auth_state_version: string;
+          email_code_enabled: boolean;
+          has_recovery_codes: boolean;
+          preferred_method: string | null;
+          privileged_recovery_required: boolean;
+          second_step_requirement: string;
+        }>(
+          client,
+          `SELECT policy.auth_state_version::text, policy.second_step_requirement,
+                  policy.email_code_enabled,
+                  policy.preferred_method,
+                  EXISTS (
+                    SELECT 1 FROM account_recovery_codes recovery
+                     WHERE recovery.user_id = policy.user_id
+                       AND recovery.used_at IS NULL AND recovery.revoked_at IS NULL
+                  ) AS has_recovery_codes,
+                  EXISTS (
+                    SELECT 1 FROM platform_memberships platform_membership
+                     WHERE platform_membership.user_id = policy.user_id
+                       AND platform_membership.active
+                  ) AS privileged_recovery_required
+             FROM account_authentication_policies policy WHERE policy.user_id = $1`,
+          [user.id],
+        ),
+        'Account authentication policy was not found',
+      );
       return {
+        authStateVersion: policy.auth_state_version,
+        emailCodeEnabled: policy.email_code_enabled,
+        hasRecoveryCodes: policy.has_recovery_codes,
         host,
+        normalizedEmail: invited.normalized_email,
         passwordHash: sessionPasswordHash,
+        ...(isVerificationMethod(policy.preferred_method)
+          ? { preferredMethod: policy.preferred_method }
+          : {}),
+        privilegedRecoveryRequired: policy.privileged_recovery_required,
         role,
         siteId: invited.site_id,
         tenantId: invited.tenant_id,
         userId: user.id,
+        verificationRequired: policy.second_step_requirement === 'required',
       };
     });
   }
@@ -189,22 +246,48 @@ export class PostgresAuthenticationRepository implements AuthenticationRepositor
       const result = await query<LoginRow>(
         client,
         `WITH customer_target AS (
-           SELECT u.id AS user_id, c.password_hash, c.blocked_until, m.role,
-                  m.tenant_id, m.site_id, d.hostname AS host
-             FROM users u
-             JOIN credentials c ON c.user_id = u.id
+           SELECT u.id AS user_id, u.normalized_email, c.password_hash, c.blocked_until, m.role,
+                   m.tenant_id, m.site_id, d.hostname AS host,
+                   ap.auth_state_version::text AS auth_state_version,
+                   COALESCE(ap.second_step_requirement, 'optional') AS second_step_requirement,
+                   COALESCE(ap.email_code_enabled, false) AS email_code_enabled,
+                   EXISTS (
+                     SELECT 1 FROM account_recovery_codes recovery
+                      WHERE recovery.user_id = u.id
+                        AND recovery.used_at IS NULL AND recovery.revoked_at IS NULL
+                   ) AS has_recovery_codes,
+                   EXISTS (
+                     SELECT 1 FROM platform_memberships platform_membership
+                      WHERE platform_membership.user_id = u.id AND platform_membership.active
+                   ) AS privileged_recovery_required,
+                   ap.preferred_method
+              FROM users u
+              JOIN credentials c ON c.user_id = u.id
+              JOIN account_authentication_policies ap ON ap.user_id = u.id
              JOIN memberships m ON m.user_id = u.id AND m.active
              JOIN sites st ON st.id = m.site_id AND st.tenant_id = m.tenant_id AND st.status = 'active'
              JOIN tenants t ON t.id = m.tenant_id AND t.status = 'active'
              JOIN domains d ON d.site_id = m.site_id AND d.tenant_id = m.tenant_id
               AND d.kind = 'admin' AND d.active AND d.verification_status = 'verified'
-            WHERE u.normalized_email = $1 AND u.status = 'active' AND d.hostname = $2
+             WHERE u.normalized_email = $1 AND u.status = 'active' AND d.hostname = $2
+               AND $2 <> $3
          ), platform_target AS (
-           SELECT u.id AS user_id, c.password_hash, c.blocked_until, pm.role,
-                  NULL::uuid AS tenant_id, NULL::uuid AS site_id, $2::text AS host
-             FROM users u
-             JOIN credentials c ON c.user_id = u.id
-             JOIN platform_memberships pm ON pm.user_id = u.id AND pm.active
+            SELECT u.id AS user_id, u.normalized_email, c.password_hash, c.blocked_until, pm.role,
+                   NULL::uuid AS tenant_id, NULL::uuid AS site_id, $2::text AS host,
+                   ap.auth_state_version::text AS auth_state_version,
+                   'required'::text AS second_step_requirement,
+                    COALESCE(ap.email_code_enabled, false) AS email_code_enabled,
+                    EXISTS (
+                      SELECT 1 FROM account_recovery_codes recovery
+                       WHERE recovery.user_id = u.id
+                         AND recovery.used_at IS NULL AND recovery.revoked_at IS NULL
+                    ) AS has_recovery_codes,
+                   true AS privileged_recovery_required,
+                   ap.preferred_method
+              FROM users u
+              JOIN credentials c ON c.user_id = u.id
+              JOIN platform_memberships pm ON pm.user_id = u.id AND pm.active
+              JOIN account_authentication_policies ap ON ap.user_id = u.id
             WHERE u.normalized_email = $1 AND u.status = 'active' AND $2 = $3
          )
          SELECT * FROM customer_target
@@ -218,13 +301,22 @@ export class PostgresAuthenticationRepository implements AuthenticationRepositor
       const role = parseRole(row?.role);
       if (!row || !role) return undefined;
       return {
+        authStateVersion: row.auth_state_version,
         ...(row.blocked_until ? { blockedUntil: row.blocked_until } : {}),
+        emailCodeEnabled: row.email_code_enabled,
+        hasRecoveryCodes: row.has_recovery_codes,
         host: row.host,
+        normalizedEmail: row.normalized_email,
         passwordHash: row.password_hash,
+        ...(isVerificationMethod(row.preferred_method)
+          ? { preferredMethod: row.preferred_method }
+          : {}),
+        privilegedRecoveryRequired: row.privileged_recovery_required,
         role,
         ...(row.site_id ? { siteId: row.site_id } : {}),
         ...(row.tenant_id ? { tenantId: row.tenant_id } : {}),
         userId: row.user_id,
+        verificationRequired: row.second_step_requirement === 'required',
       };
     });
   }
@@ -248,6 +340,22 @@ export class PostgresAuthenticationRepository implements AuthenticationRepositor
       return row
         ? { encryptedSecret: row.encrypted_secret, id: row.id, keyVersion: row.key_version }
         : undefined;
+    });
+  }
+
+  async consumeTotpCounter(input: { counter: number; factorId: string }): Promise<boolean> {
+    return withAuthTransaction(this.pool, async (client) => {
+      const result = await query<{ id: string }>(
+        client,
+        `UPDATE mfa_factors
+            SET last_used_counter = $1
+          WHERE id = $2 AND kind = 'totp' AND verified_at IS NOT NULL
+            AND revoked_at IS NULL
+            AND (last_used_counter IS NULL OR last_used_counter < $1)
+          RETURNING id`,
+        [input.counter, input.factorId],
+      );
+      return result.rows.length === 1;
     });
   }
 
@@ -298,29 +406,196 @@ export class PostgresAuthenticationRepository implements AuthenticationRepositor
   }
 
   async createSession(input: {
+    assuranceLevel: AuthenticationAssurance;
+    authenticationMethod: SessionAuthenticationMethod;
+    expectedAuthStateVersion: string;
+    expectedPasswordHash: string;
     expiresAt: Date;
+    factorId?: string;
     host: string;
+    recoveryRestricted: boolean;
+    recoveryCodeHash?: string;
+    role: Role;
     siteId?: string;
     tenantId?: string;
     tokenHash: string;
     traceId: string;
     userId: string;
-    authenticationMethod: 'mfa' | 'password';
-  }): Promise<void> {
+    verifiedAt?: Date;
+  }): Promise<boolean> {
     if (Boolean(input.siteId) !== Boolean(input.tenantId)) {
       throw new Error('Session tenant and site scope must be provided together');
     }
-    await withAuthTransaction(this.pool, async (client) => {
+    const host = normalizeHost(input.host);
+    const recoveryCodeSession = input.authenticationMethod === 'recovery_code';
+    if (
+      recoveryCodeSession &&
+      (!input.tenantId ||
+        !input.siteId ||
+        !input.role.startsWith('customer_') ||
+        !input.recoveryRestricted ||
+        input.assuranceLevel !== 'recovery')
+    ) {
+      return false;
+    }
+    return withAuthTransaction(this.pool, async (client) => {
+      // Account recovery rotates the entire active code set and advances the
+      // authentication state. Serialize those changes before taking any code,
+      // credential, membership, or policy locks so simultaneous sibling-code
+      // claims cannot deadlock or each issue a restricted session.
+      if (recoveryCodeSession) {
+        const account = await query<{ id: string }>(
+          client,
+          `SELECT id FROM users WHERE id = $1 AND status = 'active' FOR UPDATE`,
+          [input.userId],
+        );
+        if (account.rows.length !== 1) return false;
+      }
+      // Serialize issuance with password changes. If issuance wins, a following reset
+      // waits and revokes this session; if reset wins, this expected hash no longer
+      // matches and no session is created.
+      const credential = await query<{ password_hash: string }>(
+        client,
+        `SELECT c.password_hash
+          FROM credentials c
+          JOIN users u ON u.id = c.user_id AND u.status = 'active'
+          WHERE c.user_id = $1 AND c.password_hash = $2
+          FOR SHARE OF c, u`,
+        [input.userId, input.expectedPasswordHash],
+      );
+      if (credential.rows.length !== 1) return false;
+
+      const scope =
+        input.tenantId && input.siteId
+          ? await query<{
+              auth_state_version: string;
+              email_code_enabled: boolean;
+              has_active_platform_membership: boolean;
+              role: string;
+              second_step_requirement: string;
+            }>(
+              client,
+              `SELECT m.role, policy.auth_state_version::text,
+                      EXISTS (
+                        SELECT 1 FROM platform_memberships platform_membership
+                         WHERE platform_membership.user_id = m.user_id
+                           AND platform_membership.active
+                      ) AS has_active_platform_membership,
+                      policy.second_step_requirement, policy.email_code_enabled
+                 FROM memberships m
+                 JOIN tenants t ON t.id = m.tenant_id AND t.status = 'active'
+                 JOIN sites st ON st.tenant_id = m.tenant_id AND st.id = m.site_id
+                   AND st.status = 'active'
+                 JOIN domains d ON d.tenant_id = m.tenant_id AND d.site_id = m.site_id
+                   AND d.kind = 'admin' AND d.active AND d.verification_status = 'verified'
+                 JOIN account_authentication_policies policy ON policy.user_id = m.user_id
+                WHERE m.user_id = $1 AND m.tenant_id = $2 AND m.site_id = $3
+                  AND m.active AND d.hostname = $4 AND $4 <> $5
+                LIMIT 2
+                FOR SHARE OF m, t, st, d, policy`,
+              [input.userId, input.tenantId, input.siteId, host, this.#orapHostname],
+            )
+          : await query<{
+              auth_state_version: string;
+              email_code_enabled: boolean;
+              has_active_platform_membership: boolean;
+              role: string;
+              second_step_requirement: string;
+            }>(
+              client,
+              `SELECT membership.role, policy.auth_state_version::text,
+                      true AS has_active_platform_membership,
+                      policy.second_step_requirement,
+                      policy.email_code_enabled
+                 FROM platform_memberships membership
+                 JOIN account_authentication_policies policy
+                   ON policy.user_id = membership.user_id
+                WHERE membership.user_id = $1 AND membership.active AND $2 = $3
+                LIMIT 2
+                FOR SHARE OF membership, policy`,
+              [input.userId, host, this.#orapHostname],
+            );
+      if (scope.rows.length !== 1 || scope.rows[0]?.role !== input.role) return false;
+      const currentScope = scope.rows[0];
+      if (currentScope.auth_state_version !== input.expectedAuthStateVersion) return false;
+      if (
+        input.authenticationMethod === 'password' &&
+        (currentScope.second_step_requirement !== 'optional' || !input.role.startsWith('customer_'))
+      ) {
+        return false;
+      }
+      if (input.authenticationMethod === 'email_code' && !currentScope.email_code_enabled) {
+        return false;
+      }
+      if (input.authenticationMethod === 'webauthn') return false;
+      if (input.authenticationMethod === 'totp') {
+        if (!input.factorId) return false;
+        const factor = await query<{ id: string }>(
+          client,
+          `SELECT id FROM mfa_factors
+            WHERE id = $1 AND user_id = $2 AND kind = 'totp'
+              AND verified_at IS NOT NULL AND revoked_at IS NULL
+            FOR SHARE`,
+          [input.factorId, input.userId],
+        );
+        if (factor.rows.length !== 1) return false;
+      }
+      if (input.authenticationMethod === 'recovery_code') {
+        if (
+          !input.recoveryCodeHash ||
+          currentScope.second_step_requirement !== 'required' ||
+          currentScope.has_active_platform_membership ||
+          !input.role.startsWith('customer_')
+        ) {
+          return false;
+        }
+        const recovery = await query<{ id: string; set_version: number }>(
+          client,
+          `UPDATE account_recovery_codes
+              SET used_at = now()
+            WHERE user_id = $1 AND code_hash = $2
+              AND used_at IS NULL AND revoked_at IS NULL
+              AND set_version = (
+                SELECT max(newest.set_version)
+                  FROM account_recovery_codes newest
+                 WHERE newest.user_id = $1 AND newest.used_at IS NULL
+                   AND newest.revoked_at IS NULL
+              )
+            RETURNING id, set_version`,
+          [input.userId, input.recoveryCodeHash],
+        );
+        if (recovery.rows.length !== 1 || !recovery.rows[0]) return false;
+        await client.query(
+          `UPDATE account_recovery_codes
+              SET revoked_at = COALESCE(revoked_at, now())
+            WHERE user_id = $1 AND set_version = $2 AND id <> $3
+              AND used_at IS NULL AND revoked_at IS NULL`,
+          [input.userId, recovery.rows[0].set_version, recovery.rows[0].id],
+        );
+        await client.query(
+          `UPDATE account_authentication_policies
+              SET auth_state_version = auth_state_version + 1,
+                  updated_at = now()
+            WHERE user_id = $1`,
+          [input.userId],
+        );
+      }
       await client.query(
-        `INSERT INTO sessions (user_id, tenant_id, site_id, host, token_hash, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
+        `INSERT INTO sessions
+           (user_id, tenant_id, site_id, host, token_hash, expires_at,
+            authentication_method, authentication_assurance, verified_at, recovery_restricted)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
         [
           input.userId,
           input.tenantId ?? null,
           input.siteId ?? null,
-          normalizeHost(input.host),
+          host,
           input.tokenHash,
           input.expiresAt,
+          input.authenticationMethod,
+          input.assuranceLevel,
+          input.verifiedAt ?? null,
+          input.recoveryRestricted,
         ],
       );
       await insertAudit(client, {
@@ -328,7 +603,8 @@ export class PostgresAuthenticationRepository implements AuthenticationRepositor
         actorId: input.userId,
         metadata: {
           authenticationMethod: input.authenticationMethod,
-          host: normalizeHost(input.host),
+          assuranceLevel: input.assuranceLevel,
+          host,
         },
         ...(input.siteId ? { siteId: input.siteId } : {}),
         targetId: input.userId,
@@ -336,11 +612,16 @@ export class PostgresAuthenticationRepository implements AuthenticationRepositor
         ...(input.tenantId ? { tenantId: input.tenantId } : {}),
         traceId: input.traceId,
       });
-      if (input.authenticationMethod === 'mfa') {
+      if (input.authenticationMethod !== 'password') {
         await insertAudit(client, {
           action: 'auth.mfa.verified',
           actorId: input.userId,
-          metadata: { host: normalizeHost(input.host) },
+          metadata: {
+            assuranceLevel: input.assuranceLevel,
+            host,
+            method: input.authenticationMethod,
+            recoveryRestricted: input.recoveryRestricted,
+          },
           ...(input.siteId ? { siteId: input.siteId } : {}),
           targetId: input.userId,
           targetType: 'user',
@@ -348,25 +629,72 @@ export class PostgresAuthenticationRepository implements AuthenticationRepositor
           traceId: input.traceId,
         });
       }
+      return true;
     });
   }
 
   async createPasswordRecovery(input: {
     expiresAt: Date;
+    host: string;
     normalizedEmail: string;
     traceId: string;
     tokenHash: string;
   }): Promise<{ normalizedEmail: string } | undefined> {
+    const host = normalizeHost(input.host);
+    if (host === this.#orapHostname) return undefined;
     return withAuthTransaction(this.pool, async (client) => {
       const user = await query<{ normalized_email: string; user_id: string }>(
         client,
-        `SELECT id AS user_id, normalized_email
-           FROM users
-          WHERE normalized_email = $1 AND status = 'active'
-          LIMIT 2`,
-        [input.normalizedEmail],
+        `SELECT DISTINCT u.id AS user_id, u.normalized_email
+           FROM users u
+           JOIN memberships m ON m.user_id = u.id AND m.active
+           JOIN tenants t ON t.id = m.tenant_id AND t.status = 'active'
+           JOIN sites st ON st.tenant_id = m.tenant_id AND st.id = m.site_id
+             AND st.status = 'active'
+           JOIN domains d ON d.tenant_id = m.tenant_id AND d.site_id = m.site_id
+             AND d.kind = 'admin' AND d.active AND d.verification_status = 'verified'
+          WHERE u.normalized_email = $1 AND u.status = 'active' AND d.hostname = $2
+            AND NOT EXISTS (
+              SELECT 1 FROM platform_memberships pm
+               WHERE pm.user_id = u.id AND pm.active
+            )
+         LIMIT 2`,
+        [input.normalizedEmail, host],
       );
       if (user.rows.length !== 1 || !user.rows[0]) return undefined;
+      // Serialize replacement of the active reset token for this identity. The
+      // first lookup is deliberately non-locking because DISTINCT join results
+      // cannot be row-locked; after obtaining the identity lock, re-evaluate
+      // host/customer eligibility in a fresh READ COMMITTED statement.
+      const userLock = await query<{ id: string }>(
+        client,
+        `SELECT id FROM users WHERE id = $1 AND status = 'active' FOR UPDATE`,
+        [user.rows[0].user_id],
+      );
+      if (userLock.rows.length !== 1) return undefined;
+      const eligible = await query<{ id: string }>(
+        client,
+        `SELECT u.id
+           FROM users u
+          WHERE u.id = $1 AND u.status = 'active'
+            AND EXISTS (
+              SELECT 1
+                FROM memberships m
+                JOIN tenants t ON t.id = m.tenant_id AND t.status = 'active'
+                JOIN sites st ON st.tenant_id = m.tenant_id AND st.id = m.site_id
+                  AND st.status = 'active'
+                JOIN domains d ON d.tenant_id = m.tenant_id AND d.site_id = m.site_id
+                  AND d.kind = 'admin' AND d.active AND d.verification_status = 'verified'
+               WHERE m.user_id = u.id AND m.active AND d.hostname = $2
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM platform_memberships pm
+               WHERE pm.user_id = u.id AND pm.active
+            )
+          LIMIT 1`,
+        [user.rows[0].user_id, host],
+      );
+      if (eligible.rows.length !== 1) return undefined;
       await client.query(
         `UPDATE password_recovery_tokens
             SET used_at = now()
@@ -374,9 +702,9 @@ export class PostgresAuthenticationRepository implements AuthenticationRepositor
         [user.rows[0].user_id],
       );
       await client.query(
-        `INSERT INTO password_recovery_tokens (user_id, token_hash, expires_at)
-         VALUES ($1, $2, $3)`,
-        [user.rows[0].user_id, input.tokenHash, input.expiresAt],
+        `INSERT INTO password_recovery_tokens (user_id, token_hash, expires_at, host)
+         VALUES ($1, $2, $3, $4)`,
+        [user.rows[0].user_id, input.tokenHash, input.expiresAt, host],
       );
       await insertAudit(client, {
         action: 'auth.password_recovery.requested',
@@ -390,21 +718,49 @@ export class PostgresAuthenticationRepository implements AuthenticationRepositor
   }
 
   async completePasswordRecovery(input: {
+    host: string;
     newPasswordHash: string;
     now: Date;
     traceId: string;
     tokenHash: string;
   }): Promise<boolean> {
+    if (normalizeHost(input.host) === this.#orapHostname) return false;
     return withAuthTransaction(this.pool, async (client) => {
       const token = await query<{ id: string; user_id: string }>(
         client,
         `SELECT id, user_id
            FROM password_recovery_tokens
-          WHERE token_hash = $1 AND used_at IS NULL AND expires_at > $2
+          WHERE token_hash = $1 AND host = $2 AND used_at IS NULL AND expires_at > $3
+            AND NOT EXISTS (
+              SELECT 1 FROM platform_memberships pm
+               WHERE pm.user_id = password_recovery_tokens.user_id AND pm.active
+            )
           FOR UPDATE`,
-        [input.tokenHash, input.now],
+        [input.tokenHash, normalizeHost(input.host), input.now],
       );
       if (token.rows.length !== 1 || !token.rows[0]) return false;
+      const userLock = await query<{ id: string }>(
+        client,
+        `SELECT id FROM users WHERE id = $1 AND status = 'active' FOR UPDATE`,
+        [token.rows[0].user_id],
+      );
+      if (userLock.rows.length !== 1) return false;
+      // The token lookup and the user-row lock are separate statements. Recheck
+      // privileged membership in a fresh READ COMMITTED snapshot after acquiring
+      // the shared account lock so a concurrent platform-role activation cannot
+      // turn an ordinary customer recovery into a privileged password reset.
+      // A plain SELECT is sufficient: every platform-membership activation must
+      // acquire this same user-row lock before commit. Taking a membership-row
+      // lock here would invert that order and permit a user<->membership deadlock.
+      const privileged = await query<{ id: string }>(
+        client,
+        `SELECT id
+           FROM platform_memberships
+          WHERE user_id = $1 AND active
+          LIMIT 1`,
+        [token.rows[0].user_id],
+      );
+      if (privileged.rows.length !== 0) return false;
       const credential = await query<{ user_id: string }>(
         client,
         `UPDATE credentials
@@ -437,24 +793,454 @@ export class PostgresAuthenticationRepository implements AuthenticationRepositor
     });
   }
 
-  async findSessionOwner(tokenHash: string): Promise<{ userId: string } | undefined> {
+  async completeCustomerRecovery(input: {
+    host: string;
+    now: Date;
+    recoveryCodeHashes: string[];
+    sessionTokenHash: string;
+    traceId: string;
+  }): Promise<boolean> {
+    if (input.recoveryCodeHashes.length === 0) return false;
+    const host = normalizeHost(input.host);
+    if (host === this.#orapHostname) return false;
     return withAuthTransaction(this.pool, async (client) => {
-      const result = await query<{ user_id: string }>(
+      const scope = await query<{ site_id: string; tenant_id: string; user_id: string }>(
         client,
-        `SELECT user_id FROM sessions
-          WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > now()
+        `SELECT s.user_id, s.tenant_id, s.site_id
+           FROM sessions s
+           JOIN memberships m ON m.user_id = s.user_id AND m.tenant_id = s.tenant_id
+             AND m.site_id = s.site_id AND m.active
+             AND m.role IN ('customer_owner', 'customer_editor', 'customer_viewer')
+           JOIN tenants t ON t.id = m.tenant_id AND t.status = 'active'
+           JOIN sites st ON st.tenant_id = m.tenant_id AND st.id = m.site_id
+             AND st.status = 'active'
+           JOIN domains d ON d.tenant_id = m.tenant_id AND d.site_id = m.site_id
+             AND d.kind = 'admin' AND d.active AND d.verification_status = 'verified'
+             AND d.hostname = $2
+           WHERE s.token_hash = $1 AND s.host = $2 AND s.revoked_at IS NULL
+             AND s.expires_at > $3 AND s.recovery_restricted
+            AND s.authentication_method = 'recovery_code'
+            AND s.authentication_assurance = 'recovery' AND s.verified_at IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM platform_memberships pm
+               WHERE pm.user_id = s.user_id AND pm.active
+            )
           LIMIT 2`,
-        [tokenHash],
+        [input.sessionTokenHash, host, input.now],
       );
-      return result.rows.length === 1 && result.rows[0]
-        ? { userId: result.rows[0].user_id }
-        : undefined;
+      if (scope.rows.length !== 1 || !scope.rows[0]) return false;
+      const account = scope.rows[0];
+      const userLock = await query<{ id: string }>(
+        client,
+        `SELECT id FROM users WHERE id = $1 AND status = 'active' FOR UPDATE`,
+        [account.user_id],
+      );
+      if (userLock.rows.length !== 1) return false;
+      const credentialLock = await query<{ user_id: string }>(
+        client,
+        `SELECT user_id FROM credentials WHERE user_id = $1 FOR UPDATE`,
+        [account.user_id],
+      );
+      if (credentialLock.rows.length !== 1) return false;
+      const sessionLock = await query<{ id: string; site_id: string; tenant_id: string }>(
+        client,
+        `SELECT s.id, s.tenant_id, s.site_id
+           FROM sessions s
+           JOIN memberships m ON m.user_id = s.user_id AND m.tenant_id = s.tenant_id
+             AND m.site_id = s.site_id AND m.active
+             AND m.role IN ('customer_owner', 'customer_editor', 'customer_viewer')
+           JOIN tenants t ON t.id = m.tenant_id AND t.status = 'active'
+           JOIN sites st ON st.tenant_id = m.tenant_id AND st.id = m.site_id
+             AND st.status = 'active'
+           JOIN domains d ON d.tenant_id = m.tenant_id AND d.site_id = m.site_id
+             AND d.kind = 'admin' AND d.active AND d.verification_status = 'verified'
+             AND d.hostname = $3
+          WHERE s.token_hash = $1 AND s.user_id = $2 AND s.host = $3
+            AND revoked_at IS NULL AND expires_at > $4 AND recovery_restricted
+            AND authentication_method = 'recovery_code'
+            AND authentication_assurance = 'recovery' AND verified_at IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM platform_memberships platform_membership
+               WHERE platform_membership.user_id = s.user_id AND platform_membership.active
+            )
+          LIMIT 2
+          FOR UPDATE OF s, m, t, st, d`,
+        [input.sessionTokenHash, account.user_id, host, input.now],
+      );
+      if (sessionLock.rows.length !== 1) return false;
+      const lockedSession = sessionLock.rows[0];
+      if (!lockedSession) return false;
+      const policy = await query<{ user_id: string }>(
+        client,
+        `UPDATE account_authentication_policies
+            SET auth_state_version = auth_state_version + 1, updated_at = $2
+          WHERE user_id = $1
+          RETURNING user_id`,
+        [account.user_id, input.now],
+      );
+      if (policy.rows.length !== 1) return false;
+      const nextSet = requiredRow(
+        await query<{ set_version: number }>(
+          client,
+          `SELECT COALESCE(max(set_version), 0)::integer + 1 AS set_version
+             FROM account_recovery_codes
+            WHERE user_id = $1`,
+          [account.user_id],
+        ),
+        'Recovery-code version was not available',
+      );
+      await client.query(
+        `UPDATE account_recovery_codes
+            SET revoked_at = COALESCE(revoked_at, $1)
+          WHERE user_id = $2 AND revoked_at IS NULL`,
+        [input.now, account.user_id],
+      );
+      await client.query(
+        `INSERT INTO account_recovery_codes (user_id, set_version, code_hash)
+         SELECT $1, $2, unnest($3::text[])`,
+        [account.user_id, nextSet.set_version, input.recoveryCodeHashes],
+      );
+      await client.query(
+        `UPDATE sessions
+            SET revoked_at = $1, revoke_reason = 'account-recovery-completed'
+          WHERE user_id = $2 AND revoked_at IS NULL`,
+        [input.now, account.user_id],
+      );
+      await insertAudit(client, {
+        action: 'auth.customer_recovery.completed',
+        actorId: account.user_id,
+        metadata: { recoveryCodesReplaced: true, sessionsRevoked: true },
+        siteId: lockedSession.site_id,
+        targetId: account.user_id,
+        targetType: 'user',
+        tenantId: lockedSession.tenant_id,
+        traceId: input.traceId,
+      });
+      return true;
     });
   }
 
-  async listSessions(userId: string): Promise<SessionRecord[]> {
+  async findAccountSecurityTarget(input: {
+    host: string;
+    tokenHash: string;
+  }): Promise<AccountSecurityTarget | undefined> {
+    const host = normalizeHost(input.host);
     return withAuthTransaction(this.pool, async (client) => {
       const result = await query<{
+        email_code_enabled: boolean;
+        has_totp: boolean;
+        host: string;
+        normalized_email: string;
+        password_hash: string;
+        role: string;
+        second_step_requirement: string;
+        site_id: string | null;
+        tenant_id: string | null;
+        user_id: string;
+      }>(
+        client,
+        `WITH customer_target AS (
+           SELECT u.id AS user_id, u.normalized_email, c.password_hash, m.role,
+                  s.tenant_id, s.site_id, s.host,
+                  COALESCE(policy.email_code_enabled, false) AS email_code_enabled,
+                  COALESCE(policy.second_step_requirement, 'optional') AS second_step_requirement,
+                  EXISTS (
+                    SELECT 1 FROM mfa_factors factor
+                     WHERE factor.user_id = u.id AND factor.kind = 'totp'
+                       AND factor.verified_at IS NOT NULL AND factor.revoked_at IS NULL
+                  ) AS has_totp
+             FROM sessions s
+             JOIN users u ON u.id = s.user_id AND u.status = 'active'
+             JOIN credentials c ON c.user_id = u.id
+             JOIN memberships m ON m.user_id = s.user_id AND m.tenant_id = s.tenant_id
+               AND m.site_id = s.site_id AND m.active
+             JOIN tenants t ON t.id = m.tenant_id AND t.status = 'active'
+             JOIN sites st ON st.tenant_id = m.tenant_id AND st.id = m.site_id
+               AND st.status = 'active'
+             JOIN domains d ON d.tenant_id = m.tenant_id AND d.site_id = m.site_id
+               AND d.kind = 'admin' AND d.active AND d.verification_status = 'verified'
+               AND d.hostname = $2
+             LEFT JOIN account_authentication_policies policy ON policy.user_id = u.id
+             WHERE s.token_hash = $1 AND s.host = $2 AND s.revoked_at IS NULL
+               AND $2 <> $3
+               AND NOT EXISTS (
+                 SELECT 1 FROM platform_memberships platform_membership
+                  WHERE platform_membership.user_id = u.id AND platform_membership.active
+               )
+               AND s.expires_at > now() AND NOT s.recovery_restricted
+              AND s.last_seen_at > now() - interval '30 minutes'
+              AND (
+                COALESCE(policy.second_step_requirement, 'optional') = 'optional'
+                OR (s.authentication_assurance IN ('baseline', 'strong')
+                    AND s.verified_at IS NOT NULL)
+              )
+         ), platform_target AS (
+           SELECT u.id AS user_id, u.normalized_email, c.password_hash, pm.role,
+                  NULL::uuid AS tenant_id, NULL::uuid AS site_id, s.host,
+                  COALESCE(policy.email_code_enabled, false) AS email_code_enabled,
+                  'required'::text AS second_step_requirement,
+                  EXISTS (
+                    SELECT 1 FROM mfa_factors factor
+                     WHERE factor.user_id = u.id AND factor.kind = 'totp'
+                       AND factor.verified_at IS NOT NULL AND factor.revoked_at IS NULL
+                  ) AS has_totp
+             FROM sessions s
+             JOIN users u ON u.id = s.user_id AND u.status = 'active'
+             JOIN credentials c ON c.user_id = u.id
+             JOIN platform_memberships pm ON pm.user_id = u.id AND pm.active
+             LEFT JOIN account_authentication_policies policy ON policy.user_id = u.id
+            WHERE s.token_hash = $1 AND s.host = $2 AND $2 = $3
+              AND s.revoked_at IS NULL AND s.expires_at > now()
+              AND NOT s.recovery_restricted
+              AND s.last_seen_at > now() - interval '30 minutes'
+              AND s.authentication_assurance IN ('baseline', 'strong')
+              AND s.verified_at IS NOT NULL
+         )
+         SELECT * FROM customer_target
+         UNION ALL
+         SELECT * FROM platform_target
+         LIMIT 2`,
+        [input.tokenHash, host, this.#orapHostname],
+      );
+      if (result.rows.length !== 1 || !result.rows[0]) return undefined;
+      const row = result.rows[0];
+      const role = parseRole(row.role);
+      if (!role) return undefined;
+      if (!(await refreshAuthenticatedSession(client, input.tokenHash, host))) return undefined;
+      return {
+        emailCodeEnabled: row.email_code_enabled,
+        hasTotp: row.has_totp,
+        host: row.host,
+        normalizedEmail: row.normalized_email,
+        passwordHash: row.password_hash,
+        role,
+        secondStepRequired: row.second_step_requirement === 'required',
+        ...(row.site_id ? { siteId: row.site_id } : {}),
+        ...(row.tenant_id ? { tenantId: row.tenant_id } : {}),
+        userId: row.user_id,
+      };
+    });
+  }
+
+  async updateCustomerEmailCodePolicy(input: {
+    enabled: boolean;
+    host: string;
+    now: Date;
+    recoveryCodeHashes: string[];
+    sessionTokenHash: string;
+    traceId: string;
+    userId: string;
+  }): Promise<boolean> {
+    const host = normalizeHost(input.host);
+    if (host === this.#orapHostname) return false;
+    return withAuthTransaction(this.pool, async (client) => {
+      const userLock = await query<{ id: string }>(
+        client,
+        `SELECT id FROM users WHERE id = $1 AND status = 'active' FOR UPDATE`,
+        [input.userId],
+      );
+      if (userLock.rows.length !== 1) return false;
+      const privileged = await query<{ id: string }>(
+        client,
+        `SELECT id
+           FROM platform_memberships
+          WHERE user_id = $1 AND active
+          LIMIT 1`,
+        [input.userId],
+      );
+      if (privileged.rows.length !== 0) return false;
+      const credentialLock = await query<{ user_id: string }>(
+        client,
+        `SELECT user_id FROM credentials WHERE user_id = $1 FOR UPDATE`,
+        [input.userId],
+      );
+      if (credentialLock.rows.length !== 1) return false;
+      const scope = await query<{ site_id: string; tenant_id: string }>(
+        client,
+        `SELECT s.tenant_id, s.site_id
+           FROM sessions s
+           JOIN memberships m ON m.user_id = s.user_id AND m.tenant_id = s.tenant_id
+             AND m.site_id = s.site_id AND m.active
+             AND m.role IN ('customer_owner', 'customer_editor', 'customer_viewer')
+           JOIN tenants t ON t.id = m.tenant_id AND t.status = 'active'
+           JOIN sites st ON st.tenant_id = m.tenant_id AND st.id = m.site_id
+             AND st.status = 'active'
+           JOIN domains d ON d.tenant_id = m.tenant_id AND d.site_id = m.site_id
+             AND d.kind = 'admin' AND d.active AND d.verification_status = 'verified'
+             AND d.hostname = $3
+           LEFT JOIN account_authentication_policies policy ON policy.user_id = s.user_id
+          WHERE s.token_hash = $1 AND s.user_id = $2 AND s.host = $3
+            AND s.revoked_at IS NULL AND s.expires_at > $4 AND NOT s.recovery_restricted
+            AND s.last_seen_at > $4 - interval '30 minutes'
+            AND (
+              COALESCE(policy.second_step_requirement, 'optional') = 'optional'
+              OR (s.authentication_assurance IN ('baseline', 'strong')
+                  AND s.verified_at IS NOT NULL)
+            )
+          LIMIT 2
+          FOR UPDATE OF s`,
+        [input.sessionTokenHash, input.userId, host, input.now],
+      );
+      if (scope.rows.length !== 1 || !scope.rows[0]) return false;
+      const policy = await query<{ user_id: string }>(
+        client,
+        `SELECT user_id FROM account_authentication_policies
+          WHERE user_id = $1
+          FOR UPDATE`,
+        [input.userId],
+      );
+      if (policy.rows.length !== 1) return false;
+      const hasTotp = requiredRow(
+        await query<{ enabled: boolean }>(
+          client,
+          `SELECT EXISTS (
+             SELECT 1 FROM mfa_factors
+              WHERE user_id = $1 AND kind = 'totp'
+                AND verified_at IS NOT NULL AND revoked_at IS NULL
+           ) AS enabled`,
+          [input.userId],
+        ),
+        'Account factor state was not found',
+      ).enabled;
+      const secondStepRequired = input.enabled || hasTotp;
+      await client.query(
+        `INSERT INTO account_authentication_policies
+           (user_id, second_step_requirement, email_code_enabled, preferred_method, updated_at)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (user_id) DO UPDATE
+           SET second_step_requirement = EXCLUDED.second_step_requirement,
+               email_code_enabled = EXCLUDED.email_code_enabled,
+               preferred_method = EXCLUDED.preferred_method,
+               updated_at = EXCLUDED.updated_at`,
+        [
+          input.userId,
+          secondStepRequired ? 'required' : 'optional',
+          input.enabled,
+          input.enabled ? 'email_code' : hasTotp ? 'totp' : null,
+          input.now,
+        ],
+      );
+      if (input.enabled || !hasTotp) {
+        await client.query(
+          `UPDATE account_recovery_codes
+              SET revoked_at = COALESCE(revoked_at, $1)
+            WHERE user_id = $2 AND used_at IS NULL AND revoked_at IS NULL`,
+          [input.now, input.userId],
+        );
+      }
+      if (input.enabled) {
+        if (input.recoveryCodeHashes.length === 0) {
+          throw new Error('Email verification recovery codes are missing');
+        }
+        const nextSet = requiredRow(
+          await query<{ set_version: number }>(
+            client,
+            `SELECT COALESCE(max(set_version), 0)::integer + 1 AS set_version
+               FROM account_recovery_codes
+              WHERE user_id = $1`,
+            [input.userId],
+          ),
+          'Recovery-code version was not available',
+        );
+        await client.query(
+          `INSERT INTO account_recovery_codes (user_id, set_version, code_hash)
+           SELECT $1, $2, unnest($3::text[])`,
+          [input.userId, nextSet.set_version, input.recoveryCodeHashes],
+        );
+      }
+      await client.query(
+        `UPDATE sessions
+            SET revoked_at = $1, revoke_reason = 'authentication-policy-changed'
+          WHERE user_id = $2 AND revoked_at IS NULL`,
+        [input.now, input.userId],
+      );
+      await insertAudit(client, {
+        action: 'auth.email_code_policy.changed',
+        actorId: input.userId,
+        metadata: {
+          emailCodeEnabled: input.enabled,
+          recoveryCodesReplaced: input.enabled,
+          sessionsRevoked: true,
+        },
+        siteId: scope.rows[0].site_id,
+        targetId: input.userId,
+        targetType: 'account_authentication_policy',
+        tenantId: scope.rows[0].tenant_id,
+        traceId: input.traceId,
+      });
+      return true;
+    });
+  }
+
+  async findSessionOwner(input: {
+    host: string;
+    tokenHash: string;
+  }): Promise<SessionOwner | undefined> {
+    const host = normalizeHost(input.host);
+    return withAuthTransaction(this.pool, async (client) => {
+      const result = await query<{
+        host: string;
+        site_id: string | null;
+        tenant_id: string | null;
+        user_id: string;
+      }>(
+        client,
+        `SELECT s.user_id, s.tenant_id, s.site_id, s.host
+           FROM sessions s
+          WHERE s.token_hash = $1 AND s.host = $2 AND s.revoked_at IS NULL
+            AND s.expires_at > now() AND NOT s.recovery_restricted
+            AND s.last_seen_at > now() - interval '30 minutes'
+            AND (
+              (s.tenant_id IS NULL AND s.site_id IS NULL AND $2 = $3
+               AND s.authentication_assurance IN ('baseline', 'strong')
+               AND s.verified_at IS NOT NULL
+               AND EXISTS (
+                 SELECT 1 FROM platform_memberships pm
+                  WHERE pm.user_id = s.user_id AND pm.active
+               ))
+              OR ($2 <> $3 AND
+                EXISTS (
+                  SELECT 1
+                    FROM memberships m
+                    JOIN tenants t ON t.id = m.tenant_id AND t.status = 'active'
+                    JOIN sites st ON st.tenant_id = m.tenant_id AND st.id = m.site_id
+                      AND st.status = 'active'
+                    JOIN domains d ON d.tenant_id = m.tenant_id AND d.site_id = m.site_id
+                      AND d.kind = 'admin' AND d.active AND d.verification_status = 'verified'
+                   WHERE m.user_id = s.user_id AND m.tenant_id = s.tenant_id
+                     AND m.site_id = s.site_id AND m.active AND d.hostname = $2
+                )
+                AND (
+                  NOT EXISTS (
+                    SELECT 1 FROM account_authentication_policies policy
+                     WHERE policy.user_id = s.user_id
+                       AND policy.second_step_requirement = 'required'
+                  )
+                  OR (s.authentication_assurance IN ('baseline', 'strong')
+                      AND s.verified_at IS NOT NULL)
+                )
+              )
+            )
+          LIMIT 2`,
+        [input.tokenHash, host, this.#orapHostname],
+      );
+      if (result.rows.length !== 1 || !result.rows[0]) return undefined;
+      const row = result.rows[0];
+      if (!(await refreshAuthenticatedSession(client, input.tokenHash, host))) return undefined;
+      return {
+        host: row.host,
+        ...(row.site_id ? { siteId: row.site_id } : {}),
+        ...(row.tenant_id ? { tenantId: row.tenant_id } : {}),
+        userId: row.user_id,
+      };
+    });
+  }
+
+  async listSessions(owner: SessionOwner): Promise<SessionRecord[]> {
+    return withAuthTransaction(this.pool, async (client) => {
+      const result = await query<{
+        authentication_assurance: AuthenticationAssurance;
+        authentication_method: SessionAuthenticationMethod;
         created_at: Date;
         expires_at: Date;
         host: string;
@@ -462,13 +1248,21 @@ export class PostgresAuthenticationRepository implements AuthenticationRepositor
         last_seen_at: Date;
       }>(
         client,
-        `SELECT id, host, created_at, last_seen_at, expires_at
+        `SELECT id, host, authentication_method, authentication_assurance,
+                created_at, last_seen_at, expires_at
            FROM sessions
           WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > now()
+            AND last_seen_at > now() - interval '30 minutes'
+            AND NOT recovery_restricted
+            AND host = $2
+            AND tenant_id IS NOT DISTINCT FROM $3::uuid
+            AND site_id IS NOT DISTINCT FROM $4::uuid
           ORDER BY last_seen_at DESC`,
-        [userId],
+        [owner.userId, normalizeHost(owner.host), owner.tenantId ?? null, owner.siteId ?? null],
       );
       return result.rows.map((row) => ({
+        assuranceLevel: row.authentication_assurance,
+        authenticationMethod: row.authentication_method,
         createdAt: row.created_at,
         expiresAt: row.expires_at,
         host: row.host,
@@ -480,8 +1274,11 @@ export class PostgresAuthenticationRepository implements AuthenticationRepositor
 
   async revokeSession(input: {
     currentUserId: string;
+    host: string;
     now: Date;
     sessionId: string;
+    siteId?: string;
+    tenantId?: string;
     traceId: string;
   }): Promise<boolean> {
     return withAuthTransaction(this.pool, async (client) => {
@@ -489,9 +1286,19 @@ export class PostgresAuthenticationRepository implements AuthenticationRepositor
         client,
         `UPDATE sessions
             SET revoked_at = $1, revoke_reason = 'user-revoked'
-          WHERE id = $2 AND user_id = $3 AND revoked_at IS NULL
+          WHERE id = $2 AND user_id = $3 AND host = $4
+            AND tenant_id IS NOT DISTINCT FROM $5::uuid
+            AND site_id IS NOT DISTINCT FROM $6::uuid
+            AND revoked_at IS NULL AND NOT recovery_restricted
           RETURNING id`,
-        [input.now, input.sessionId, input.currentUserId],
+        [
+          input.now,
+          input.sessionId,
+          input.currentUserId,
+          normalizeHost(input.host),
+          input.tenantId ?? null,
+          input.siteId ?? null,
+        ],
       );
       if (result.rows.length !== 1) return false;
       await insertAudit(client, {
@@ -507,6 +1314,7 @@ export class PostgresAuthenticationRepository implements AuthenticationRepositor
   }
 
   async revokeSessionByToken(input: {
+    host: string;
     now: Date;
     tokenHash: string;
     traceId: string;
@@ -516,9 +1324,9 @@ export class PostgresAuthenticationRepository implements AuthenticationRepositor
         client,
         `UPDATE sessions
             SET revoked_at = $1, revoke_reason = 'logout'
-          WHERE token_hash = $2 AND revoked_at IS NULL
+          WHERE token_hash = $2 AND host = $3 AND revoked_at IS NULL
           RETURNING id, user_id`,
-        [input.now, input.tokenHash],
+        [input.now, input.tokenHash, normalizeHost(input.host)],
       );
       if (revoked.rows[0]) {
         await insertAudit(client, {
@@ -533,19 +1341,20 @@ export class PostgresAuthenticationRepository implements AuthenticationRepositor
     });
   }
 
-  async useRecoveryCode(input: {
-    codeHash: string;
-    factorId: string;
-    now: Date;
-  }): Promise<boolean> {
+  async checkRecoveryCode(input: { codeHash: string; userId: string }): Promise<boolean> {
     return withAuthTransaction(this.pool, async (client) => {
       const result = await query<{ id: string }>(
         client,
-        `UPDATE mfa_recovery_codes
-            SET used_at = $1
-          WHERE factor_id = $2 AND code_hash = $3 AND used_at IS NULL
-          RETURNING id`,
-        [input.now, input.factorId, input.codeHash],
+        `SELECT id FROM account_recovery_codes
+          WHERE user_id = $1 AND code_hash = $2 AND used_at IS NULL AND revoked_at IS NULL
+            AND set_version = (
+              SELECT max(newest.set_version)
+                FROM account_recovery_codes newest
+               WHERE newest.user_id = $1 AND newest.used_at IS NULL
+                 AND newest.revoked_at IS NULL
+            )
+          LIMIT 1`,
+        [input.userId, input.codeHash],
       );
       return result.rows.length === 1;
     });
@@ -566,8 +1375,10 @@ export class PostgresAuthenticationRepository implements AuthenticationRepositor
 
   async completeOwnerBootstrap(input: {
     displayName: string;
-    encryptedMfaSecret: Uint8Array;
-    keyVersion: number;
+    encryptedMfaSecret?: Uint8Array;
+    keyVersion?: number;
+    lastUsedCounter?: number;
+    method: 'email_code' | 'totp';
     normalizedEmail: string;
     now: Date;
     passwordHash: string;
@@ -604,23 +1415,45 @@ export class PostgresAuthenticationRepository implements AuthenticationRepositor
         [user.rows[0].id, input.passwordHash, input.now],
       );
       await client.query(
+        `INSERT INTO account_authentication_policies
+           (user_id, second_step_requirement, email_code_enabled, preferred_method)
+         VALUES ($1, 'required', $2, $3)
+         ON CONFLICT (user_id) DO UPDATE
+           SET second_step_requirement = 'required',
+               email_code_enabled = EXCLUDED.email_code_enabled,
+               preferred_method = EXCLUDED.preferred_method,
+               updated_at = $4`,
+        [user.rows[0].id, input.method === 'email_code', input.method, input.now],
+      );
+      await client.query(
         `INSERT INTO platform_memberships (user_id, role)
          VALUES ($1, 'platform_owner')`,
         [user.rows[0].id],
       );
-      const factor = await query<{ id: string }>(
-        client,
-        `INSERT INTO mfa_factors
-           (user_id, kind, encrypted_secret, key_version, verified_at)
-         VALUES ($1, 'totp', $2, $3, $4)
-         RETURNING id`,
-        [user.rows[0].id, Buffer.from(input.encryptedMfaSecret), input.keyVersion, input.now],
-      );
-      if (!factor.rows[0]) throw new Error('Owner MFA creation failed');
+      if (input.method === 'totp') {
+        if (!input.encryptedMfaSecret || !input.keyVersion) {
+          throw new Error('Owner TOTP material is missing');
+        }
+        const factor = await query<{ id: string }>(
+          client,
+          `INSERT INTO mfa_factors
+             (user_id, kind, encrypted_secret, key_version, verified_at, last_used_counter)
+           VALUES ($1, 'totp', $2, $3, $4, $5)
+           RETURNING id`,
+          [
+            user.rows[0].id,
+            Buffer.from(input.encryptedMfaSecret),
+            input.keyVersion,
+            input.now,
+            input.lastUsedCounter ?? null,
+          ],
+        );
+        if (!factor.rows[0]) throw new Error('Owner MFA creation failed');
+      }
       await client.query(
-        `INSERT INTO mfa_recovery_codes (factor_id, code_hash)
-         SELECT $1, unnest($2::text[])`,
-        [factor.rows[0].id, input.recoveryCodeHashes],
+        `INSERT INTO account_recovery_codes (user_id, set_version, code_hash)
+         SELECT $1, 1, unnest($2::text[])`,
+        [user.rows[0].id, input.recoveryCodeHashes],
       );
       await client.query(
         `UPDATE owner_bootstrap
@@ -631,7 +1464,7 @@ export class PostgresAuthenticationRepository implements AuthenticationRepositor
       await insertAudit(client, {
         action: 'auth.owner_bootstrap.completed',
         actorId: user.rows[0].id,
-        metadata: { mfaConfigured: true },
+        metadata: { method: input.method, recoveryCodesConfigured: true },
         targetId: user.rows[0].id,
         targetType: 'user',
         traceId: input.traceId,
@@ -673,6 +1506,25 @@ async function insertAudit(
   );
 }
 
+async function refreshAuthenticatedSession(
+  client: AuthenticationTransactionClient,
+  tokenHash: string,
+  host: string,
+): Promise<boolean> {
+  const refreshed = await query<{ id: string }>(
+    client,
+    `UPDATE sessions
+        SET last_seen_at = now()
+      WHERE token_hash = $1 AND host = $2
+        AND revoked_at IS NULL AND expires_at > now()
+        AND last_seen_at > now() - interval '30 minutes'
+        AND NOT recovery_restricted
+      RETURNING id`,
+    [tokenHash, host],
+  );
+  return refreshed.rows.length === 1;
+}
+
 async function query<T extends Record<string, unknown>>(
   client: AuthenticationTransactionClient,
   text: string,
@@ -685,23 +1537,38 @@ async function withAuthTransaction<T>(
   pool: AuthenticationTransactionPool,
   operation: (client: AuthenticationTransactionClient) => Promise<T>,
 ): Promise<T> {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    await client.query('SET LOCAL ROLE omnireach_auth');
-    const result = await operation(client);
-    await client.query('COMMIT');
-    return result;
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
+  const maximumAttempts = 3;
+  for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SET LOCAL ROLE omnireach_auth');
+      await client.query(`SELECT set_config('app.authentication_contract_version', '2', true)`);
+      const result = await operation(client);
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      if (!isRetryableTransactionError(error) || attempt === maximumAttempts) throw error;
+    } finally {
+      client.release();
+    }
   }
+  throw new Error('Authentication transaction retry limit reached');
+}
+
+function isRetryableTransactionError(error: unknown): boolean {
+  if (!error || typeof error !== 'object' || !('code' in error)) return false;
+  const code = (error as { code?: unknown }).code;
+  return code === '40P01' || code === '40001';
 }
 
 function parseRole(value: string | undefined): Role | undefined {
   return roles.find((role) => role === value);
+}
+
+function isVerificationMethod(value: string | null | undefined): value is VerificationMethod {
+  return value === 'email_code' || value === 'totp' || value === 'webauthn';
 }
 
 function normalizeHost(value: string): string {
