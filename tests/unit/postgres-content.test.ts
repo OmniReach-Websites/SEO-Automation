@@ -525,7 +525,8 @@ describe('PostgreSQL content repository', () => {
     ).rejects.toBeInstanceOf(PublicationPendingError);
     expect(activeQuery.mock.calls.some(([text]) => text.includes('WITH abandoned'))).toBe(false);
 
-    const abandonedQuery = vi.fn(async (text: string) => {
+    const abandonedQuery = vi.fn(async (text: string, values?: unknown[]) => {
+      void values;
       if (text.includes('SELECT EXISTS')) return { rows: [{ stale: true }] };
       if (text.includes('pg_try_advisory_xact_lock')) return { rows: [{ acquired: true }] };
       if (text.includes('WITH abandoned')) {
