@@ -1111,3 +1111,68 @@ h3 {
     animation-duration: 0.01ms !important;
   }
 }
+
+.footer-link-button {
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.footer-link-button:hover,
+.footer-link-button:focus-visible {
+  color: var(--accent-soft);
+  text-decoration: underline;
+}
+
+.analytics-consent {
+  position: fixed;
+  z-index: 100;
+  right: 1rem;
+  bottom: 1rem;
+  left: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: min(720px, calc(100% - 2rem));
+  margin-inline: auto;
+  padding: 1.1rem;
+  border: 1px solid rgba(134, 187, 216, 0.35);
+  border-radius: 18px;
+  background: rgba(11, 24, 32, 0.98);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.42);
+  color: var(--text);
+  gap: 1rem;
+}
+
+.analytics-consent[hidden] {
+  display: none;
+}
+
+.analytics-consent p {
+  max-width: 52ch;
+  margin: 0.3rem 0 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.analytics-consent-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 0.6rem;
+}
+
+@media (max-width: 640px) {
+  .analytics-consent {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .analytics-consent-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+}

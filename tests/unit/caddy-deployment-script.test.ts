@@ -7,6 +7,11 @@ import { describe, expect, it } from 'vitest';
 const root = resolve(import.meta.dirname, '../..');
 const scriptPath = resolve(root, 'infrastructure/deploy/configure-caddy-route.sh');
 const source = readFileSync(scriptPath, 'utf8');
+const publicSiteScriptPath = resolve(
+  root,
+  'infrastructure/deploy/configure-omnireach-public-route.sh',
+);
+const publicSiteSource = readFileSync(publicSiteScriptPath, 'utf8');
 
 describe('shared Caddy integration script', () => {
   it('is executable and refuses an uninventoried source configuration', () => {
@@ -38,5 +43,25 @@ describe('shared Caddy integration script', () => {
     expect(source).toContain('caddy reload --force --config /dev/stdin');
     expect(source).toContain('X-Robots-Tag "noindex, nofollow, noarchive"');
     expect(source).not.toContain('www.omnireach.cloud {');
+  });
+});
+
+describe('OmniReach public Caddy integration script', () => {
+  it('keeps Google Analytics access narrowly scoped', () => {
+    expect(publicSiteSource).toContain('https://www.googletagmanager.com');
+    expect(publicSiteSource).toContain('https://www.google-analytics.com');
+    expect(publicSiteSource).toContain("'sha256-1f6APo4rT+WRM24XLR07SyqI6L+qzt9T5/P7a6H1lIU='");
+    expect(publicSiteSource).not.toContain("'unsafe-inline'");
+    expect(publicSiteSource).not.toContain("'unsafe-eval'");
+  });
+
+  it('updates only its managed route and retains validation and rollback checks', () => {
+    expect(publicSiteSource).toContain("marker='# BEGIN OMNIREACH PUBLIC SITE'");
+    expect(publicSiteSource).toContain("end_marker='# END OMNIREACH PUBLIC SITE'");
+    expect(publicSiteSource).toContain('start_count=$(grep -Fxc');
+    expect(publicSiteSource).toContain('caddy validate');
+    expect(publicSiteSource).toContain('caddy reload');
+    expect(publicSiteSource).toContain('https://christiansreunite.com');
+    expect(publicSiteSource).toContain('cp --preserve=mode,ownership -- "$backup" "$caddyfile"');
   });
 });

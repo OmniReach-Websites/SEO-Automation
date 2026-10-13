@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -65,6 +66,19 @@ export function checkSiteBuilds() {
         if (logoUses !== 2) {
           errors.push(`${sitePath}: expected header and footer logo in ${file}`);
         }
+        const googleTagLoader = 'https://www.googletagmanager.com/gtag/js?id=G-5H7ZB5HMLC';
+        const googleTagUses =
+          html.match(/https:\/\/www\.googletagmanager\.com\/gtag\/js\?id=G-5H7ZB5HMLC/gu)?.length ??
+          0;
+        if (googleTagUses !== 1 || !html.includes(`async src="${googleTagLoader}"`)) {
+          errors.push(`${sitePath}: expected exactly one asynchronous Google tag in ${file}`);
+        }
+        if (!html.includes("gtag('config', 'G-5H7ZB5HMLC');")) {
+          errors.push(`${sitePath}: Google tag configuration is missing in ${file}`);
+        }
+        if (!/^<!DOCTYPE html><html lang="en"><head><!-- Google tag \(gtag\.js\) -->/u.test(html)) {
+          errors.push(`${sitePath}: Google tag must be the first content in head in ${file}`);
+        }
       }
       const ids = [...html.matchAll(/\sid=["']([^"']+)["']/giu)].map((match) => match[1]);
       if (new Set(ids).size !== ids.length)
@@ -77,13 +91,19 @@ export function checkSiteBuilds() {
         errors.push(`${sitePath}: positive tabindex is forbidden in ${file}`);
       if (/\sautofocus(?:\s|>|=)/iu.test(html))
         errors.push(`${sitePath}: autofocus is forbidden in ${file}`);
-      if (
-        sitePath === 'sites/omnireach' &&
-        /<script\b(?![^>]*\bsrc=)(?![^>]*\btype=["']application\/ld\+json["'])[^>]*>/iu.test(html)
-      ) {
-        errors.push(
-          `${sitePath}: executable inline script conflicts with production CSP in ${file}`,
-        );
+      if (sitePath === 'sites/omnireach') {
+        const executableInlineScripts = [
+          ...html.matchAll(
+            /<script\b(?![^>]*\bsrc=)(?![^>]*\btype=["']application\/ld\+json["'])[^>]*>([\s\S]*?)<\/script>/giu,
+          ),
+        ];
+        const approvedGoogleTagHash = '1f6APo4rT+WRM24XLR07SyqI6L+qzt9T5/P7a6H1lIU=';
+        const inlineScriptHash = executableInlineScripts[0]?.[1]
+          ? createHash('sha256').update(executableInlineScripts[0][1]).digest('base64')
+          : '';
+        if (executableInlineScripts.length !== 1 || inlineScriptHash !== approvedGoogleTagHash) {
+          errors.push(`${sitePath}: unapproved executable inline script in ${file}`);
+        }
       }
       for (const control of html.matchAll(
         /<(?:input|textarea|select)\b[^>]*\sid=["']([^"']+)["'][^>]*>/giu,
@@ -104,6 +124,7 @@ export function checkSiteBuilds() {
         'https://coopsmobiledetailingaledo.com/services/',
         'https://instagram.com/coops_mobile_detailing',
         'https://admin.omnireach.cloud/login',
+        'https://www.googletagmanager.com/gtag/js?id=G-5H7ZB5HMLC',
         'https://omnireach.cloud',
         'https://omnireach.cloud/',
         'https://omnireach.cloud/about/',

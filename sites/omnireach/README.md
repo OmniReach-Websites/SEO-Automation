@@ -8,4 +8,6 @@ The public legal pages are `/privacy/` and `/tos/`. Their manifest fields are pr
 
 The public site uses the approved transparent logo at `public/omnireach-logo.png` and the brand palette `#336699`, `#86bbd8`, `#2f4858`, `#9ee493`, and `#daf7dc`. All public routes share the dark color scheme in `src/styles/global.css`.
 
+All HTML routes load the single GA4 Google tag `G-5H7ZB5HMLC` from the shared layout. The production Caddy policy permits only the Google tag loader, the exact hashed initialization script, and the Google Analytics collection endpoints; it does not enable unrestricted inline scripts.
+
 Build locally with `npm run build --workspace @omnireach/site-omnireach`.
