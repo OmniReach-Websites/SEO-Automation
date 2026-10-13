@@ -45,6 +45,9 @@ describe('ORAP Google connection controls', () => {
     expect(page.statusCode).toBe(200);
     expect(page.body).toContain('Connect Search Console');
     expect(page.body).toContain('Connect Google Analytics');
+    expect(page.headers['content-security-policy']).toBe(
+      "default-src 'none'; img-src 'self'; style-src 'self'; form-action 'self' https://accounts.google.com; frame-ancestors 'none'",
+    );
 
     const started = await server.inject({
       headers: {
