@@ -151,6 +151,8 @@ jobs:
           done
           grep -Fq '<link rel="canonical" href="https://omnireach.cloud/">' omnireach-home.html
           grep -Fq 'Websites, managed well' omnireach-home.html
+          test "$(grep -Fo 'https://www.googletagmanager.com/gtag/js?id=G-5H7ZB5HMLC' omnireach-home.html | wc -l)" = 1
+          grep -Fq "gtag('config', 'G-5H7ZB5HMLC');" omnireach-home.html
           curl --fail --silent --show-error --max-time 15 "${origin}/robots.txt" |
             grep -Fq 'Sitemap: https://omnireach.cloud/sitemap.xml'
           curl --fail --silent --show-error --max-time 15 "${origin}/sitemap.xml" |

@@ -5,8 +5,11 @@ caddy_root=/opt/servers/caddy
 caddyfile=$caddy_root/Caddyfile
 compose_file=$caddy_root/compose.yml
 marker='# BEGIN OMNIREACH PUBLIC SITE'
+end_marker='# END OMNIREACH PUBLIC SITE'
 backup=$caddy_root/Caddyfile.pre-omnireach-public-$(date -u +%Y%m%dT%H%M%SZ)
 candidate=$(mktemp "$caddy_root/.Caddyfile.omnireach-public.XXXXXX")
+managed_block=$(mktemp "$caddy_root/.Caddyfile.omnireach-public-block.XXXXXX")
+rewritten=$(mktemp "$caddy_root/.Caddyfile.omnireach-public-rewritten.XXXXXX")
 changed=false
 
 fail() {
@@ -15,7 +18,7 @@ fail() {
 }
 
 cleanup() {
-  rm -f -- "$candidate"
+  rm -f -- "$candidate" "$managed_block" "$rewritten"
 }
 trap cleanup EXIT HUP INT TERM
 
@@ -24,14 +27,7 @@ trap cleanup EXIT HUP INT TERM
 [ -f "$compose_file" ] || fail 'shared Caddy Compose file is missing'
 
 cp --preserve=mode,ownership -- "$caddyfile" "$candidate"
-if ! grep -Fq "$marker" "$candidate"; then
-  if grep -Eq '^[[:space:]]*(www\.)?omnireach\.cloud([[:space:],{]|$)' "$candidate"; then
-    fail 'the OmniReach public domain already has an unmanaged Caddy route'
-  fi
-  cp --preserve=mode,ownership,timestamps -- "$caddyfile" "$backup"
-  changed=true
-  cat >>"$candidate" <<'EOF'
-
+cat >"$managed_block" <<'EOF'
 # BEGIN OMNIREACH PUBLIC SITE
 www.omnireach.cloud {
     redir https://omnireach.cloud{uri} permanent
@@ -40,7 +36,7 @@ www.omnireach.cloud {
 omnireach.cloud {
     encode zstd gzip
     header {
-        Content-Security-Policy "default-src 'self'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; connect-src 'self'; img-src 'self' data:; style-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+        Content-Security-Policy "default-src 'self'; script-src 'self' 'sha256-1f6APo4rT+WRM24XLR07SyqI6L+qzt9T5/P7a6H1lIU=' https://challenges.cloudflare.com https://www.googletagmanager.com; frame-src https://challenges.cloudflare.com; connect-src 'self' https://www.google-analytics.com https://*.google-analytics.com https://analytics.google.com https://*.analytics.google.com https://www.googletagmanager.com; img-src 'self' data: https://www.google-analytics.com https://*.google-analytics.com https://www.googletagmanager.com; style-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
         Permissions-Policy "camera=(), geolocation=(), microphone=()"
         Referrer-Policy "strict-origin-when-cross-origin"
         Strict-Transport-Security "max-age=31536000; includeSubDomains"
@@ -56,6 +52,30 @@ omnireach.cloud {
 }
 # END OMNIREACH PUBLIC SITE
 EOF
+
+start_count=$(grep -Fxc "$marker" "$candidate" || true)
+end_count=$(grep -Fxc "$end_marker" "$candidate" || true)
+if [ "$start_count" -eq 0 ] && [ "$end_count" -eq 0 ]; then
+  if grep -Eq '^[[:space:]]*(www\.)?omnireach\.cloud([[:space:],{]|$)' "$candidate"; then
+    fail 'the OmniReach public domain already has an unmanaged Caddy route'
+  fi
+  printf '\n' >>"$candidate"
+  cat "$managed_block" >>"$candidate"
+elif [ "$start_count" -eq 1 ] && [ "$end_count" -eq 1 ]; then
+  awk -v start="$marker" -v finish="$end_marker" -v block="$managed_block" '
+    $0 == start {
+      while ((getline line < block) > 0) print line
+      close(block)
+      inside = 1
+      next
+    }
+    inside && $0 == finish { inside = 0; next }
+    !inside { print }
+    END { if (inside) exit 42 }
+  ' "$candidate" >"$rewritten" || fail 'the managed OmniReach Caddy block is malformed'
+  mv -- "$rewritten" "$candidate"
+else
+  fail 'the managed OmniReach Caddy markers are missing or duplicated'
 fi
 
 docker compose --file "$compose_file" exec -T caddy \
@@ -63,6 +83,8 @@ docker compose --file "$compose_file" exec -T caddy \
   fail 'candidate Caddy configuration is invalid'
 
 if ! cmp -s "$candidate" "$caddyfile"; then
+  cp --preserve=mode,ownership,timestamps -- "$caddyfile" "$backup"
+  changed=true
   mv -- "$candidate" "$caddyfile"
 fi
 
