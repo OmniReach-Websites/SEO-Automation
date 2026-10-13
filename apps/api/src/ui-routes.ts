@@ -412,10 +412,10 @@ export function registerUiRoutes(
         ) {
           const canManageGoogle = Boolean(
             options.integrationService &&
-              canOrap(actor, 'integrations.google.manage', {
-                siteId: site.id,
-                tenantId: site.tenantId,
-              }),
+            canOrap(actor, 'integrations.google.manage', {
+              siteId: site.id,
+              tenantId: site.tenantId,
+            }),
           );
           const management = options.orapService?.siteManagement
             ? parseSiteManagement(
