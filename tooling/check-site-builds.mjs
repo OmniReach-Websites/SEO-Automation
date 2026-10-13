@@ -55,6 +55,14 @@ export function checkSiteBuilds() {
         errors.push(`${sitePath}: positive tabindex is forbidden in ${file}`);
       if (/\sautofocus(?:\s|>|=)/iu.test(html))
         errors.push(`${sitePath}: autofocus is forbidden in ${file}`);
+      if (
+        sitePath === 'sites/omnireach' &&
+        /<script\b(?![^>]*\bsrc=)(?![^>]*\btype=["']application\/ld\+json["'])[^>]*>/iu.test(html)
+      ) {
+        errors.push(
+          `${sitePath}: executable inline script conflicts with production CSP in ${file}`,
+        );
+      }
       for (const control of html.matchAll(
         /<(?:input|textarea|select)\b[^>]*\sid=["']([^"']+)["'][^>]*>/giu,
       )) {
