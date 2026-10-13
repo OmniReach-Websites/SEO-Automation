@@ -13,6 +13,18 @@ function request(hostname: string, token = 'fictional-session'): FastifyRequest 
   } as unknown as FastifyRequest;
 }
 
+function googleCallbackRequest(
+  hostname: string,
+  token = 'fictional-oauth-session',
+): FastifyRequest {
+  return {
+    cookies: { '__Secure-omnireach_google_oauth': token },
+    headers: {},
+    hostname,
+    id: 'trace-context-google',
+  } as unknown as FastifyRequest;
+}
+
 function contextPool(rows: Record<string, unknown>[]) {
   const query = vi.fn(async (text: string, values?: unknown[]) => {
     void values;
@@ -142,6 +154,33 @@ describe('PostgreSQL-backed request context', () => {
     expect(contextSql).toContain('NOT definition.is_owner_only');
     expect(contextSql).toContain("s.last_seen_at > now() - interval '30 minutes'");
     expect(String(query.mock.calls[4]?.[0])).toContain('SET last_seen_at = now()');
+  });
+
+  it('uses the short-lived callback cookie only for the Google callback resolver', async () => {
+    const { pool, query } = contextPool([
+      {
+        authentication_assurance: 'baseline',
+        authorization_version: 1,
+        grants: [],
+        membership_id: 'membership-owner',
+        role: 'platform_owner',
+        user_id: 'owner-a',
+        verified_at: new Date('2026-10-13T12:00:00.000Z'),
+      },
+    ]);
+    const resolver = new PostgresRequestContextResolver(pool, 'admin.omnireach.test');
+    const callbackRequest = googleCallbackRequest('admin.omnireach.test');
+
+    await expect(resolver.platform(callbackRequest)).resolves.toBeUndefined();
+    await expect(resolver.platformGoogleCallback(callbackRequest)).resolves.toMatchObject({
+      id: 'owner-a',
+      role: 'platform_owner',
+      traceId: 'trace-context-google',
+    });
+    expect(query.mock.calls[3]?.[1]).toEqual([
+      createHash('sha256').update('fictional-oauth-session').digest('hex'),
+      'admin.omnireach.test',
+    ]);
   });
 
   it('fails closed when effective ORAP authorization is malformed', async () => {
