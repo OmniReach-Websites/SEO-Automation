@@ -5,6 +5,8 @@ import {
   siteContractJsonSchema,
   validateSiteContract,
 } from '@omnireach/contracts';
+import { readFileSync, readdirSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const valid = {
@@ -106,5 +108,42 @@ describe('versioned site contract', () => {
     expect(() => assertContractUpgradeCompatible(previous, breaking)).toThrow(
       'explicit content/redirect migration',
     );
+  });
+});
+
+describe('OmniReach public legal routes', () => {
+  it('exposes protected owner-only terms content on only the OmniReach public site', () => {
+    const sitesRoot = resolve(import.meta.dirname, '../../sites');
+    const manifests = readdirSync(sitesRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => ({
+        directory: entry.name,
+        contract: validateSiteContract(
+          JSON.parse(
+            readFileSync(resolve(sitesRoot, entry.name, 'site.manifest.json'), 'utf8'),
+          ) as unknown,
+        ),
+      }));
+    const termsSites = manifests.filter(({ contract }) =>
+      contract.routes.some(({ path }) => path === '/tos/'),
+    );
+
+    expect(termsSites.map(({ directory }) => directory)).toEqual(['omnireach']);
+    const termsContract = termsSites[0]?.contract;
+    expect(termsContract?.routes).toContainEqual({
+      componentId: 'terms',
+      id: 'terms',
+      path: '/tos/',
+    });
+    expect(termsContract?.fields).toContainEqual({
+      aiMode: 'disabled',
+      componentId: 'terms',
+      editableBy: ['platform_owner'],
+      factRef: 'legal.terms',
+      id: 'terms.content',
+      label: 'Terms of Service',
+      protected: true,
+      type: 'richText',
+    });
   });
 });
