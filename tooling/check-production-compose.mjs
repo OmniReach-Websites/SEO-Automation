@@ -22,6 +22,12 @@ export function checkProductionCompose() {
     'api',
     'coops-mobile-detailing',
     'omnireach-public-site',
+    'scheduler',
+    'runner',
+    'publisher',
+    'crawler',
+    'seo',
+    'monitoring',
   ];
 
   if (compose.name !== 'omnireach-production') errors.push('unexpected production project name');
@@ -136,6 +142,31 @@ export function checkProductionCompose() {
     errors.push('OmniReach public site must not publish a host port');
   }
 
+  for (const worker of ['scheduler', 'runner', 'publisher', 'crawler', 'seo', 'monitoring']) {
+    const service = compose.services?.[worker];
+    if (!service?.healthcheck || service?.restart !== 'unless-stopped') {
+      errors.push(`${worker} must restart and expose a health check`);
+    }
+    if (!service?.cpus || !service?.mem_limit || !service?.pids_limit) {
+      errors.push(`${worker} is missing resource limits`);
+    }
+    if (service?.read_only !== true || !(service?.cap_drop ?? []).includes('ALL')) {
+      errors.push(`${worker} must use a read-only, capability-dropped runtime`);
+    }
+  }
+  if (compose.services?.publisher?.environment?.WORKER_CATEGORIES !== 'publish') {
+    errors.push('publisher must consume only the publish queue');
+  }
+  if (compose.services?.crawler?.environment?.WORKER_CATEGORIES !== 'crawl') {
+    errors.push('crawler must consume only the crawl queue');
+  }
+  if (compose.services?.seo?.environment?.WORKER_CATEGORIES !== 'seo_audit') {
+    errors.push('seo must consume only the seo_audit queue');
+  }
+  if (compose.services?.monitoring?.environment?.WORKER_CATEGORIES !== 'health_check') {
+    errors.push('monitoring must consume only the health_check queue');
+  }
+
   const declaredVolumes = ['platform-data', 'postgres-data', 'redis-data'];
   for (const volume of declaredVolumes) {
     if (!compose.volumes?.[volume]?.name?.includes('OMNIREACH_RESOURCE_PREFIX')) {
@@ -188,6 +219,7 @@ export function checkProductionCompose() {
       'infrastructure/compose/scripts/redis-entrypoint.sh',
       'infrastructure/compose/scripts/runtime-entrypoint.sh',
       'infrastructure/deploy/configure-coops-site-route.sh',
+      'infrastructure/deploy/configure-coops-admin-route.sh',
       'infrastructure/deploy/configure-omnireach-public-route.sh',
     ],
     { cwd: root, encoding: 'utf8' },
@@ -198,6 +230,7 @@ export function checkProductionCompose() {
     'redis-entrypoint.sh',
     'runtime-entrypoint.sh',
     '../../deploy/configure-coops-site-route.sh',
+    '../../deploy/configure-coops-admin-route.sh',
     '../../deploy/configure-omnireach-public-route.sh',
   ]) {
     const trackedPath = script.startsWith('../../deploy/')
@@ -242,6 +275,21 @@ export function checkProductionCompose() {
   ]) {
     if (!publicRouteInstaller.includes(expected)) {
       errors.push(`OmniReach public route installer is missing ${expected}`);
+    }
+  }
+
+  const adminRouteInstaller = readFileSync(
+    resolve(root, 'infrastructure/deploy/configure-coops-admin-route.sh'),
+    'utf8',
+  );
+  for (const expected of [
+    'admin.coopsmobiledetailingaledo.com',
+    'reverse_proxy omnireach-api:4100',
+    'caddy validate',
+    'caddy reload',
+  ]) {
+    if (!adminRouteInstaller.includes(expected)) {
+      errors.push(`Coop admin route installer is missing ${expected}`);
     }
   }
 

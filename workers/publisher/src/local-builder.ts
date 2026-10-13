@@ -26,6 +26,7 @@ export class LocalPublicationBuilder {
     private readonly options: {
       codeSha: string;
       repositoryRoot: string;
+      assetStorageRoot?: string;
       sites: ReadonlyMap<string, SiteBuildDefinition>;
     },
   ) {}
@@ -39,6 +40,7 @@ export class LocalPublicationBuilder {
       artifacts: this.artifacts,
       definition,
       repositoryRoot: this.options.repositoryRoot,
+      ...(this.options.assetStorageRoot ? { assetStorageRoot: this.options.assetStorageRoot } : {}),
       siteId: request.siteId,
       snapshot,
     });
@@ -84,6 +86,7 @@ export class LocalPublicationBuilder {
 }
 
 export async function buildSnapshotArtifact(input: {
+  assetStorageRoot?: string;
   artifacts: LocalArtifactStore;
   definition: SiteBuildDefinition;
   repositoryRoot: string;
@@ -102,6 +105,7 @@ export async function buildSnapshotArtifact(input: {
       workspace: input.definition.workspace,
     });
     const files = await collectFiles(output);
+    await includeManagedAssets(files, input.snapshot, input.assetStorageRoot);
     validateExpectedRoutes(files, input.definition.routes, input.definition.healthPaths);
     const finalized = finalizeManifest({
       assetManifestHash: input.snapshot.assetManifestHash,
@@ -123,6 +127,60 @@ export async function buildSnapshotArtifact(input: {
   } finally {
     await rm(temporary, { force: true, recursive: true });
   }
+}
+
+async function includeManagedAssets(
+  files: Map<string, Uint8Array>,
+  snapshot: PublicationSnapshot,
+  storageRoot: string | undefined,
+): Promise<void> {
+  const referenced = managedAssetReferences(snapshot.content);
+  managedAssetReferences(snapshot.facts, referenced);
+  if (referenced.size === 0) return;
+  if (!snapshot.assets?.length) throw new Error('Referenced managed asset is unavailable');
+  if (!storageRoot) throw new Error('Asset storage root is required for managed media');
+  const root = resolve(storageRoot);
+  const available = new Map(snapshot.assets.map((asset) => [asset.id, asset]));
+  let totalBytes = 0;
+  for (const assetId of referenced) {
+    const asset = available.get(assetId);
+    if (!asset) throw new Error('Referenced managed asset is unavailable');
+    if (!/^[0-9a-f-]{36}$/iu.test(asset.id) || !/^[a-f0-9]{64}$/u.test(asset.checksum)) {
+      throw new Error('Managed asset identity is invalid');
+    }
+    if (!asset.storageKey.startsWith(`${snapshot.siteId}/`) || asset.storageKey.includes('..')) {
+      throw new Error('Managed asset storage key is invalid');
+    }
+    const source = resolve(root, ...asset.storageKey.split('/'));
+    if (!source.startsWith(`${root}${sep}`)) throw new Error('Managed asset escapes storage');
+    const bytes = new Uint8Array(await readFile(source));
+    if (sha256(bytes) !== asset.checksum) throw new Error('Managed asset checksum mismatch');
+    totalBytes += bytes.byteLength;
+    if (totalBytes > 50 * 1024 * 1024) throw new Error('Managed assets exceed size limit');
+    const extension = {
+      'image/jpeg': 'jpg',
+      'image/png': 'png',
+      'image/webp': 'webp',
+    }[asset.mime];
+    if (!extension) throw new Error('Managed asset media type is invalid');
+    files.set(`managed-assets/${asset.id}.${extension}`, bytes);
+  }
+}
+
+function managedAssetReferences(value: unknown, found = new Set<string>()): Set<string> {
+  if (typeof value === 'string') {
+    const match =
+      /^asset:([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/iu.exec(
+        value,
+      );
+    if (match?.[1]) found.add(match[1]);
+  } else if (Array.isArray(value)) {
+    for (const entry of value) managedAssetReferences(entry, found);
+  } else if (value && typeof value === 'object') {
+    for (const entry of Object.values(value)) managedAssetReferences(entry, found);
+  }
+  if (found.size > 100) throw new Error('Managed asset reference count exceeds limit');
+  return found;
 }
 
 async function collectFiles(root: string): Promise<Map<string, Uint8Array>> {

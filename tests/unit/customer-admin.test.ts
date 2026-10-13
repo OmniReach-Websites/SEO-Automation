@@ -105,7 +105,12 @@ describe('customer dashboard and editor', () => {
       expect(html).toContain(`data-field-type="${type}"`);
     }
     expect(html).not.toContain('contenteditable');
-    expect(html).not.toContain('type="file"');
+    expect(html).toContain('id="media-file" type="file"');
+    expect(html).toContain('accept="image/jpeg,image/png,image/webp"');
+    expect(html).toContain("fetch('/v1/customer/assets'");
+    expect(html).toContain("'Content-Type':'application/octet-stream'");
+    expect(html).toContain('image.size>10485760');
+    expect(html).not.toContain('storageKey');
   });
 
   it('enforces owner/editor/viewer publication rules', () => {

@@ -14,12 +14,20 @@ if (!['127.0.0.1', 'localhost'].includes(target.hostname) || target.pathname !==
 
 const database = createDatabase(databaseUrl);
 const scheduleId = randomUUID();
-const tenantId = '10000000-0000-4000-8000-000000000001';
-const siteId = '20000000-0000-4000-8000-000000000001';
+const tenantId = randomUUID();
+const siteId = randomUUID();
 const now = new Date();
 const enqueued: JobEnvelope[] = [];
 
 try {
+  await database.pool.query(`INSERT INTO tenants (id, name) VALUES ($1, 'Scheduler verifier')`, [
+    tenantId,
+  ]);
+  await database.pool.query(
+    `INSERT INTO sites (id, tenant_id, name, status)
+     VALUES ($1, $2, 'Scheduler verifier site', 'active')`,
+    [siteId, tenantId],
+  );
   await database.pool.query(
     `INSERT INTO schedules
        (id, tenant_id, site_id, category, timezone, local_hour, local_minute,
@@ -70,22 +78,19 @@ try {
   );
 } finally {
   try {
-    const jobs = enqueued[0]
-      ? await database.pool.query<{ id: string }>(
-          `SELECT id FROM jobs WHERE tenant_id = $1 AND site_id = $2
-             AND category = 'health_check' AND dedupe_key = $3`,
-          [tenantId, siteId, enqueued[0].dedupeKey],
-        )
-      : { rows: [] };
     await database.pool.query('DELETE FROM schedules WHERE id = $1', [scheduleId]);
-    for (const job of jobs.rows) {
-      await database.pool.query(
-        `UPDATE jobs SET completed_at = now() - interval '91 days', state = 'cancelled'
-          WHERE id = $1`,
-        [job.id],
-      );
-      await database.pool.query('DELETE FROM jobs WHERE id = $1', [job.id]);
-    }
+    await database.pool.query(
+      `UPDATE jobs SET completed_at = now() - interval '91 days', state = 'cancelled'
+        WHERE tenant_id = $1`,
+      [tenantId],
+    );
+    await database.pool.query('DELETE FROM job_runs WHERE tenant_id = $1', [tenantId]);
+    await database.pool.query('DELETE FROM jobs WHERE tenant_id = $1', [tenantId]);
+    await database.pool.query('DELETE FROM sites WHERE id = $1 AND tenant_id = $2', [
+      siteId,
+      tenantId,
+    ]);
+    await database.pool.query('DELETE FROM tenants WHERE id = $1', [tenantId]);
   } finally {
     await database.close();
   }

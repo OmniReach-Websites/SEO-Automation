@@ -90,7 +90,7 @@
       "componentId": "home.goal",
       "label": "Show first-car goal",
       "type": "visibility",
-      "editableBy": ["customer_owner"],
+      "editableBy": ["platform_owner", "platform_admin", "staff"],
       "protected": true,
       "factRef": "goal.financial-progress",
       "aiMode": "disabled"
@@ -100,7 +100,7 @@
       "componentId": "home.goal",
       "label": "First-car goal amounts",
       "type": "cards",
-      "editableBy": ["customer_owner"],
+      "editableBy": ["platform_owner", "platform_admin", "staff"],
       "protected": true,
       "factRef": "goal.financial-progress",
       "aiMode": "disabled"
@@ -119,7 +119,7 @@
       "componentId": "services.packages",
       "label": "Service starting prices",
       "type": "cards",
-      "editableBy": ["customer_owner"],
+      "editableBy": ["platform_owner", "platform_admin", "staff"],
       "protected": true,
       "factRef": "services.prices",
       "aiMode": "disabled"
@@ -129,7 +129,7 @@
       "componentId": "services.addons",
       "label": "Available add-ons",
       "type": "cards",
-      "editableBy": ["customer_owner"],
+      "editableBy": ["platform_owner", "platform_admin", "staff"],
       "protected": true,
       "factRef": "services.availability",
       "aiMode": "disabled"
@@ -157,7 +157,7 @@
       "componentId": "about",
       "label": "Cooper's story",
       "type": "richText",
-      "editableBy": ["customer_owner"],
+      "editableBy": ["platform_owner", "platform_admin", "staff"],
       "protected": true,
       "factRef": "about.story",
       "aiMode": "disabled"
@@ -167,7 +167,7 @@
       "componentId": "faq",
       "label": "Frequently asked questions",
       "type": "cards",
-      "editableBy": ["customer_owner"],
+      "editableBy": ["platform_owner", "platform_admin", "staff"],
       "protected": true,
       "factRef": "business.service-policy",
       "aiMode": "disabled"
@@ -177,7 +177,7 @@
       "componentId": "contact",
       "label": "Phone and text number",
       "type": "link",
-      "editableBy": ["customer_owner"],
+      "editableBy": ["platform_owner", "platform_admin", "staff"],
       "protected": true,
       "factRef": "business.phone",
       "aiMode": "disabled"
@@ -187,7 +187,7 @@
       "componentId": "contact",
       "label": "Confirmed service areas",
       "type": "cards",
-      "editableBy": ["customer_owner"],
+      "editableBy": ["platform_owner", "platform_admin", "staff"],
       "protected": true,
       "factRef": "business.service-areas",
       "aiMode": "disabled"
@@ -197,7 +197,7 @@
       "componentId": "privacy",
       "label": "Approved privacy notice",
       "type": "richText",
-      "editableBy": ["customer_owner"],
+      "editableBy": ["platform_owner", "platform_admin", "staff"],
       "protected": true,
       "factRef": "legal.privacy",
       "aiMode": "disabled"

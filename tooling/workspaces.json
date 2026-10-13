@@ -83,10 +83,16 @@
       "path": "workers/runner",
       "kind": "worker",
       "allowedWorkspaceDependencies": [
+        "@omnireach/contracts",
+        "@omnireach/database",
         "@omnireach/observability",
         "@omnireach/queue",
+        "@omnireach/seo-core",
         "@omnireach/shared",
-        "@omnireach/tenant"
+        "@omnireach/tenant",
+        "@omnireach/worker-crawler",
+        "@omnireach/worker-monitoring",
+        "@omnireach/worker-publisher"
       ]
     },
     {
@@ -148,6 +154,7 @@
       "path": "workers/scheduler",
       "kind": "worker",
       "allowedWorkspaceDependencies": [
+        "@omnireach/database",
         "@omnireach/observability",
         "@omnireach/queue",
         "@omnireach/shared",

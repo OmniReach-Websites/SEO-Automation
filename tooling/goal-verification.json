@@ -148,6 +148,7 @@
     ["npm", "run", "check:migrations"],
     ["npm", "run", "verify:publication-job-admission"],
     ["npm", "run", "verify:publication-flow"],
+    ["npm", "run", "verify:publisher-daemon"],
     ["npm", "run", "test:e2e", "--", "platform-flows.spec.ts"]
   ],
   "G17": [
@@ -168,6 +169,7 @@
   "G20": [
     ["npm", "test", "--", "queue.test.ts"],
     ["npm", "run", "verify:queue-runtime"],
+    ["npm", "run", "verify:worker-runtime"],
     ["npm", "run", "verify:publication-job-admission"],
     ["npm", "run", "check:migrations"],
     ["npm", "run", "test:security"]
@@ -192,6 +194,8 @@
     ["npm", "run", "test:integration", "--", "orap/routes.test.ts"],
     ["npm", "run", "verify:alert-lifecycle"],
     ["npm", "run", "verify:scheduler-runtime"],
+    ["npm", "run", "verify:worker-runtime"],
+    ["npm", "run", "verify:publisher-daemon"],
     ["npm", "run", "verify:orap-operations"],
     ["npm", "run", "check:migrations"]
   ],

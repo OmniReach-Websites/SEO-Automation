@@ -8,6 +8,7 @@
     "kind": "worker"
   },
   "dependencies": {
+    "@omnireach/database": "0.0.0",
     "@omnireach/observability": "0.0.0",
     "@omnireach/queue": "0.0.0",
     "@omnireach/shared": "0.0.0",

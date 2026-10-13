@@ -4,15 +4,18 @@ import Layout from '../layouts/Layout.astro';
 import {
   CALL_HREF,
   INSTAGRAM_URL,
+  metadataFor,
   PHONE_DISPLAY,
   serviceAreas,
   TEXT_HREF,
 } from '../data/site';
+const metadata = metadataFor('contact');
 ---
 
 <Layout
-  title="Contact Cooper"
-  description="Call or text Cooper for a mobile detailing quote in Aledo, Weatherford, Willow Park, Fort Worth, and surrounding communities."
+  title={metadata.title}
+  description={metadata.description}
+  image={metadata.image}
 >
   <section class="contact-hero">
     <div class="shell contact-hero-grid">

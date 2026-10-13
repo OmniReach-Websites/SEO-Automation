@@ -212,6 +212,7 @@ try {
   containerCreated = true;
 
   let ready = false;
+  let consecutiveReadyChecks = 0;
   for (let attempt = 0; attempt < 80; attempt += 1) {
     const result = run('docker', [
       'exec',
@@ -223,8 +224,13 @@ try {
       database,
     ]);
     if (result.status === 0) {
-      ready = true;
-      break;
+      consecutiveReadyChecks += 1;
+      if (consecutiveReadyChecks >= 3) {
+        ready = true;
+        break;
+      }
+    } else {
+      consecutiveReadyChecks = 0;
     }
     sleep(250);
   }

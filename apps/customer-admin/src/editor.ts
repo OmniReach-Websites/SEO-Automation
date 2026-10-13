@@ -58,7 +58,11 @@ export function renderEditor(
             : '<p>Publishing is unavailable for this account.</p>'
         }</section>`
       : '';
-  return `${editor}<p id="protected-note">Unavailable fields cannot be changed from this editor.</p>${actions}`;
+  const media =
+    options.canEdit === false
+      ? ''
+      : `<section aria-labelledby="media-heading"><h2 id="media-heading">Media library</h2><p>Upload a JPG, PNG, or WebP image up to 10 MB. Copy the returned managed reference into an image field, together with useful alt text.</p><label for="media-file">Image file</label><input id="media-file" type="file" accept="image/jpeg,image/png,image/webp"><button id="media-upload" type="button">Upload image</button><output id="media-result" role="status" aria-live="polite"></output></section><script>(()=>{const file=document.getElementById('media-file');const button=document.getElementById('media-upload');const output=document.getElementById('media-result');if(!(file instanceof HTMLInputElement)||!(button instanceof HTMLButtonElement)||!(output instanceof HTMLOutputElement))return;button.addEventListener('click',async()=>{const image=file.files?.[0];if(!image){output.textContent='Choose an image first.';return}if(image.size>10485760){output.textContent='The image is larger than 10 MB.';return}button.disabled=true;output.textContent='Uploading…';try{const response=await fetch('/v1/customer/assets',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/octet-stream','X-File-Name':image.name},body:image});if(!response.ok)throw new Error('upload failed');const asset=await response.json();output.textContent='Uploaded. Managed reference: '+asset.reference}catch{output.textContent='Upload failed. Check the file type and try again.'}finally{button.disabled=false}})})()</script>`;
+  return `${editor}<p id="protected-note">Unavailable fields cannot be changed from this editor.</p>${media}${actions}`;
 }
 
 function renderControl(field: EditorField): string {

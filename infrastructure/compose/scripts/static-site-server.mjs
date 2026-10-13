@@ -1,11 +1,17 @@
 import { createReadStream } from 'node:fs';
-import { stat } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { extname, resolve, sep } from 'node:path';
 
-const root = resolve(
+const fallbackRoot = resolve(
   process.env.STATIC_SITE_ROOT || '/opt/omnireach/sites/coops-mobile-detailing/dist',
 );
+const publicationRoot = process.env.STATIC_SITE_PUBLICATION_ROOT
+  ? resolve(process.env.STATIC_SITE_PUBLICATION_ROOT)
+  : undefined;
+const publicationSiteId = (
+  process.env.STATIC_SITE_PUBLICATION_SITE_ID || process.env.COOPS_SITE_ID
+)?.trim();
 const host = process.env.STATIC_SITE_HOST || '0.0.0.0';
 const port = Number.parseInt(process.env.STATIC_SITE_PORT || '8080', 10);
 
@@ -36,7 +42,32 @@ function cacheControl(pathname) {
   return 'public, max-age=3600';
 }
 
-async function resolveFile(pathname) {
+async function activeRoot() {
+  if (!publicationRoot || !publicationSiteId) return fallbackRoot;
+  if (!/^[a-zA-Z0-9_-]{3,100}$/u.test(publicationSiteId)) {
+    throw new Error('STATIC_SITE_PUBLICATION_SITE_ID is invalid');
+  }
+  try {
+    const pointerPath = resolve(publicationRoot, publicationSiteId, 'active.json');
+    const pointer = JSON.parse(await readFile(pointerPath, 'utf8'));
+    if (
+      !pointer ||
+      typeof pointer.artifactHash !== 'string' ||
+      !/^[a-f0-9]{64}$/u.test(pointer.artifactHash)
+    ) {
+      throw new Error('Active artifact pointer is invalid');
+    }
+    const candidate = resolve(publicationRoot, publicationSiteId, 'versions', pointer.artifactHash);
+    if (!(await stat(candidate)).isDirectory()) throw new Error('Active artifact is unavailable');
+    return candidate;
+  } catch (error) {
+    if (error?.code !== 'ENOENT')
+      console.error('active publication unavailable; using baked fallback', error);
+    return fallbackRoot;
+  }
+}
+
+async function resolveFile(pathname, root) {
   const decoded = decodeURIComponent(pathname);
   const relative = decoded.replace(/^\/+/, '');
   const candidate = resolve(root, relative || 'index.html');
@@ -99,13 +130,14 @@ const server = createServer(async (request, response) => {
     }
 
     const pathname = new URL(request.url || '/', 'http://localhost').pathname;
-    const file = await resolveFile(pathname);
+    const root = await activeRoot();
+    const file = await resolveFile(pathname, root);
     if (file) {
       await sendFile(request, response, file, pathname);
       return;
     }
 
-    const notFound = await resolveFile('/404.html');
+    const notFound = await resolveFile('/404.html', root);
     if (notFound) {
       await sendFile(request, response, notFound, '/404.html', 404);
       return;
@@ -120,7 +152,7 @@ const server = createServer(async (request, response) => {
 });
 
 server.listen(port, host, () => {
-  console.log(`static-site-server listening on ${host}:${port} with root ${root}`);
+  console.log(`static-site-server listening on ${host}:${port} with fallback root ${fallbackRoot}`);
 });
 
 for (const signal of ['SIGINT', 'SIGTERM']) {

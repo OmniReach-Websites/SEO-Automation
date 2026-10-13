@@ -26,6 +26,7 @@ export class PostgresPreviewService {
     private readonly pool: TenantTransactionPool,
     private readonly options: {
       artifactsRoot: string;
+      assetsRoot?: string;
       codeSha: string;
       repositoryRoot: string;
       signingKey: string;
@@ -43,6 +44,7 @@ export class PostgresPreviewService {
       artifacts: this.#artifacts,
       definition,
       repositoryRoot: this.options.repositoryRoot,
+      ...(this.options.assetsRoot ? { assetStorageRoot: this.options.assetsRoot } : {}),
       siteId: context.siteId,
       snapshot: materialized.snapshot,
     });
@@ -103,9 +105,14 @@ export class PostgresPreviewService {
             WHERE tenant_id = $1 AND site_id = $2 ORDER BY stable_id`,
           [context.tenantId, context.siteId],
         );
-        const assets = await query<{ checksum: string; id: string; storage_key: string }>(
+        const assets = await query<{
+          checksum: string;
+          id: string;
+          mime: 'image/jpeg' | 'image/png' | 'image/webp';
+          storage_key: string;
+        }>(
           client,
-          `SELECT id, storage_key, checksum FROM assets
+          `SELECT id, storage_key, checksum, mime FROM assets
             WHERE tenant_id = $1 AND site_id = $2
               AND integrity_state = 'validated' AND deleted_at IS NULL
             ORDER BY id`,
@@ -115,6 +122,12 @@ export class PostgresPreviewService {
         return {
           sourcePath: site.source_path,
           snapshot: createPublicationSnapshot({
+            assets: assets.rows.map((asset) => ({
+              checksum: asset.checksum,
+              id: asset.id,
+              mime: asset.mime,
+              storageKey: asset.storage_key,
+            })),
             assetManifestHash: createHash('sha256')
               .update(stableStringify(assets.rows))
               .digest('hex'),

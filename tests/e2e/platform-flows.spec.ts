@@ -28,6 +28,16 @@ const owner: CustomerPrincipal = {
   traceId: 'e2e-trace-customer',
   userId: '40000000-0000-4000-8000-000000000011',
 };
+const editor: CustomerPrincipal = {
+  ...owner,
+  role: 'customer_editor',
+  userId: '40000000-0000-4000-8000-000000000012',
+};
+const viewer: CustomerPrincipal = {
+  ...owner,
+  role: 'customer_viewer',
+  userId: '40000000-0000-4000-8000-000000000013',
+};
 
 test('agency onboarding and customer edit-to-restore flow stays host scoped', async ({
   request,
@@ -153,9 +163,11 @@ test('agency onboarding and customer edit-to-restore flow stays host scoped', as
     },
     resolveCustomerPrincipal: async (incoming) => {
       const cookie = incoming.headers.cookie ?? '';
-      return incoming.hostname === 'admin.alpha.test' && cookie.includes('customer-session')
-        ? owner
-        : undefined;
+      if (incoming.hostname !== 'admin.alpha.test') return undefined;
+      if (cookie.includes('owner-session')) return owner;
+      if (cookie.includes('editor-session')) return editor;
+      if (cookie.includes('viewer-session')) return viewer;
+      return undefined;
     },
     resolvePlatformActor: async (incoming) => {
       const cookie = incoming.headers.cookie ?? '';
@@ -196,9 +208,24 @@ test('agency onboarding and customer edit-to-restore flow stays host scoped', as
     });
     expect(invitation.status()).toBe(202);
     expect(await invitation.text()).not.toMatch(/password|token|hash/iu);
+    for (const role of ['customer_editor', 'customer_viewer'] as const) {
+      const roleInvitation = await request.post(
+        `${base}/v1/orap/sites/${owner.siteId}/invitations`,
+        {
+          data: {
+            email: `${role.replace('customer_', '')}@alpha.example.test`,
+            reason: `Approved fictional ${role} access`,
+            role,
+            tenantId: owner.tenantId,
+          },
+          headers: staffHeaders,
+        },
+      );
+      expect(roleInvitation.status()).toBe(202);
+    }
 
     const customerHeaders = {
-      cookie: '__Host-omnireach_session=customer-session',
+      cookie: '__Host-omnireach_session=owner-session',
       host: 'admin.alpha.test',
       origin: 'https://admin.alpha.test',
     };
@@ -214,6 +241,35 @@ test('agency onboarding and customer edit-to-restore flow stays host scoped', as
       },
     });
     expect(sisterSite.status()).toBe(403);
+
+    const editorDashboard = await request.get(`${base}/v1/customer/dashboard`, {
+      headers: { ...customerHeaders, cookie: '__Host-omnireach_session=editor-session' },
+    });
+    expect(editorDashboard.status()).toBe(200);
+    const editorPublish = await request.post(
+      `${base}/v1/customer/drafts/80000000-0000-4000-8000-000000000001/publish`,
+      {
+        data: { expectedVersion: 1, reason: 'Editor must not publish without a grant' },
+        headers: {
+          ...customerHeaders,
+          cookie: '__Host-omnireach_session=editor-session',
+          'idempotency-key': 'e2e-editor-publish-denied',
+        },
+      },
+    );
+    expect(editorPublish.status()).toBe(403);
+    const viewerDashboard = await request.get(`${base}/v1/customer/dashboard`, {
+      headers: { ...customerHeaders, cookie: '__Host-omnireach_session=viewer-session' },
+    });
+    expect(viewerDashboard.status()).toBe(200);
+    const viewerEdit = await request.patch(
+      `${base}/v1/customer/drafts/80000000-0000-4000-8000-000000000001/fields/home.heading`,
+      {
+        data: { expectedVersion: 1, value: 'Viewer edit must be denied' },
+        headers: { ...customerHeaders, cookie: '__Host-omnireach_session=viewer-session' },
+      },
+    );
+    expect(viewerEdit.status()).toBe(403);
 
     const edited = await request.patch(
       `${base}/v1/customer/drafts/80000000-0000-4000-8000-000000000001/fields/home.heading`,

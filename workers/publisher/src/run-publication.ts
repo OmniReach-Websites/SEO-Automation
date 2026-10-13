@@ -42,6 +42,7 @@ export async function runQueuedPublication(
     new PostgresSnapshotMaterializer(pool),
     artifacts,
     {
+      assetStorageRoot: resolve(environment.ASSET_STORAGE_ROOT?.trim() || 'runtime-data/assets'),
       codeSha,
       repositoryRoot,
       sites: discoverSiteBuildDefinitions(repositoryRoot),

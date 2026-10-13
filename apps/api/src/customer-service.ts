@@ -261,11 +261,20 @@ export class PostgresCustomerService implements CustomerEndpointService {
     return this.content.listHistory(actorContext(principal));
   }
 
-  assetUpload(
+  async assetUpload(
     principal: CustomerPrincipal,
     input: { filename: string; stream: AsyncIterable<Uint8Array> },
   ): Promise<unknown> {
-    return this.assets.upload(actorContext(principal), input);
+    const asset = await this.assets.upload(actorContext(principal), input);
+    return {
+      bytes: asset.bytes,
+      filename: asset.filename,
+      height: asset.height,
+      id: asset.id,
+      mime: asset.mime,
+      reference: `asset:${asset.id}`,
+      width: asset.width,
+    };
   }
 
   assetDownload(

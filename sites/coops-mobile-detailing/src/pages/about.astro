@@ -2,12 +2,14 @@
 import FinalCta from '../components/FinalCta.astro';
 import GoalProgress from '../components/GoalProgress.astro';
 import Layout from '../layouts/Layout.astro';
-import { serviceAreas } from '../data/site';
+import { aboutStory, goal, metadataFor, serviceAreas } from '../data/site';
+const metadata = metadataFor('about');
 ---
 
 <Layout
-  title="About Cooper"
-  description="Meet Cooper, the high school student behind Coop's Mobile Detailing in Aledo, Texas, and learn why he started his local detailing business."
+  title={metadata.title}
+  description={metadata.description}
+  image={metadata.image}
 >
   <section class="page-hero about-page-hero">
     <div class="page-hero-media"><img src="/images/work-1.webp" width="756" height="1008" alt="Cooper detailing the front bumper of a vehicle" fetchpriority="high" /></div>
@@ -16,12 +18,12 @@ import { serviceAreas } from '../data/site';
 
   <section class="section section-light">
     <div class="shell about-story-grid">
-      <div class="prose-block large-prose"><p class="eyebrow">The story</p><h2>Starting small and taking the work seriously.</h2><p>Cooper is a high school student building Coop's Mobile Detailing while saving toward his first car. Rather than making the business sound bigger than it is, the work stays personal: customers contact Cooper directly, and every job contributes to a real goal.</p><p>That story is part of what makes Coop's different from a generic detailing company. The site keeps the focus on visible work, straightforward services, and easy contact.</p></div>
+      <div class="prose-block large-prose"><p class="eyebrow">The story</p><h2>Starting small and taking the work seriously.</h2><div set:html={aboutStory}></div></div>
       <aside class="story-quote"><span>“</span><p>Building a business while saving toward a first car.</p><small>Cooper's motivation</small></aside>
     </div>
   </section>
 
-  <GoalProgress visible={false} target={7000} />
+  <GoalProgress visible={goal.visible} target={goal.target} currentAmount={goal.currentAmount} />
 
   <section class="section values-section" aria-labelledby="values-heading">
     <div class="shell">

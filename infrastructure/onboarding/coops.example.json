@@ -1,0 +1,12 @@
+{
+  "tenantName": "Coop's Mobile Detailing",
+  "siteName": "Coop's Mobile Detailing",
+  "planCode": "OWNER_APPROVED_PLAN_CODE",
+  "planVersion": 1,
+  "publicHostVerified": false,
+  "adminHostVerified": false,
+  "factsReviewed": false,
+  "ownerEmail": "OWNER_APPROVED_EMAIL",
+  "invitedByUserId": "PLATFORM_OWNER_USER_UUID",
+  "invitationOutput": "C:/replace-with-protected-path/coop-owner-invitation.txt"
+}

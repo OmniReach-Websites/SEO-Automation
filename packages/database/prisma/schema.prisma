@@ -1079,6 +1079,19 @@ model JobRun {
   @@map("job_runs")
 }
 
+model WorkerHeartbeat {
+  instanceId  String   @id @map("instance_id") @db.VarChar(160)
+  workerKind  String   @map("worker_kind") @db.VarChar(40)
+  releaseSha  String   @map("release_sha") @db.VarChar(64)
+  startedAt   DateTime @map("started_at") @db.Timestamptz(3)
+  lastSeenAt  DateTime @map("last_seen_at") @db.Timestamptz(3)
+  state       String   @db.VarChar(20)
+  metadata    Json     @default("{}")
+
+  @@index([workerKind, lastSeenAt(sort: Desc)])
+  @@map("worker_heartbeats")
+}
+
 model AiModelPrice {
   id                        String   @id @default(uuid()) @db.Uuid
   modelAlias                String   @map("model_alias") @db.VarChar(120)

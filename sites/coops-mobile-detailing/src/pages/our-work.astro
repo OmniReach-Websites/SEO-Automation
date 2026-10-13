@@ -3,11 +3,14 @@ import BeforeAfter from '../components/BeforeAfter.astro';
 import FinalCta from '../components/FinalCta.astro';
 import Gallery from '../components/Gallery.astro';
 import Layout from '../layouts/Layout.astro';
+import { metadataFor } from '../data/site';
+const metadata = metadataFor('portfolio');
 ---
 
 <Layout
-  title="Our Detailing Work"
-  description="See real exterior and interior detailing work from Coop's Mobile Detailing, including an interactive before-and-after comparison."
+  title={metadata.title}
+  description={metadata.description}
+  image={metadata.image}
 >
   <section class="page-hero work-page-hero">
     <div class="page-hero-media"><img src="/images/work-1.webp" width="756" height="1008" alt="Cooper detailing a blue Ford Mustang" fetchpriority="high" /></div>

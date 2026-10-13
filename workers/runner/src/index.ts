@@ -27,3 +27,10 @@ export async function executeGuardedJob<T>(options: {
   }
   return options.leaseRegistry.run(options.envelope, () => options.execute(context));
 }
+
+export {
+  DurableJobRuntime,
+  WorkerHeartbeat,
+  recoverExpiredJobs,
+  type DurableExecution,
+} from './runtime.ts';

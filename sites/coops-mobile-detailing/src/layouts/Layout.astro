@@ -3,7 +3,7 @@ import '../styles/global.css';
 import Footer from '../components/Footer.astro';
 import Header from '../components/Header.astro';
 import MobileActions from '../components/MobileActions.astro';
-import { SITE_URL } from '../data/site';
+import { SITE_URL, siteTheme } from '../data/site';
 
 interface Props {
   canonicalPath?: string;
@@ -54,7 +54,7 @@ const serializedSchema = structuredData
     <title>{documentTitle}</title>
     {serializedSchema && <script type="application/ld+json" set:html={serializedSchema} />}
   </head>
-  <body>
+  <body data-theme={siteTheme}>
     <a class="skip-link" href="#main-content">Skip to content</a>
     <Header />
     <main id="main-content"><slot /></main>
