@@ -499,8 +499,7 @@ h3 {
 }
 .section-ink {
   background:
-    radial-gradient(circle at 8% 20%, rgba(51, 102, 153, 0.2), transparent 35%),
-    var(--surface-soft);
+    radial-gradient(circle at 8% 20%, rgba(51, 102, 153, 0.2), transparent 35%), var(--surface-soft);
   color: var(--ink);
 }
 .difference-grid,
