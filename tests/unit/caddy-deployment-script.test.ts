@@ -80,7 +80,10 @@ describe('Coop public Caddy integration script', () => {
     ]) {
       expect(coopsSiteSource).toContain(`'sha256-${hash}'`);
     }
-    expect(coopsSiteSource).not.toContain("'unsafe-inline'");
+    expect(coopsSiteSource).toContain(
+      "style-src 'self'; style-src-elem 'self'; style-src-attr 'unsafe-inline'",
+    );
+    expect(coopsSiteSource).not.toContain("script-src 'self' 'unsafe-inline'");
     expect(coopsSiteSource).not.toContain("'unsafe-eval'");
   });
 
