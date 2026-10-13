@@ -841,6 +841,17 @@ h3 {
 .legal-copy p {
   color: #4f5970;
 }
+.legal-copy ul {
+  margin: 1rem 0 0;
+  padding-left: 1.35rem;
+  color: #4f5970;
+}
+.legal-copy li {
+  padding: 0.3rem 0 0.3rem 0.35rem;
+}
+.legal-copy li::marker {
+  color: var(--blue);
+}
 .legal-copy a {
   color: var(--blue);
 }

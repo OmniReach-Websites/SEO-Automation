@@ -1,4 +1,4 @@
-const routes = ['/', '/services/', '/about/', '/contact/', '/privacy/'];
+const routes = ['/', '/services/', '/about/', '/contact/', '/privacy/', '/tos/'];
 export function GET() {
   const urls = routes
     .map((route) => `<url><loc>https://omnireach.cloud${route}</loc></url>`)
