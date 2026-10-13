@@ -133,6 +133,52 @@ export interface WebAuthnEnrollmentRepository {
     now: Date;
     sessionTokenHash: string;
   }): Promise<WebAuthnEnrollmentTarget | undefined>;
+  findScope?(target: WebAuthnScopeTarget): Promise<WebAuthnScopeRecord | undefined>;
+  listActiveCredentials?(target: WebAuthnScopeTarget): Promise<WebAuthnCredentialRecord[]>;
+  findActiveCredential?(input: {
+    credentialId: Uint8Array;
+    target: WebAuthnScopeTarget;
+  }): Promise<WebAuthnCredentialRecord | undefined>;
+  completeAuthentication?(input: WebAuthnAuthenticationCompletionInput): Promise<boolean>;
+  renameCredential?(input: WebAuthnCredentialRenameInput): Promise<boolean>;
+  revokeCredential?(input: WebAuthnCredentialRevocationInput): Promise<boolean>;
+}
+
+export interface WebAuthnScopeTarget {
+  host: string;
+  siteId?: string;
+  tenantId?: string;
+  userId: string;
+}
+
+export interface WebAuthnAuthenticationCompletionInput extends WebAuthnScopeTarget {
+  credentialId: Uint8Array;
+  expectedAuthStateVersion: string;
+  expectedPasswordHash: string;
+  expectedSignCount: number;
+  expiresAt: Date;
+  newSignCount: number;
+  now: Date;
+  role: Role;
+  sessionTokenHash: string;
+  traceId: string;
+}
+
+export interface WebAuthnCredentialRenameInput extends WebAuthnScopeTarget {
+  credentialId: string;
+  expectedPasswordHash: string;
+  name: string;
+  now: Date;
+  sessionTokenHash: string;
+  traceId: string;
+}
+
+export interface WebAuthnCredentialRevocationInput extends WebAuthnScopeTarget {
+  credentialId: string;
+  expectedPasswordHash: string;
+  now: Date;
+  sessionTokenHash: string;
+  traceId: string;
 }
 
 export interface WebAuthnEnrollmentCompletionInput {
@@ -165,7 +211,13 @@ export interface WebAuthnEnrollmentPreparation {
   recoveryCodes: string[];
 }
 
+export interface WebAuthnAuthenticationPreparation {
+  ceremonyId: string;
+  options: PublicKeyCredentialRequestOptionsJSON;
+}
+
 export type WebAuthnRegistrationResponse = RegistrationResponseJSON;
+export type WebAuthnAuthenticationResponse = AuthenticationResponseJSON;
 
 export function createWebAuthnUserHandle(): Uint8Array {
   return new Uint8Array(randomBytes(64));

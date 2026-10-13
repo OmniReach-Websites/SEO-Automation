@@ -96,6 +96,7 @@ function repository(
     revokeSession: vi.fn(async () => true),
     revokeSessionByToken: vi.fn(async () => undefined),
     updateCustomerEmailCodePolicy: vi.fn(async () => true),
+    updateCustomerTotpPolicy: vi.fn(async () => true),
     checkRecoveryCode: vi.fn(async () => false),
     verifyOwnerBootstrap: vi.fn(async () => true),
     ...overrides,
@@ -1091,5 +1092,109 @@ describe('authentication service', () => {
         token: 'fictional-one-time-bootstrap-token',
       }),
     ).resolves.toBe(false);
+  });
+
+  it('enrolls and disables customer TOTP with reauthentication and one-time setup', async () => {
+    const factorStore = ownerBootstrapStore();
+    const repo = repository();
+    const auth = new AuthenticationService(
+      repo,
+      challengeStore(),
+      { send: vi.fn() },
+      {
+        factorEnrollmentStore: factorStore,
+        mfaEncryptionKey: mfaKey,
+        now: () => now,
+        orapHostname: 'admin.omnireach.test',
+      },
+    );
+
+    await expect(
+      auth.prepareCustomerTotpEnrollment({
+        currentPassword: 'wrong-password',
+        host: 'admin.alpha.test',
+        sessionToken: 'customer-session',
+        traceId,
+      }),
+    ).resolves.toBeUndefined();
+    const prepared = await auth.prepareCustomerTotpEnrollment({
+      currentPassword: 'fictional-secure-password',
+      host: 'admin.alpha.test',
+      sessionToken: 'customer-session',
+      traceId,
+    });
+    expect(prepared).toEqual({
+      recoveryCodes: expect.arrayContaining([
+        expect.stringMatching(/^[A-F0-9]{4}(?:-[A-F0-9]{4}){3}$/u),
+      ]),
+      setupId: 'setup-1',
+      uri: expect.stringContaining('otpauth://totp/'),
+    });
+    if (!prepared) throw new Error('Expected a customer TOTP preparation');
+    const code = (OTPAuth.URI.parse(prepared.uri) as OTPAuth.TOTP).generate({
+      timestamp: now.getTime(),
+    });
+    await expect(
+      auth.completeCustomerTotpEnrollment({
+        code,
+        host: 'admin.alpha.test',
+        recoveryCodesAcknowledged: true,
+        sessionToken: 'customer-session',
+        setupId: prepared.setupId,
+        traceId,
+      }),
+    ).resolves.toEqual({ sessionsRevoked: true });
+    expect(repo.updateCustomerTotpPolicy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        enabled: true,
+        encryptedSecret: expect.any(Uint8Array),
+        recoveryCodeHashes: expect.arrayContaining([expect.stringMatching(/^[a-f0-9]{64}$/u)]),
+        sessionTokenHash: digestToken('customer-session'),
+      }),
+    );
+    await expect(
+      auth.completeCustomerTotpEnrollment({
+        code,
+        host: 'admin.alpha.test',
+        recoveryCodesAcknowledged: true,
+        sessionToken: 'customer-session',
+        setupId: prepared.setupId,
+        traceId,
+      }),
+    ).resolves.toBeUndefined();
+
+    const disableRepository = repository({
+      findAccountSecurityTarget: vi.fn(async () => ({
+        emailCodeEnabled: false,
+        hasTotp: true,
+        hasWebAuthn: false,
+        host: 'admin.alpha.test',
+        normalizedEmail: 'owner@alpha.example.test',
+        passwordHash,
+        role: 'customer_owner' as const,
+        secondStepRequired: true,
+        siteId: 'site-a',
+        tenantId: 'tenant-a',
+        userId: 'user-a',
+      })),
+    });
+    const disableAuth = new AuthenticationService(
+      disableRepository,
+      challengeStore(),
+      { send: vi.fn() },
+      { mfaEncryptionKey: mfaKey, now: () => now, orapHostname: 'admin.omnireach.test' },
+    );
+    await expect(
+      disableAuth.disableCustomerTotp({
+        confirmed: true,
+        currentPassword: 'fictional-secure-password',
+        host: 'admin.alpha.test',
+        sessionToken: 'customer-session',
+        traceId,
+      }),
+    ).resolves.toEqual({ sessionsRevoked: true });
+    expect(disableRepository.updateCustomerTotpPolicy).toHaveBeenCalledWith(
+      expect.objectContaining({ enabled: false, recoveryCodeHashes: [] }),
+    );
   });
 });

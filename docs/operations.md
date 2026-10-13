@@ -385,11 +385,11 @@ code consumption, sibling revocation, or session insertion is committed. Investi
 repeated exhaustion as a database-contention incident without logging credentials,
 codes, tokens, or query parameter values.
 
-Method-specific durable authentication audit coverage is not complete. Until G05 adds
-and tests non-secret events for code issuance/resend, limiter denial, delivery
-failure/exhaustion, bootstrap, recovery, method changes, and revocation, operators must
-not treat generic HTTP/application logs as equivalent evidence or mark the production
-authentication gate complete.
+Durable authentication events cover login success/failure, MFA verification, email-code
+policy, TOTP policy, WebAuthn enroll/rename/revoke, explicit session revocation/logout,
+and MFA-key rotation batches. Provider delivery/outbox state remains the source for
+message delivery attempts. Generic HTTP logs are never equivalent audit evidence and
+must not contain codes, tokens, passwords, WebAuthn assertions or request URLs.
 
 ## 9. Emergency procedures
 
@@ -408,6 +408,31 @@ Disable the affected endpoint/automation, preserve trace/audit evidence, confirm
 ### 9.4 Existing-service degradation
 
 Abort OmniReach work, restore prior release/Caddy state, stop only named OmniReach services if necessary, and verify Christians Reunite. Never use broad Docker cleanup or recursive deletion.
+
+### 9.5 Google collection outage
+
+Keep `GOOGLE_INTEGRATION_ENABLED=false` when configuration is incomplete. On quota or
+provider failure, retain the prior snapshots, expose delayed/stale status, allow bounded
+job retry, and keep public serving and non-Google reports available. A revoked/expired
+credential requires new customer consent; never silently substitute another property.
+
+### 9.6 AI over-budget or unsafe output
+
+Leave the provider gate off or use the narrow emergency control. Release reservations
+for failed calls, preserve sanitized evaluation/audit evidence, reject the proposal and
+never create publication work. Static serving and human content workflows stay active.
+
+### 9.7 Backup freshness or restore failure
+
+Stop pruning, preserve every available recovery point, alert on the exact failed stage,
+and retry only after the destination/key/network cause is understood. Never redirect a
+restore to an active production database or storage root. Use `docs/offsite-backup.md`.
+
+### 9.8 Domain/TLS failure
+
+Do not accept host-header workarounds. Verify authoritative DNS, proxy target, certificate
+and exact domain ownership; keep the last known-good Caddy configuration and artifact.
+Roll back only the named route/configuration if an additive change caused the failure.
 
 ## 10. Retention defaults
 

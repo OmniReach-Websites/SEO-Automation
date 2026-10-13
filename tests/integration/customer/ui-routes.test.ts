@@ -21,6 +21,7 @@ function service(): CustomerEndpointService & {
   fieldUpdate: ReturnType<typeof vi.fn>;
   preview: ReturnType<typeof vi.fn>;
   publish: ReturnType<typeof vi.fn>;
+  reports: ReturnType<typeof vi.fn>;
   restore: ReturnType<typeof vi.fn>;
 } {
   return {
@@ -92,6 +93,24 @@ function service(): CustomerEndpointService & {
         stableId: 'home',
       },
     ]),
+    proposals: vi.fn(async () => [
+      {
+        current_value: 'Current heading',
+        effective_mode: 'SUGGEST',
+        evidence: ['crawl:home'],
+        field_id: 'home.heading',
+        id: '90000000-0000-4000-8000-000000000009',
+        model: 'fixture-model',
+        proposed_value: 'Suggested heading',
+        rationale: 'Clearer summary',
+        stale: false,
+        state: 'pending',
+      },
+    ]),
+    reports: vi.fn(async () => ({
+      generatedAt: new Date(0).toISOString(),
+      measurements: [],
+    })),
     preview: vi.fn(async () => ({ previewToken: 'opaque-preview-token' })),
     previewFile: vi.fn(async () => ({
       body: new TextEncoder().encode('<h1>Preview</h1>'),
@@ -99,6 +118,7 @@ function service(): CustomerEndpointService & {
     })),
     publish: vi.fn(async () => ({ status: 'queued' })),
     restore: vi.fn(async () => ({ status: 'queued' })),
+    reviewProposal: vi.fn(async () => ({ proposalId: 'proposal-a', state: 'applied' })),
     updateContactForm: vi.fn(async () => ({})),
   };
 }
@@ -840,5 +860,68 @@ describe('customer editor and history pages', () => {
     });
     expect(denied.statusCode).toBe(403);
     expect(content.publish).not.toHaveBeenCalled();
+  });
+
+  it('renders source, freshness, and limitations on the customer reports page', async () => {
+    const content = service();
+    content.reports.mockResolvedValueOnce({
+      generatedAt: '2026-10-13T00:00:00.000Z',
+      measurements: [
+        {
+          caveat: 'Observed referral sessions only; not an AI ranking.',
+          freshness: 'current',
+          kind: 'ai_referral',
+          label: 'ChatGPT referral sessions',
+          source: 'GA4 sessionSource mapping v1',
+          state: 'available',
+          value: 3,
+          windowEnd: '2026-10-12T00:00:00.000Z',
+          windowStart: '2026-10-01T00:00:00.000Z',
+        },
+      ],
+    });
+    const server = buildCustomerUi(content);
+
+    const response = await server.inject({ headers: authenticatedHeaders, url: '/reports' });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('ChatGPT referral sessions');
+    expect(response.body).toContain('GA4 sessionSource mapping v1');
+    expect(response.body).toContain('not an AI ranking');
+    expect(response.body).toContain('aria-label="Scrollable site measurements"');
+  });
+
+  it('renders proposal evidence and sends human approval through a versioned draft review', async () => {
+    const content = service();
+    const server = buildCustomerUi(content);
+    const page = await server.inject({ headers: authenticatedHeaders, url: '/proposals' });
+    expect(page.statusCode).toBe(200);
+    expect(page.body).toContain('Current heading');
+    expect(page.body).toContain('Suggested heading');
+    expect(page.body).toContain('crawl:home');
+    expect(page.body).toContain('fixture-model');
+
+    const response = await server.inject({
+      headers: {
+        ...authenticatedHeaders,
+        'content-type': 'application/x-www-form-urlencoded',
+        origin: 'https://admin.alpha.test',
+      },
+      method: 'POST',
+      payload: new URLSearchParams({
+        action: 'approve',
+        valueFormat: 'text',
+        editedValue: 'Owner edited heading',
+        reason: 'Approved after review',
+      }).toString(),
+      url: '/proposals/90000000-0000-4000-8000-000000000009/review',
+    });
+    expect(response.statusCode).toBe(303);
+    expect(content.reviewProposal).toHaveBeenCalledWith(owner, {
+      action: 'approve',
+      editedValue: 'Owner edited heading',
+      proposalId: '90000000-0000-4000-8000-000000000009',
+      reason: 'Approved after review',
+    });
   });
 });

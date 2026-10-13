@@ -28,6 +28,7 @@ function repository(overrides: Partial<AuthenticationRepository> = {}): Authenti
     revokeSession: vi.fn(async () => false),
     revokeSessionByToken: vi.fn(async () => undefined),
     updateCustomerEmailCodePolicy: vi.fn(async () => false),
+    updateCustomerTotpPolicy: vi.fn(async () => false),
     checkRecoveryCode: vi.fn(async () => false),
     verifyOwnerBootstrap: vi.fn(async () => false),
     ...overrides,

@@ -1,5 +1,7 @@
 import {
   estimateCostUsdMicros,
+  evaluateProposal,
+  ProposalEvaluationError,
   type AiBudgetLedger,
   type BudgetReservation,
   type ModelPrice,
@@ -10,6 +12,11 @@ import { validateAiFieldMutation, type EffectiveAiMode } from '@omnireach/conten
 import type { AiReviewCycleQuota, PlanQuotaReservation } from '@omnireach/tenant';
 
 export { PostgresAiBudgetLedger } from './postgres-budget.ts';
+export {
+  PostgresAiProposalStager,
+  type AiProposalStageContext,
+  type AiProposalStageInput,
+} from './postgres-proposals.ts';
 
 export async function generateFieldProposal(options: {
   readonly budget: AiBudgetLedger;
@@ -18,15 +25,26 @@ export async function generateFieldProposal(options: {
   readonly modelPrice: ModelPrice;
   readonly now: Date;
   readonly provider: ProposalProvider;
+  readonly providerEnabled: boolean;
   readonly protectedFacts: readonly string[];
   readonly reviewCycles: AiReviewCycleQuota;
   readonly siteId: string;
   readonly tenantId: string;
 }): Promise<{
-  readonly action: 'publish_candidate' | 'review';
+  readonly action: 'draft_candidate' | 'review';
+  readonly costUsdMicros: number;
+  readonly evaluation: ReturnType<typeof evaluateProposal>;
+  readonly latencyMs: number;
+  readonly model: string;
+  readonly outputTokens: number;
+  readonly promptVersion: number;
+  readonly providerRequestHash?: string;
+  readonly rationale: string;
   readonly replacement: string;
   readonly reservationId: string;
 }> {
+  if (!options.providerEnabled)
+    throw new Error('AI provider is disabled by the centralized provider gate');
   if (options.mode === 'PROTECTED')
     throw new Error('Protected fields are rejected before provider admission');
   const reviewCycle = await options.reviewCycles.reserve({
@@ -51,6 +69,12 @@ export async function generateFieldProposal(options: {
       tenantId: options.tenantId,
     });
     const result = await options.provider.generate(options.input);
+    const evaluation = evaluateProposal({
+      proposal: result.output,
+      protectedFacts: options.protectedFacts,
+      request: options.input,
+    });
+    if (!evaluation.passed) throw new ProposalEvaluationError(evaluation);
     validateAiFieldMutation({
       after: result.output.replacement,
       before: options.input.currentValue,
@@ -66,7 +90,15 @@ export async function generateFieldProposal(options: {
     budgetFinalized = true;
     await options.reviewCycles.consume(reviewCycle);
     return {
-      action: options.mode === 'AUTO' ? 'publish_candidate' : 'review',
+      action: options.mode === 'AUTO' ? 'draft_candidate' : 'review',
+      costUsdMicros: actual,
+      evaluation,
+      latencyMs: result.latencyMs,
+      model: result.model,
+      outputTokens: result.usage.outputTokens,
+      promptVersion: result.promptVersion,
+      ...(result.providerRequestHash ? { providerRequestHash: result.providerRequestHash } : {}),
+      rationale: result.output.rationale,
       replacement: result.output.replacement,
       reservationId: budgetReservation.id,
     };
@@ -90,25 +122,47 @@ async function releaseReviewCycle(
 
 export async function executeAiAutomation(
   options: Parameters<typeof generateFieldProposal>[0] & {
-    readonly publishCandidate: (replacement: string) => Promise<{ readonly artifactId: string }>;
+    readonly stageProposal: (proposal: {
+      readonly costUsdMicros: number;
+      readonly evaluation: ReturnType<typeof evaluateProposal>;
+      readonly latencyMs: number;
+      readonly mode: 'AUTO' | 'SUGGEST';
+      readonly model: string;
+      readonly outputTokens: number;
+      readonly promptVersion: number;
+      readonly providerRequestHash?: string;
+      readonly rationale: string;
+      readonly replacement: string;
+    }) => Promise<{ readonly draftId?: string; readonly proposalId: string }>;
     readonly raiseAlert: (safeMessage: string) => Promise<void>;
   },
 ): Promise<
-  | { readonly action: 'published'; readonly artifactId: string }
-  | { readonly action: 'review'; readonly replacement: string }
+  | { readonly action: 'draft_staged'; readonly draftId?: string; readonly proposalId: string }
+  | { readonly action: 'review_staged'; readonly proposalId: string }
 > {
   try {
     const proposal = await generateFieldProposal(options);
-    if (proposal.action === 'review')
-      return { action: 'review', replacement: proposal.replacement };
-    const publication = await options.publishCandidate(proposal.replacement);
-    return { action: 'published', artifactId: publication.artifactId };
+    const staged = await options.stageProposal({
+      costUsdMicros: proposal.costUsdMicros,
+      evaluation: proposal.evaluation,
+      latencyMs: proposal.latencyMs,
+      mode: options.mode === 'AUTO' ? 'AUTO' : 'SUGGEST',
+      model: proposal.model,
+      outputTokens: proposal.outputTokens,
+      promptVersion: proposal.promptVersion,
+      ...(proposal.providerRequestHash
+        ? { providerRequestHash: proposal.providerRequestHash }
+        : {}),
+      rationale: proposal.rationale,
+      replacement: proposal.replacement,
+    });
+    return { action: 'review_staged', proposalId: staged.proposalId };
   } catch (error) {
     if (options.mode === 'AUTO') {
       await options.raiseAlert(
         error instanceof Error
-          ? `AI publication failed safely: ${error.message}`
-          : 'AI publication failed safely',
+          ? `AI proposal staging failed safely: ${error.message}`
+          : 'AI proposal staging failed safely',
       );
     }
     throw error;

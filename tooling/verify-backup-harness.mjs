@@ -6,6 +6,7 @@ import {
   createEncryptedBackup,
   restoreEncryptedBackup,
   selectRetention,
+  verifyEncryptedBackup,
 } from '../infrastructure/backups/backup.mjs';
 
 const root = await mkdtemp(join(tmpdir(), 'omnireach-backup-fixture-'));
@@ -26,6 +27,10 @@ try {
     kind: 'daily',
   });
   const offServer = await copyOffServer(backup.backupPath, join(root, 'off-server'));
+  const verified = await verifyEncryptedBackup({
+    backupPath: offServer,
+    encryptionKeyHex: 'cd'.repeat(32),
+  });
   const restored = await restoreEncryptedBackup({
     backupPath: offServer,
     destinationRoot: join(root, 'restore-isolated'),
@@ -96,11 +101,28 @@ try {
   }));
   const points = [...dailyPoints, ...weeklyPoints];
   const retention = selectRetention(points, new Date('2026-10-10T12:00:00Z'));
+  const customRetention = selectRetention(points, new Date('2026-10-10T12:00:00Z'), {
+    daily: 3,
+    weekly: 2,
+  });
+  let nonemptyRestoreRejected = false;
+  try {
+    await restoreEncryptedBackup({
+      backupPath: offServer,
+      destinationRoot: join(root, 'restore-isolated'),
+      encryptionKeyHex: 'cd'.repeat(32),
+    });
+  } catch {
+    nonemptyRestoreRejected = true;
+  }
   if (
+    verified.files.length !== 2 ||
     !wrongKeyRejected ||
     !corruptRejected ||
     !truncatedRejected ||
+    !nonemptyRestoreRejected ||
     retention.keep.length !== 11 ||
+    customRetention.keep.length !== 5 ||
     retention.prune.includes('daily-11') ||
     retention.prune.includes('daily-10')
   )
@@ -113,6 +135,7 @@ try {
       encrypted: true,
       isolatedRestore: true,
       nestedMediaRestored: true,
+      nonemptyRestoreRejected,
       offServer: true,
       ok: true,
       truncatedRejected,

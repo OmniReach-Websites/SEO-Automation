@@ -215,25 +215,25 @@ features. They require separate product decisions, designs, security review, and
 
 ## Capability status
 
-| Capability                       | Repository state                               | Still needed                                        |
-| -------------------------------- | ---------------------------------------------- | --------------------------------------------------- |
-| OmniReach marketing site         | Implemented; build passes                      | Confirm deployed release and live form delivery     |
-| Public inquiry form              | Implemented/tested                             | Enable provider, verify sender and owner recipients |
-| ORAP                             | Implemented with capability/audit controls     | Verify VPS release and worker visibility            |
-| Customer auth/host binding/RBAC  | Implemented/tested                             | Real Coop DNS, identity, invited-owner smoke        |
-| Draft/validation/concurrency     | Implemented; staging/browser proof passes      | Authorized production smoke                         |
-| Preview                          | Implemented, signed/scoped/no-index; staged    | Authorized production smoke                         |
-| Publish/history/restore          | Immutable daemon publish/restore staged        | Authorized production smoke                         |
-| Coop 20-field rendering          | Exhaustive field/media artifact proof passes   | Authorized production content review                |
-| Media storage/validation         | Safe upload and published bytes tested         | Optional richer asset-library picker                |
-| Scheduler                        | Daemon, DB lease, dispatch verified            | Production observation                              |
-| Runner/recovery                  | Retry/cancel/heartbeat/stale recovery verified | Production observation                              |
-| Publisher/crawler/SEO/monitoring | Implemented; Compose services start healthy    | Authorized production representative work           |
-| AIO/OpenAI                       | Libraries/policies implemented                 | Intentionally disabled; no activation authorized    |
-| Search Console/GA4               | Connector foundation                           | OAuth/properties/access/production verification     |
-| Backups                          | Local policy/harness foundations               | Off-site provider and real restore drill            |
-| Payments/subscriptions           | Manual subscription state                      | Provider/pricing intentionally deferred             |
-| Booking/SMS campaigns/commerce   | Not in scope                                   | Separate product decision/build                     |
+| Capability                       | Repository state                                    | Still needed                                                 |
+| -------------------------------- | --------------------------------------------------- | ------------------------------------------------------------ |
+| OmniReach marketing site         | Implemented; build passes                           | Confirm deployed release and live form delivery              |
+| Public inquiry form              | Implemented/tested                                  | Enable provider, verify sender and owner recipients          |
+| ORAP                             | Implemented with capability/audit controls          | Verify VPS release and worker visibility                     |
+| Customer auth/host binding/RBAC  | Implemented/tested                                  | Real Coop DNS, identity, invited-owner smoke                 |
+| Draft/validation/concurrency     | Implemented; staging/browser proof passes           | Authorized production smoke                                  |
+| Preview                          | Implemented, signed/scoped/no-index; staged         | Authorized production smoke                                  |
+| Publish/history/restore          | Immutable daemon publish/restore staged             | Authorized production smoke                                  |
+| Coop 20-field rendering          | Exhaustive field/media artifact proof passes        | Authorized production content review                         |
+| Media storage/validation         | Safe upload and published bytes tested              | Optional richer asset-library picker                         |
+| Scheduler                        | Daemon, DB lease, dispatch verified                 | Production observation                                       |
+| Runner/recovery                  | Retry/cancel/heartbeat/stale recovery verified      | Production observation                                       |
+| Publisher/crawler/SEO/monitoring | Implemented; Compose services start healthy         | Authorized production representative work                    |
+| AIO/OpenAI                       | Libraries/policies implemented                      | Model/cap selected; production job wiring and benchmark TODO |
+| Search Console/GA4               | Connector foundation; credentials/callback approved | Consent screen, property selection and live comparison TODO  |
+| Backups                          | Local policy/harness foundations                    | R2 permission/S3 credentials, schedule and real restore TODO |
+| Payments/subscriptions           | Manual subscription state                           | Provider/pricing intentionally deferred                      |
+| Booking/SMS campaigns/commerce   | Not in scope                                        | Separate product decision/build                              |
 
 ## Production services and invariants
 
@@ -250,25 +250,25 @@ stops do not remove the active public site. Material actions are auditable.
 
 ## Known gaps and why paused
 
-1. **Production activation:** waiting for appropriate VPS execution, current inventory,
-   and an approved window; source changes are not live.
-2. **Coop owner/plan:** waiting for verified owner email and explicit plan; fake
-   production identities are prohibited.
-3. **Admin DNS/TLS:** waiting for the admin hostname to point to the VPS and successful
-   Caddy certificate issuance.
-4. **Protected facts:** waiting for authorized review before onboarding may seed them.
-5. **Email:** waiting for Resend sender DNS/credentials/flags/recipients and delivery proof.
+1. **Production release:** owner-authorized on 2026-10-13; final release and live smoke
+   evidence must be recorded after the protected-main deployment completes.
+2. **Coop owner/plan:** supplied as `owner@coopsmobiledetailingaledo.com` and `STARTER`;
+   the effective plan remains changeable through audited ORAP controls.
+3. **Admin DNS/TLS:** the production admin hosts and TLS are already live; re-verify after deployment.
+4. **Protected facts:** use the currently approved site facts; future changes remain review-controlled.
+5. **Email:** Resend is configured; re-prove inquiry/auth/alert delivery after deployment.
 6. **Media UX enhancement:** the safe file picker/upload/reference workflow is complete;
    a richer reusable visual asset library can be planned later.
-7. **External integrations:** Google, off-site backup, billing, and AI activation need
-   separate credentials/decisions and are outside this release.
+7. **External TODOs:** Google property authorization/live comparison, R2 access and restore,
+   controlled-AI production wiring/benchmark, final pricing/legal decisions, and a real
+   second customer.
 
 ## Next planning priorities
 
-1. Resolve owner inputs, deploy through the signed release/rollback process, then verify
-   DNS/TLS, heartbeats, queue work, safe edit/publish/restore, and email delivery.
-2. After production is stable, connect authorized Google properties and an off-site
-   backup provider as separate projects.
+1. Deploy through the signed release/rollback process, then verify DNS/TLS, heartbeats,
+   queue work, safe edit/publish/restore, and email delivery.
+2. After production is stable, connect authorized Google properties and finish the R2
+   credential/restore TODOs as separate controlled operations.
 3. Consider a richer media-library picker only after observing the initial customer
    workflow; it is not a launch blocker.
 

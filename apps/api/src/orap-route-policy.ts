@@ -9,6 +9,7 @@ export interface OrapRoutePolicy {
 
 export const orapRoutePolicyRegistry = [
   route('GET', '/v1/orap/operations', 'dashboard.view'),
+  route('GET', '/v1/orap/sites/:siteId/effective-settings', 'websites.view'),
   { capabilities: [], method: 'GET', ownerIdentityOnly: true, path: '/v1/orap/staff' },
   { capabilities: [], method: 'GET', ownerIdentityOnly: true, path: '/v1/orap/staff/roles' },
   {
@@ -96,6 +97,7 @@ export const orapRoutePolicyRegistry = [
   route('PUT', '/v1/orap/platform/ai-budget', 'ai_budget.platform.edit'),
   route('GET', '/v1/orap/sites/:siteId/integrations', 'integrations.google.view'),
   route('POST', '/v1/orap/sites/:siteId/integrations/google/start', 'integrations.google.manage'),
+  route('POST', '/v1/orap/sites/:siteId/integrations/google/select', 'integrations.google.manage'),
   route('GET', '/v1/orap/integrations/google/callback', 'integrations.google.manage'),
   route('DELETE', '/v1/orap/integrations/:connectionId', 'integrations.google.manage'),
 ] as const satisfies readonly OrapRoutePolicy[];

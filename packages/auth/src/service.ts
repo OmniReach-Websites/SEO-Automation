@@ -14,9 +14,13 @@ import {
 } from './secrets.ts';
 import { createOneTimeToken, digestToken } from './tokens.ts';
 import {
+  createWebAuthnAuthenticationOptions,
   createWebAuthnRegistrationOptions,
   resolveWebAuthnRelyingParty,
+  verifyExactHostWebAuthnAuthentication,
   verifyExactHostWebAuthnRegistration,
+  type WebAuthnAuthenticationPreparation,
+  type WebAuthnAuthenticationResponse,
   type WebAuthnCeremonyStore,
   type WebAuthnEnrollmentPreparation,
   type WebAuthnEnrollmentRepository,
@@ -34,7 +38,9 @@ export type AuthenticationRateLimitScope =
   | 'login_attempt'
   | 'password_recovery_completion'
   | 'password_recovery_issue'
+  | 'totp_enrollment'
   | 'verification_attempt'
+  | 'webauthn_authentication'
   | 'webauthn_enrollment';
 
 export interface AuthenticationRateLimiter {
@@ -109,6 +115,14 @@ export interface AccountSecuritySettings {
   totpEnabled: boolean;
   webauthnEnrollmentAvailable: boolean;
   webauthnEnabled: boolean;
+  webauthnCredentials?: {
+    backedUp: boolean;
+    createdAt: Date;
+    deviceType: string;
+    id: string;
+    lastUsedAt?: Date;
+    name: string;
+  }[];
 }
 
 export interface AuthenticationRepository {
@@ -194,6 +208,18 @@ export interface AuthenticationRepository {
   updateCustomerEmailCodePolicy(input: {
     enabled: boolean;
     host: string;
+    now: Date;
+    recoveryCodeHashes: string[];
+    sessionTokenHash: string;
+    traceId: string;
+    userId: string;
+  }): Promise<boolean>;
+  updateCustomerTotpPolicy(input: {
+    enabled: boolean;
+    encryptedSecret?: Uint8Array;
+    host: string;
+    keyVersion?: number;
+    lastUsedCounter?: number;
     now: Date;
     recoveryCodeHashes: string[];
     sessionTokenHash: string;
@@ -326,6 +352,7 @@ export class AuthenticationService {
       attemptLimiter?: AuthenticationRateLimiter;
       authenticationPepper?: string;
       emailCodeStore?: EmailCodeChallengeStore;
+      factorEnrollmentStore?: OwnerBootstrapPendingStore;
       mfaEncryptionKey?: string;
       mfaEncryptionKeyring?: VersionedSecretKeyring;
       now?: () => Date;
@@ -334,6 +361,7 @@ export class AuthenticationService {
       recoveryTtlMs?: number;
       sessionTtlMs?: number;
       verificationNotifier?: VerificationCodeNotifier;
+      verifyWebAuthnAuthentication?: typeof verifyExactHostWebAuthnAuthentication;
       verifyWebAuthnRegistration?: typeof verifyExactHostWebAuthnRegistration;
       webAuthnAuthenticationEnabled?: boolean;
       webAuthnCeremonies?: WebAuthnCeremonyStore;
@@ -926,6 +954,14 @@ export class AuthenticationService {
       tokenHash: digestToken(sessionToken),
     });
     if (!target) return undefined;
+    const webauthnCredentials = this.options.webAuthnRepository?.listActiveCredentials
+      ? await this.options.webAuthnRepository.listActiveCredentials({
+          host: target.host,
+          ...(target.siteId ? { siteId: target.siteId } : {}),
+          ...(target.tenantId ? { tenantId: target.tenantId } : {}),
+          userId: target.userId,
+        })
+      : [];
     return {
       emailCodeEnabled: target.emailCodeEnabled,
       emailPolicyChangeAllowed: target.role.startsWith('customer_'),
@@ -933,7 +969,174 @@ export class AuthenticationService {
       totpEnabled: target.hasTotp,
       webauthnEnabled: target.hasWebAuthn,
       webauthnEnrollmentAvailable: this.webAuthnEnrollmentAvailable(),
+      webauthnCredentials: webauthnCredentials.map((credential) => ({
+        backedUp: credential.backedUp,
+        createdAt: credential.createdAt,
+        deviceType: credential.deviceType,
+        id: credential.id,
+        ...(credential.lastUsedAt ? { lastUsedAt: credential.lastUsedAt } : {}),
+        name: credential.name,
+      })),
     };
+  }
+
+  async prepareCustomerTotpEnrollment(input: {
+    currentPassword: string;
+    host: string;
+    networkIdentifier?: string;
+    sessionToken: string | undefined;
+    traceId: string;
+  }): Promise<{ recoveryCodes: string[]; setupId: string; uri: string } | undefined> {
+    const store = this.options.factorEnrollmentStore;
+    if (!store || !input.sessionToken || this.isOrapHost(input.host)) return undefined;
+    if (input.currentPassword.length < 1 || input.currentPassword.length > 128) return undefined;
+    const sessionTokenHash = digestToken(input.sessionToken);
+    const target = await this.repository.findAccountSecurityTarget({
+      host: input.host,
+      tokenHash: sessionTokenHash,
+    });
+    if (
+      !target ||
+      !target.role.startsWith('customer_') ||
+      target.hasTotp ||
+      !(await verifyPassword(target.passwordHash, input.currentPassword)) ||
+      !(await this.allowAttempt(
+        'totp_enrollment',
+        `${rateLimitHost(input.host)}\0${target.userId}`,
+        input.networkIdentifier,
+        5,
+        20,
+        15 * 60,
+      ))
+    ) {
+      return undefined;
+    }
+    const enrollment = createMfaEnrollment(target.normalizedEmail);
+    const activeKey = activeSecretKey(this.#mfaKeyring);
+    const setupId = await store.create(
+      {
+        encryptedMfaSecret: encryptMfaSecret(enrollment.secret, activeKey.keyMaterial),
+        keyVersion: activeKey.keyVersion,
+        method: 'totp',
+        normalizedEmail: target.normalizedEmail,
+        recoveryCodeHashes: enrollment.recoveryDigests,
+        tokenHash: sessionTokenHash,
+      },
+      10 * 60,
+    );
+    return { recoveryCodes: enrollment.recoveryCodes, setupId, uri: enrollment.uri };
+  }
+
+  async completeCustomerTotpEnrollment(input: {
+    code: string;
+    host: string;
+    networkIdentifier?: string;
+    recoveryCodesAcknowledged: boolean;
+    sessionToken: string | undefined;
+    setupId: string;
+    traceId: string;
+  }): Promise<{ sessionsRevoked: true } | undefined> {
+    const store = this.options.factorEnrollmentStore;
+    if (
+      !store ||
+      !input.sessionToken ||
+      !input.recoveryCodesAcknowledged ||
+      this.isOrapHost(input.host)
+    ) {
+      return undefined;
+    }
+    const sessionTokenHash = digestToken(input.sessionToken);
+    const pending = await store.read(input.setupId);
+    const target = await this.repository.findAccountSecurityTarget({
+      host: input.host,
+      tokenHash: sessionTokenHash,
+    });
+    if (
+      !pending?.encryptedMfaSecret ||
+      pending.method !== 'totp' ||
+      pending.tokenHash !== sessionTokenHash ||
+      !target ||
+      !target.role.startsWith('customer_') ||
+      target.hasTotp ||
+      target.normalizedEmail !== pending.normalizedEmail ||
+      !(await this.allowAttempt(
+        'totp_enrollment',
+        `${rateLimitHost(input.host)}\0${target.userId}`,
+        input.networkIdentifier,
+        10,
+        50,
+        15 * 60,
+      ))
+    ) {
+      return undefined;
+    }
+    const keyVersion = pending.keyVersion ?? 1;
+    const keyMaterial = secretKeyForVersion(this.#mfaKeyring, keyVersion);
+    if (!keyMaterial) return undefined;
+    let secret: string;
+    try {
+      secret = decryptMfaSecret(pending.encryptedMfaSecret, keyMaterial);
+    } catch {
+      return undefined;
+    }
+    const counter = verifyTotpCounter(secret, input.code.replace(/\s/gu, ''), this.now().getTime());
+    if (counter === undefined) return undefined;
+    const updated = await this.repository.updateCustomerTotpPolicy({
+      enabled: true,
+      encryptedSecret: pending.encryptedMfaSecret,
+      host: input.host,
+      keyVersion,
+      lastUsedCounter: counter,
+      now: this.now(),
+      recoveryCodeHashes: pending.recoveryCodeHashes,
+      sessionTokenHash,
+      traceId: input.traceId,
+      userId: target.userId,
+    });
+    if (!updated) return undefined;
+    await store.consume(input.setupId);
+    return { sessionsRevoked: true };
+  }
+
+  async disableCustomerTotp(input: {
+    confirmed: boolean;
+    currentPassword: string;
+    host: string;
+    sessionToken: string | undefined;
+    traceId: string;
+  }): Promise<{ sessionsRevoked: true } | undefined> {
+    if (
+      !input.sessionToken ||
+      !input.confirmed ||
+      input.currentPassword.length < 1 ||
+      input.currentPassword.length > 128 ||
+      this.isOrapHost(input.host)
+    ) {
+      return undefined;
+    }
+    const sessionTokenHash = digestToken(input.sessionToken);
+    const target = await this.repository.findAccountSecurityTarget({
+      host: input.host,
+      tokenHash: sessionTokenHash,
+    });
+    if (
+      !target ||
+      !target.role.startsWith('customer_') ||
+      !target.hasTotp ||
+      !(await verifyPassword(target.passwordHash, input.currentPassword))
+    ) {
+      return undefined;
+    }
+    const updated = await this.repository.updateCustomerTotpPolicy({
+      enabled: false,
+      host: input.host,
+      now: this.now(),
+      recoveryCodeHashes: [],
+      sessionTokenHash,
+      traceId: input.traceId,
+      userId: target.userId,
+    });
+    return updated ? { sessionsRevoked: true } : undefined;
   }
 
   async prepareWebAuthnEnrollment(input: {
@@ -1120,6 +1323,294 @@ export class AuthenticationService {
     return completed ? { sessionsRevoked: true } : undefined;
   }
 
+  async prepareWebAuthnAuthentication(input: {
+    challengeId: string;
+    host: string;
+    networkIdentifier?: string;
+  }): Promise<WebAuthnAuthenticationPreparation | undefined> {
+    const repository = this.options.webAuthnRepository;
+    const ceremonies = this.options.webAuthnCeremonies;
+    if (
+      !this.webAuthnEnrollmentAvailable() ||
+      !repository?.findScope ||
+      !repository.listActiveCredentials ||
+      !ceremonies
+    ) {
+      return undefined;
+    }
+    const challenge = await this.challenges.read(input.challengeId);
+    if (
+      !challenge ||
+      challenge.host !== rateLimitHost(input.host) ||
+      challenge.purpose !== 'login' ||
+      !challenge.methods.includes('webauthn') ||
+      !challenge.authStateDigest ||
+      !(await this.allowAttempt(
+        'webauthn_authentication',
+        `${challenge.host}\0${challenge.userId}`,
+        input.networkIdentifier,
+        10,
+        50,
+        15 * 60,
+      ))
+    ) {
+      return undefined;
+    }
+    const currentTarget = await this.repository.findLoginTarget({
+      host: challenge.host,
+      normalizedEmail: challenge.normalizedEmail,
+    });
+    const currentFactor = await this.repository.findMfaFactor(challenge.userId);
+    if (
+      !currentTarget ||
+      currentTarget.userId !== challenge.userId ||
+      currentTarget.siteId !== challenge.siteId ||
+      currentTarget.tenantId !== challenge.tenantId ||
+      !safeDigestEqual(
+        challenge.authStateDigest,
+        this.authStateDigest(currentTarget, currentFactor?.id, challenge.methods),
+      )
+    ) {
+      return undefined;
+    }
+    const target = {
+      host: challenge.host,
+      ...(challenge.siteId ? { siteId: challenge.siteId } : {}),
+      ...(challenge.tenantId ? { tenantId: challenge.tenantId } : {}),
+      userId: challenge.userId,
+    };
+    const [scope, credentials] = await Promise.all([
+      repository.findScope(target),
+      repository.listActiveCredentials(target),
+    ]);
+    if (!scope || credentials.length === 0) return undefined;
+    const relyingParty = resolveWebAuthnRelyingParty(challenge.host);
+    const options = await createWebAuthnAuthenticationOptions({ credentials, relyingParty });
+    const ceremonyId = await ceremonies.create({
+      authStateVersion: currentTarget.authStateVersion,
+      baseChallengeDigest: this.webAuthnBaseChallengeDigest(
+        input.challengeId,
+        challenge.authStateDigest,
+      ),
+      challenge: options.challenge,
+      host: challenge.host,
+      origin: relyingParty.origin,
+      purpose: 'authentication',
+      rpId: relyingParty.id,
+      scopeId: scope.id,
+      ...(challenge.siteId ? { siteId: challenge.siteId } : {}),
+      ...(challenge.tenantId ? { tenantId: challenge.tenantId } : {}),
+      traceId: challenge.traceId,
+      userHandle: Buffer.from(scope.userHandle).toString('base64url'),
+      userId: challenge.userId,
+    });
+    return { ceremonyId, options };
+  }
+
+  async completeWebAuthnAuthentication(input: {
+    challengeId: string;
+    ceremonyId: string;
+    host: string;
+    networkIdentifier?: string;
+    response: WebAuthnAuthenticationResponse;
+    traceId: string;
+  }): Promise<AuthenticationResult> {
+    const repository = this.options.webAuthnRepository;
+    const ceremonies = this.options.webAuthnCeremonies;
+    if (
+      !this.webAuthnEnrollmentAvailable() ||
+      !repository?.findActiveCredential ||
+      !repository.completeAuthentication ||
+      !ceremonies
+    ) {
+      return { kind: 'invalid' };
+    }
+    const ceremony = await ceremonies.consume(input.ceremonyId);
+    const challenge = await this.challenges.read(input.challengeId);
+    if (
+      !ceremony ||
+      ceremony.purpose !== 'authentication' ||
+      ceremony.host !== rateLimitHost(input.host) ||
+      !challenge ||
+      challenge.host !== ceremony.host ||
+      challenge.userId !== ceremony.userId ||
+      challenge.purpose !== 'login' ||
+      !challenge.methods.includes('webauthn') ||
+      !challenge.authStateDigest ||
+      !safeDigestEqual(
+        ceremony.baseChallengeDigest,
+        this.webAuthnBaseChallengeDigest(input.challengeId, challenge.authStateDigest),
+      ) ||
+      !(await this.allowAttempt(
+        'webauthn_authentication',
+        `${ceremony.host}\0${ceremony.userId}`,
+        input.networkIdentifier,
+        10,
+        50,
+        15 * 60,
+      ))
+    ) {
+      return { kind: 'invalid' };
+    }
+    const currentTarget = await this.repository.findLoginTarget({
+      host: challenge.host,
+      normalizedEmail: challenge.normalizedEmail,
+    });
+    const currentFactor = await this.repository.findMfaFactor(challenge.userId);
+    if (
+      !currentTarget ||
+      currentTarget.userId !== ceremony.userId ||
+      currentTarget.authStateVersion !== ceremony.authStateVersion ||
+      currentTarget.siteId !== ceremony.siteId ||
+      currentTarget.tenantId !== ceremony.tenantId ||
+      !safeDigestEqual(
+        challenge.authStateDigest,
+        this.authStateDigest(currentTarget, currentFactor?.id, challenge.methods),
+      )
+    ) {
+      return { kind: 'invalid' };
+    }
+    let credentialId: Uint8Array;
+    try {
+      credentialId = new Uint8Array(Buffer.from(input.response.id, 'base64url'));
+    } catch {
+      return { kind: 'invalid' };
+    }
+    const target = {
+      host: ceremony.host,
+      ...(ceremony.siteId ? { siteId: ceremony.siteId } : {}),
+      ...(ceremony.tenantId ? { tenantId: ceremony.tenantId } : {}),
+      userId: ceremony.userId,
+    };
+    const credential = await repository.findActiveCredential({ credentialId, target });
+    if (!credential) return { kind: 'invalid' };
+    let verification: Awaited<ReturnType<typeof verifyExactHostWebAuthnAuthentication>>;
+    try {
+      verification = await (
+        this.options.verifyWebAuthnAuthentication ?? verifyExactHostWebAuthnAuthentication
+      )({
+        challenge: ceremony.challenge,
+        credential,
+        relyingParty: { id: ceremony.rpId, name: 'OmniReach', origin: ceremony.origin },
+        response: input.response,
+      });
+    } catch {
+      return { kind: 'invalid' };
+    }
+    if (
+      !verification.verified ||
+      !verification.authenticationInfo.userVerified ||
+      verification.authenticationInfo.origin !== ceremony.origin ||
+      verification.authenticationInfo.rpID !== ceremony.rpId
+    ) {
+      return { kind: 'invalid' };
+    }
+    const consumed = await this.challenges.consume(input.challengeId);
+    if (!consumed || consumed.userId !== challenge.userId || consumed.host !== challenge.host) {
+      return { kind: 'invalid' };
+    }
+    const token = createOneTimeToken();
+    const now = this.now();
+    const created = await repository.completeAuthentication({
+      credentialId,
+      expectedAuthStateVersion: currentTarget.authStateVersion,
+      expectedPasswordHash: currentTarget.passwordHash,
+      expectedSignCount: credential.signCount,
+      expiresAt: new Date(now.getTime() + (this.options.sessionTtlMs ?? 8 * 60 * 60_000)),
+      host: ceremony.host,
+      newSignCount: verification.authenticationInfo.newCounter,
+      now,
+      role: currentTarget.role,
+      sessionTokenHash: token.digest,
+      ...(ceremony.siteId ? { siteId: ceremony.siteId } : {}),
+      ...(ceremony.tenantId ? { tenantId: ceremony.tenantId } : {}),
+      traceId: input.traceId,
+      userId: ceremony.userId,
+    });
+    return created
+      ? {
+          audience: currentTarget.tenantId && currentTarget.siteId ? 'customer' : 'platform',
+          kind: 'authenticated',
+          sessionToken: token.token,
+        }
+      : { kind: 'invalid' };
+  }
+
+  async renameWebAuthnCredential(input: {
+    credentialId: string;
+    currentPassword: string;
+    host: string;
+    name: string;
+    sessionToken: string | undefined;
+    traceId: string;
+  }): Promise<boolean> {
+    const repository = this.options.webAuthnRepository;
+    const name = input.name.trim();
+    if (
+      !repository?.renameCredential ||
+      !input.sessionToken ||
+      name.length < 1 ||
+      name.length > 80 ||
+      /[\u0000-\u001f\u007f]/u.test(name)
+    ) {
+      return false;
+    }
+    const sessionTokenHash = digestToken(input.sessionToken);
+    const target = await this.repository.findAccountSecurityTarget({
+      host: input.host,
+      tokenHash: sessionTokenHash,
+    });
+    if (!target || !(await verifyPassword(target.passwordHash, input.currentPassword))) {
+      return false;
+    }
+    return repository.renameCredential({
+      credentialId: input.credentialId,
+      expectedPasswordHash: target.passwordHash,
+      host: target.host,
+      name,
+      now: this.now(),
+      sessionTokenHash,
+      ...(target.siteId ? { siteId: target.siteId } : {}),
+      ...(target.tenantId ? { tenantId: target.tenantId } : {}),
+      traceId: input.traceId,
+      userId: target.userId,
+    });
+  }
+
+  async revokeWebAuthnCredential(input: {
+    confirmed: boolean;
+    credentialId: string;
+    currentPassword: string;
+    host: string;
+    sessionToken: string | undefined;
+    traceId: string;
+  }): Promise<{ sessionsRevoked: true } | undefined> {
+    const repository = this.options.webAuthnRepository;
+    if (!repository?.revokeCredential || !input.sessionToken || !input.confirmed) {
+      return undefined;
+    }
+    const sessionTokenHash = digestToken(input.sessionToken);
+    const target = await this.repository.findAccountSecurityTarget({
+      host: input.host,
+      tokenHash: sessionTokenHash,
+    });
+    if (!target || !(await verifyPassword(target.passwordHash, input.currentPassword))) {
+      return undefined;
+    }
+    const revoked = await repository.revokeCredential({
+      credentialId: input.credentialId,
+      expectedPasswordHash: target.passwordHash,
+      host: target.host,
+      now: this.now(),
+      sessionTokenHash,
+      ...(target.siteId ? { siteId: target.siteId } : {}),
+      ...(target.tenantId ? { tenantId: target.tenantId } : {}),
+      traceId: input.traceId,
+      userId: target.userId,
+    });
+    return revoked ? { sessionsRevoked: true } : undefined;
+  }
+
   async prepareCustomerEmailCodePolicyChange(input: {
     currentPassword: string;
     enabled: boolean;
@@ -1255,9 +1746,22 @@ export class AuthenticationService {
     const emailCodeAvailable = Boolean(
       target.emailCodeEnabled && this.options.emailCodeStore && this.options.verificationNotifier,
     );
+    const webAuthnAvailable = Boolean(
+      this.webAuthnEnrollmentAvailable() &&
+      this.options.webAuthnRepository?.listActiveCredentials &&
+      (
+        await this.options.webAuthnRepository.listActiveCredentials({
+          host: target.host,
+          ...(target.siteId ? { siteId: target.siteId } : {}),
+          ...(target.tenantId ? { tenantId: target.tenantId } : {}),
+          userId: target.userId,
+        })
+      ).length > 0,
+    );
     const methods: VerificationMethod[] = [
       ...(emailCodeAvailable ? (['email_code'] as const) : []),
       ...(factor ? (['totp'] as const) : []),
+      ...(webAuthnAvailable ? (['webauthn'] as const) : []),
     ];
     const customerRecoveryAvailable =
       target.hasRecoveryCodes &&
@@ -1276,8 +1780,13 @@ export class AuthenticationService {
         await this.issueEmailCode(challengeId, challenge, networkIdentifier);
       } catch {
         await this.challenges.consume(challengeId);
-        if (!factor && !customerRecoveryAvailable) return { kind: 'invalid' };
-        const fallbackMethods: VerificationMethod[] = factor ? ['totp'] : [];
+        if (!factor && !webAuthnAvailable && !customerRecoveryAvailable) {
+          return { kind: 'invalid' };
+        }
+        const fallbackMethods: VerificationMethod[] = [
+          ...(factor ? (['totp'] as const) : []),
+          ...(webAuthnAvailable ? (['webauthn'] as const) : []),
+        ];
         const fallback = challengeFor(
           target,
           traceId,
@@ -1456,6 +1965,15 @@ export class AuthenticationService {
     return createHmac('sha256', this.#authenticationPepper)
       .update('omnireach-webauthn-enrollment-credential-state-v1\0', 'utf8')
       .update(passwordHash, 'utf8')
+      .digest('hex');
+  }
+
+  private webAuthnBaseChallengeDigest(challengeId: string, authStateDigest: string): string {
+    return createHmac('sha256', this.#authenticationPepper)
+      .update('omnireach-webauthn-login-binding-v1\0', 'utf8')
+      .update(challengeId, 'utf8')
+      .update('\0', 'utf8')
+      .update(authStateDigest, 'utf8')
       .digest('hex');
   }
 

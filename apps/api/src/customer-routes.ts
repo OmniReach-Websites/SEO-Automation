@@ -46,7 +46,9 @@ export interface CustomerEndpointService {
     input: { draftId: string; expectedVersion: number; fieldId: string; value: unknown },
   ): Promise<unknown>;
   history(principal: CustomerPrincipal): Promise<unknown>;
+  reports(principal: CustomerPrincipal): Promise<unknown>;
   pages(principal: CustomerPrincipal): Promise<unknown>;
+  proposals?(principal: CustomerPrincipal): Promise<unknown>;
   preview(
     principal: CustomerPrincipal,
     input: { draftId: string },
@@ -62,6 +64,15 @@ export interface CustomerEndpointService {
   restore(
     principal: CustomerPrincipal,
     input: { idempotencyKey: string; reason: string; revision: number },
+  ): Promise<unknown>;
+  reviewProposal?(
+    principal: CustomerPrincipal,
+    input: {
+      action: 'approve' | 'reject';
+      editedValue?: unknown;
+      proposalId: string;
+      reason: string;
+    },
   ): Promise<unknown>;
   updateContactForm(
     principal: CustomerPrincipal,
@@ -98,6 +109,42 @@ export function registerCustomerRoutes(
     if (!principal) return undefined;
     return service.pages(principal);
   });
+
+  server.get('/v1/customer/reports', async (request, reply) => {
+    const principal = await authorize(request, reply, resolvePrincipal, 'content.read');
+    if (!principal) return undefined;
+    return service.reports(principal);
+  });
+
+  server.get('/v1/customer/proposals', async (request, reply) => {
+    const principal = await authorize(request, reply, resolvePrincipal, 'content.read');
+    if (!principal) return undefined;
+    return service.proposals
+      ? service.proposals(principal)
+      : reply.code(404).send({ error: 'not_found' });
+  });
+
+  server.post(
+    '/v1/customer/proposals/:proposalId/review',
+    { preHandler: requireSameOrigin },
+    async (request, reply) => {
+      const principal = await authorize(request, reply, resolvePrincipal, 'content.edit');
+      if (!principal) return;
+      if (!service.reviewProposal) return reply.code(404).send({ error: 'not_found' });
+      const params = parse(z.object({ proposalId: z.string().uuid() }), request.params, reply);
+      const body = parse(
+        z.object({
+          action: z.enum(['approve', 'reject']),
+          editedValue: z.unknown().optional(),
+          reason,
+        }),
+        request.body,
+        reply,
+      );
+      if (!params || !body) return;
+      return service.reviewProposal(principal, { ...params, ...body });
+    },
+  );
 
   server.get('/v1/customer/drafts', async (request, reply) => {
     const principal = await authorize(request, reply, resolvePrincipal, 'content.read');

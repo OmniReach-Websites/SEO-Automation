@@ -100,7 +100,10 @@ async function verifyTenantIsolation(pool) {
   await pool.query(
     `INSERT INTO sessions (id, user_id, tenant_id, site_id, host, token_hash, expires_at)
      VALUES ($1, $2, $3, $4, 'admin.rls-alpha.test', $5, now() + interval '1 hour')
-     ON CONFLICT (token_hash) DO UPDATE SET revoked_at = NULL, expires_at = excluded.expires_at`,
+     ON CONFLICT (token_hash) DO UPDATE SET
+       revoked_at = NULL,
+       expires_at = excluded.expires_at,
+       last_seen_at = now()`,
     [fixture.sessionA, fixture.userA, fixture.tenantA, fixture.siteA, digestToken(sessionToken)],
   );
   await pool.query(

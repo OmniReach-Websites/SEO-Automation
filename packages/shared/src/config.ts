@@ -82,6 +82,18 @@ const configSchema = z
       .default('false')
       .transform((value) => value === 'true'),
     DATABASE_URL: z.string().url().startsWith('postgresql://'),
+    GOOGLE_CLIENT_ID: optionalNonempty,
+    GOOGLE_CLIENT_SECRET: optionalNonempty,
+    GOOGLE_INTEGRATION_ENABLED: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((value) => value === 'true'),
+    GOOGLE_TOKEN_ENCRYPTION_KEY: optionalNonempty.pipe(
+      z
+        .string()
+        .regex(/^[a-f0-9]{64}$/iu)
+        .optional(),
+    ),
     LOG_LEVEL: z
       .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
       .default('info'),
@@ -141,6 +153,27 @@ const configSchema = z
         message: 'Session and MFA encryption secrets must be independent',
         path: ['MFA_ENCRYPTION_KEY'],
       });
+    }
+    if (
+      config.GOOGLE_INTEGRATION_ENABLED &&
+      (!config.GOOGLE_CLIENT_ID ||
+        !config.GOOGLE_CLIENT_SECRET ||
+        !config.GOOGLE_TOKEN_ENCRYPTION_KEY)
+    ) {
+      for (const path of [
+        'GOOGLE_CLIENT_ID',
+        'GOOGLE_CLIENT_SECRET',
+        'GOOGLE_TOKEN_ENCRYPTION_KEY',
+      ] as const) {
+        if (!config[path]) {
+          context.addIssue({
+            code: 'custom',
+            message:
+              'Google OAuth client and token encryption credentials are required when enabled',
+            path: [path],
+          });
+        }
+      }
     }
     let modelAliases: Record<string, string> | undefined;
     try {
@@ -266,6 +299,8 @@ export function redactConfig(config: AppConfig): Record<string, string | number>
     CONTACT_ENCRYPTION_KEY: '[REDACTED]',
     ...(config.MFA_ENCRYPTION_KEY ? { MFA_ENCRYPTION_KEY: '[REDACTED]' } : {}),
     ...(config.MFA_ENCRYPTION_KEYRING_JSON ? { MFA_ENCRYPTION_KEYRING_JSON: '[REDACTED]' } : {}),
+    ...(config.GOOGLE_CLIENT_SECRET ? { GOOGLE_CLIENT_SECRET: '[REDACTED]' } : {}),
+    ...(config.GOOGLE_TOKEN_ENCRYPTION_KEY ? { GOOGLE_TOKEN_ENCRYPTION_KEY: '[REDACTED]' } : {}),
     ...(config.OPENAI_API_KEY ? { OPENAI_API_KEY: '[REDACTED]' } : {}),
     ORAP_HOSTNAME: config.ORAP_HOSTNAME,
     PREVIEW_SIGNING_KEY: '[REDACTED]',

@@ -15,6 +15,7 @@ import {
   type BudgetView,
   type JobRow,
   type OrapNavigationItem,
+  type OrapSiteManagementModel,
   type OrapSiteSummary,
   type OrapStaffSummary,
   type OrapStaffRoleOption,
@@ -31,7 +32,10 @@ import type { OrapAdministrationEndpointService, ResolvePlatformActor } from './
 import { registerCustomerUiRoutes } from './customer-ui-routes.ts';
 import { readCookie } from './request-auth.ts';
 import { requireSameOrigin } from './request-security.ts';
-import { webAuthnEnrollmentBrowserScript } from './webauthn-browser.ts';
+import {
+  webAuthnAuthenticationBrowserScript,
+  webAuthnEnrollmentBrowserScript,
+} from './webauthn-browser.ts';
 
 export function registerUiRoutes(
   server: FastifyInstance,
@@ -49,20 +53,31 @@ export function registerUiRoutes(
       .header('Cache-Control', 'public, max-age=300')
       .send(adminStylesheet),
   );
-  server.get<{ Querystring: { error?: string } }>('/login', async (request, reply) =>
-    reply
-      .type('text/html; charset=utf-8')
-      .send(renderLogin(request.hostname, request.query?.error)),
+  server.get<{ Querystring: { error?: string; security?: string } }>(
+    '/login',
+    async (request, reply) =>
+      reply
+        .type('text/html; charset=utf-8')
+        .send(renderLogin(request.hostname, request.query?.error, request.query?.security)),
   );
-  server.get<{ Querystring: { email?: string } }>('/mfa', async (request, reply) =>
-    reply
-      .type('text/html; charset=utf-8')
-      .send(
-        renderMfa(
-          readCookie(request, '__Host-omnireach_challenge') ?? '',
-          request.query?.email === '1',
+  server.get<{ Querystring: { email?: string; passkey?: string } }>(
+    '/mfa',
+    async (request, reply) =>
+      reply
+        .type('text/html; charset=utf-8')
+        .send(
+          renderMfa(
+            readCookie(request, '__Host-omnireach_challenge') ?? '',
+            request.query?.email === '1',
+            request.query?.passkey === '1',
+          ),
         ),
-      ),
+  );
+  server.get('/mfa/passkey.js', async (_request, reply) =>
+    reply
+      .type('application/javascript; charset=utf-8')
+      .header('Cache-Control', 'no-store')
+      .send(webAuthnAuthenticationBrowserScript),
   );
   server.get<{ Querystring: { token?: string } }>(
     '/auth/invitations/accept',
@@ -92,10 +107,11 @@ export function registerUiRoutes(
       );
     }
     server.get('/security', async (request, reply) => {
-      const settings = await options.authService?.securitySettings?.(
-        readCookie(request, '__Host-omnireach_session'),
-        request.hostname,
-      );
+      const currentToken = readCookie(request, '__Host-omnireach_session');
+      const [settings, sessions] = await Promise.all([
+        options.authService?.securitySettings?.(currentToken, request.hostname),
+        options.authService?.listSessions(currentToken, request.hostname) ?? [],
+      ]);
       if (!settings) return reply.code(303).redirect('/login');
       const platformActor = await options.resolvePlatformActor?.(request);
       const platformView = platformActor !== undefined;
@@ -112,6 +128,7 @@ export function registerUiRoutes(
             settings,
             platformView,
             platformActor ? orapNavigation(platformActor) : undefined,
+            sessions,
           ),
         );
     });
@@ -365,18 +382,188 @@ export function registerUiRoutes(
             entry.id === request.params.siteIdentifier ||
             entry.name === request.params.siteIdentifier,
         );
-        return site &&
+        if (
+          site &&
+          site.id &&
+          site.tenantId &&
           canOrap(actor, 'websites.view', {
-            ...(site.id ? { siteId: site.id } : {}),
-            ...(site.tenantId ? { tenantId: site.tenantId } : {}),
+            siteId: site.id,
+            tenantId: site.tenantId,
           })
-          ? reply
-              .type('text/html; charset=utf-8')
-              .send(renderOrapSiteDetails(site, orapNavigation(actor)))
-          : reply
-              .code(404)
-              .type('text/html; charset=utf-8')
-              .send(renderOrapNotFound(orapNavigation(actor)));
+        ) {
+          const management = options.orapService?.siteManagement
+            ? parseSiteManagement(
+                await options.orapService.siteManagement(actor, {
+                  siteId: site.id,
+                  tenantId: site.tenantId,
+                }),
+              )
+            : undefined;
+          return reply.type('text/html; charset=utf-8').send(
+            renderOrapSiteDetails(site, orapNavigation(actor), management, {
+              canEditAutomation: canOrap(actor, 'automation.emergency_controls.manage', {
+                siteId: site.id,
+                tenantId: site.tenantId,
+              }),
+              canEditBudget: canOrap(actor, 'ai_budget.site.edit', {
+                siteId: site.id,
+                tenantId: site.tenantId,
+              }),
+              canEditSubscription: canOrap(actor, 'subscriptions.edit', {
+                siteId: site.id,
+                tenantId: site.tenantId,
+              }),
+            }),
+          );
+        }
+        return reply
+          .code(404)
+          .type('text/html; charset=utf-8')
+          .send(renderOrapNotFound(orapNavigation(actor)));
+      },
+    );
+
+    server.post<{ Params: { siteIdentifier: string }; Body: unknown }>(
+      '/orap/sites/:siteIdentifier/plan',
+      { preHandler: requireSameOrigin },
+      async (request, reply) => {
+        const actor = await options.resolvePlatformActor?.(request);
+        const body = z
+          .object({
+            planId: z.string().uuid(),
+            reason: z.string().trim().min(3).max(500),
+            tenantId: z.string().uuid(),
+          })
+          .safeParse(request.body);
+        if (!actor || !body.success) {
+          return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
+        }
+        if (
+          !canOrap(actor, 'subscriptions.edit', {
+            siteId: request.params.siteIdentifier,
+            tenantId: body.data.tenantId,
+          })
+        ) {
+          return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
+        }
+        await options.orapService?.assignPlan(actor, {
+          ...body.data,
+          siteId: request.params.siteIdentifier,
+        });
+        return reply
+          .code(303)
+          .redirect(`/orap/sites/${encodeURIComponent(request.params.siteIdentifier)}`);
+      },
+    );
+
+    server.post<{ Params: { siteIdentifier: string }; Body: unknown }>(
+      '/orap/sites/:siteIdentifier/subscription',
+      { preHandler: requireSameOrigin },
+      async (request, reply) => {
+        const actor = await options.resolvePlatformActor?.(request);
+        const body = z
+          .object({
+            reason: z.string().trim().min(3).max(500),
+            status: z.enum(['active', 'cancelled', 'past_due']),
+            tenantId: z.string().uuid(),
+          })
+          .safeParse(request.body);
+        if (!actor || !body.success) {
+          return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
+        }
+        if (
+          !canOrap(actor, 'subscriptions.edit', {
+            siteId: request.params.siteIdentifier,
+            tenantId: body.data.tenantId,
+          })
+        ) {
+          return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
+        }
+        await options.orapService?.setSubscriptionState(actor, {
+          ...body.data,
+          siteId: request.params.siteIdentifier,
+        });
+        return reply
+          .code(303)
+          .redirect(`/orap/sites/${encodeURIComponent(request.params.siteIdentifier)}`);
+      },
+    );
+
+    server.post<{ Params: { siteIdentifier: string }; Body: unknown }>(
+      '/orap/sites/:siteIdentifier/emergency',
+      { preHandler: requireSameOrigin },
+      async (request, reply) => {
+        const actor = await options.resolvePlatformActor?.(request);
+        const body = z
+          .object({
+            autonomousChangesStopped: z.union([z.literal('true'), z.undefined()]),
+            automationStopped: z.union([z.literal('true'), z.undefined()]),
+            editingFrozen: z.union([z.literal('true'), z.undefined()]),
+            policyVersion: z.coerce.number().int().positive(),
+            reason: z.string().trim().min(3).max(500),
+            tenantId: z.string().uuid(),
+          })
+          .safeParse(request.body);
+        if (!actor || !body.success) {
+          return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
+        }
+        if (
+          !canOrap(actor, 'automation.emergency_controls.manage', {
+            siteId: request.params.siteIdentifier,
+            tenantId: body.data.tenantId,
+          })
+        ) {
+          return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
+        }
+        await options.orapService?.setEmergencyControls(actor, {
+          autonomousChangesStopped: body.data.autonomousChangesStopped === 'true',
+          automationStopped: body.data.automationStopped === 'true',
+          editingFrozen: body.data.editingFrozen === 'true',
+          policyVersion: body.data.policyVersion,
+          reason: body.data.reason,
+          siteId: request.params.siteIdentifier,
+          tenantId: body.data.tenantId,
+        });
+        return reply
+          .code(303)
+          .redirect(`/orap/sites/${encodeURIComponent(request.params.siteIdentifier)}`);
+      },
+    );
+
+    server.post<{ Params: { siteIdentifier: string }; Body: unknown }>(
+      '/orap/sites/:siteIdentifier/ai-budget',
+      { preHandler: requireSameOrigin },
+      async (request, reply) => {
+        const actor = await options.resolvePlatformActor?.(request);
+        const body = z
+          .object({
+            budgetUsd: z.coerce.number().min(0).max(10_000),
+            policyVersion: z.coerce.number().int().positive(),
+            reason: z.string().trim().min(3).max(500),
+            tenantId: z.string().uuid(),
+          })
+          .safeParse(request.body);
+        if (!actor || !body.success) {
+          return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
+        }
+        if (
+          !canOrap(actor, 'ai_budget.site.edit', {
+            siteId: request.params.siteIdentifier,
+            tenantId: body.data.tenantId,
+          })
+        ) {
+          return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
+        }
+        await options.orapService?.setSiteAiBudget(actor, {
+          capUsdMicros: Math.round(body.data.budgetUsd * 1_000_000),
+          policyVersion: body.data.policyVersion,
+          reason: body.data.reason,
+          siteId: request.params.siteIdentifier,
+          tenantId: body.data.tenantId,
+        });
+        return reply
+          .code(303)
+          .redirect(`/orap/sites/${encodeURIComponent(request.params.siteIdentifier)}`);
       },
     );
 
@@ -462,13 +649,17 @@ export function registerUiRoutes(
   });
 }
 
-function renderLogin(hostname: string, error?: string): string {
-  const notice =
+function renderLogin(hostname: string, error?: string, security?: string): string {
+  const errorNotice =
     error === 'credentials'
       ? '<div class="notice error" role="alert">The email address or password was not accepted. Check your details and try again.</div>'
       : '';
+  const securityNotice =
+    security === 'updated'
+      ? '<div class="notice" role="status">Your security settings were updated. Sign in again to continue.</div>'
+      : '';
   return renderAuthPage({
-    content: `${notice}<form method="post" action="/auth/login"><div class="field"><label for="email">Email address</label><input id="email" name="email" type="email" autocomplete="username" required autofocus></div><div class="field"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required></div><button type="submit">Sign in securely</button></form><p class="auth-card-footer"><a href="/auth/recovery">Forgot your password?</a></p>`,
+    content: `${errorNotice}${securityNotice}<form method="post" action="/auth/login"><div class="field"><label for="email">Email address</label><input id="email" name="email" type="email" autocomplete="username" required autofocus></div><div class="field"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required></div><button type="submit">Sign in securely</button></form><p class="auth-card-footer"><a href="/auth/recovery">Forgot your password?</a></p>`,
     description: `Continue to the secure administration workspace for ${escapeHtml(hostname)}.`,
     eyebrow: 'Staff access',
     heading: 'Welcome back',
@@ -476,12 +667,19 @@ function renderLogin(hostname: string, error?: string): string {
   });
 }
 
-function renderMfa(challengeId: string, emailAvailable: boolean): string {
+function renderMfa(
+  challengeId: string,
+  emailAvailable: boolean,
+  passkeyAvailable: boolean,
+): string {
   const resend = emailAvailable
     ? `<form method="post" action="/auth/mfa/email/resend"><input name="challengeId" type="hidden" value="${escapeHtml(challengeId)}"><button class="secondary" type="submit">Send a new email code</button></form>`
     : '';
+  const passkey = passkeyAvailable
+    ? `<input id="webauthn-challenge-id" type="hidden" value="${escapeHtml(challengeId)}"><button class="secondary" id="passkey-sign-in" type="button">Use a passkey</button><p id="passkey-sign-in-status" role="status" aria-live="polite"></p><script src="/mfa/passkey.js" defer></script>`
+    : '';
   return renderAuthPage({
-    content: `<form method="post" action="/auth/mfa/verify"><input name="challengeId" type="hidden" value="${escapeHtml(challengeId)}"><div class="field"><label for="code">Verification or recovery code</label><input id="code" name="code" autocomplete="one-time-code" inputmode="numeric" required autofocus></div><button type="submit">Verify and continue</button></form>${resend}`,
+    content: `<form method="post" action="/auth/mfa/verify"><input name="challengeId" type="hidden" value="${escapeHtml(challengeId)}"><div class="field"><label for="code">Verification or recovery code</label><input id="code" name="code" autocomplete="one-time-code" inputmode="numeric" required${passkeyAvailable ? '' : ' autofocus'}></div><button type="submit">Verify and continue</button></form>${passkey}${resend}`,
     description:
       'Enter your 8-digit email code, 6-digit authenticator code, or alphanumeric recovery code.',
     eyebrow: 'Two-step verification',
@@ -498,9 +696,18 @@ function renderSecuritySettings(
     totpEnabled: boolean;
     webauthnEnrollmentAvailable: boolean;
     webauthnEnabled: boolean;
+    webauthnCredentials?: {
+      backedUp: boolean;
+      createdAt: Date;
+      deviceType: string;
+      id: string;
+      lastUsedAt?: Date;
+      name: string;
+    }[];
   },
   platformView = false,
   navigation?: readonly OrapNavigationItem[],
+  rawSessions: unknown[] = [],
 ): string {
   const action = settings.emailCodeEnabled ? 'disable' : 'enable';
   const verb = settings.emailCodeEnabled ? 'Disable' : 'Enable';
@@ -510,7 +717,49 @@ function renderSecuritySettings(
   const passkeyEnrollment = settings.webauthnEnrollmentAvailable
     ? `<form id="passkey-enrollment" novalidate><label for="credentialName">Passkey name</label><input id="credentialName" name="credentialName" maxlength="80" autocomplete="off" required><label for="passkeyCurrentPassword">Current password</label><input id="passkeyCurrentPassword" name="currentPassword" type="password" maxlength="128" autocomplete="current-password" required><button type="submit">Create passkey</button></form><section id="passkey-recovery" hidden><h3>Save replacement recovery codes</h3><p>These codes are shown once. Store them securely before completing enrollment.</p><ul id="passkey-recovery-codes"></ul><label><input id="passkey-recovery-acknowledged" type="checkbox"> I saved every recovery code.</label><button id="passkey-complete" type="button">Finish passkey enrollment</button></section><p id="passkey-status" role="status" aria-live="polite"></p><script src="/security/passkey.js" defer></script>`
     : '<p>Enrollment remains unavailable until passkey sign-in support is activated in the same release.</p>';
-  const content = `<p class="lede">Two-step verification is <strong>${settings.secondStepRequired ? 'required' : 'optional'}</strong> for this account.</p><section class="panel"><h2>Email verification codes</h2><p>Status: <span class="badge${settings.emailCodeEnabled ? '' : ' disabled'}">${settings.emailCodeEnabled ? 'enabled' : 'disabled'}</span></p>${emailControl}</section><section class="panel"><h2>Authenticator app</h2><p>${settings.totpEnabled ? 'Enrolled. Management controls are not yet available on this page.' : 'Enrollment is not yet available.'}</p></section><section class="panel"><h2>Passkeys and Windows Hello</h2><p>${settings.webauthnEnabled ? 'A passkey is enrolled. Management controls are not yet available on this page.' : 'No passkey is enrolled.'}</p>${passkeyEnrollment}</section><p class="help">Changing a verification method signs out every active session.</p>`;
+  const passkeyCredentials = settings.webauthnCredentials ?? [];
+  const passkeyList = passkeyCredentials.length
+    ? `<div class="stack">${passkeyCredentials
+        .map(
+          (credential) =>
+            `<article class="surface-note"><h3>${escapeHtml(credential.name)}</h3><p>${escapeHtml(credential.deviceType === 'multiDevice' ? 'Synced passkey' : 'Device-bound passkey')} · Added ${escapeHtml(credential.createdAt.toISOString())}${credential.lastUsedAt ? ` · Last used ${escapeHtml(credential.lastUsedAt.toISOString())}` : ' · Not used yet'}${credential.backedUp ? ' · Backed up' : ''}</p><form method="post" action="/auth/security/webauthn/rename"><input name="credentialId" type="hidden" value="${escapeHtml(credential.id)}"><label for="passkeyName-${escapeHtml(credential.id)}">Rename passkey</label><input id="passkeyName-${escapeHtml(credential.id)}" name="name" value="${escapeHtml(credential.name)}" maxlength="80" required><label for="passkeyRenamePassword-${escapeHtml(credential.id)}">Current password</label><input id="passkeyRenamePassword-${escapeHtml(credential.id)}" name="currentPassword" type="password" maxlength="128" autocomplete="current-password" required><button class="secondary" type="submit">Save name</button></form><form method="post" action="/auth/security/webauthn/revoke"><input name="credentialId" type="hidden" value="${escapeHtml(credential.id)}"><label for="passkeyRevokePassword-${escapeHtml(credential.id)}">Current password</label><input id="passkeyRevokePassword-${escapeHtml(credential.id)}" name="currentPassword" type="password" maxlength="128" autocomplete="current-password" required><label class="checkbox-label"><input name="confirmed" type="checkbox" value="true" required><span>Revoke this passkey and sign out every session.</span></label><button class="danger" type="submit">Revoke passkey</button></form></article>`,
+        )
+        .join('')}</div>`
+    : '<p>No passkey is enrolled.</p>';
+  const totpControl = settings.emailPolicyChangeAllowed
+    ? settings.totpEnabled
+      ? '<p>Status: <span class="badge">enabled</span></p><form method="post" action="/auth/security/totp/disable"><label for="totpDisablePassword">Current password</label><input id="totpDisablePassword" name="currentPassword" type="password" maxlength="128" autocomplete="current-password" required><label class="checkbox-label"><input name="confirmed" type="checkbox" value="true" required><span>Disable the authenticator and replace its recovery codes.</span></label><button class="danger" type="submit">Disable authenticator app</button></form>'
+      : '<p>Status: <span class="badge disabled">not enrolled</span></p><form method="post" action="/auth/security/totp/prepare"><label for="totpCurrentPassword">Current password</label><input id="totpCurrentPassword" name="currentPassword" type="password" maxlength="128" autocomplete="current-password" required><button type="submit">Set up authenticator app</button></form>'
+    : '<p>Privileged staff authenticator changes use the audited owner-security procedure.</p>';
+  const sessions = rawSessions.flatMap((value) => {
+    if (!isRecord(value)) return [];
+    const id = stringValue(value.id);
+    const host = stringValue(value.host);
+    const createdAt = dateValue(value.createdAt);
+    const expiresAt = dateValue(value.expiresAt);
+    const lastSeenAt = dateValue(value.lastSeenAt);
+    if (!id || !host || !createdAt || !expiresAt || !lastSeenAt) return [];
+    return [
+      {
+        assurance: stringValue(value.assuranceLevel) ?? 'basic',
+        authenticationMethod: stringValue(value.authenticationMethod) ?? 'password',
+        createdAt,
+        expiresAt,
+        host,
+        id,
+        lastSeenAt,
+      },
+    ];
+  });
+  const sessionList = sessions.length
+    ? `<div class="stack">${sessions
+        .map(
+          (session) =>
+            `<article class="surface-note"><h3>${escapeHtml(session.authenticationMethod)} session</h3><p>${escapeHtml(session.host)} · ${escapeHtml(session.assurance)} assurance · Last active ${escapeHtml(session.lastSeenAt.toISOString())} · Expires ${escapeHtml(session.expiresAt.toISOString())}</p><form method="post" action="/auth/sessions/${escapeHtml(session.id)}/revoke"><button class="danger" type="submit">Revoke session</button></form></article>`,
+        )
+        .join('')}</div>`
+    : '<p>No active sessions were returned.</p>';
+  const content = `<p class="lede">Two-step verification is <strong>${settings.secondStepRequired ? 'required' : 'optional'}</strong> for this account.</p><section class="panel"><h2>Email verification codes</h2><p>Status: <span class="badge${settings.emailCodeEnabled ? '' : ' disabled'}">${settings.emailCodeEnabled ? 'enabled' : 'disabled'}</span></p>${emailControl}</section><section class="panel"><h2>Authenticator app</h2>${totpControl}</section><section class="panel"><h2>Passkeys and Windows Hello</h2>${passkeyList}${passkeyEnrollment}</section><section class="panel"><h2>Active sessions</h2>${sessionList}</section><p class="help">Changing a verification method signs out every active session. The final strong factor cannot be removed until another allowed verification method exists.</p>`;
   if (platformView) {
     return renderOrapShell({
       content,
@@ -604,6 +853,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value ? value : undefined;
+}
+
+function dateValue(value: unknown): Date | undefined {
+  const parsed =
+    value instanceof Date ? value : typeof value === 'string' ? new Date(value) : undefined;
+  return parsed && !Number.isNaN(parsed.getTime()) ? parsed : undefined;
 }
 
 function orapNavigation(actor: AdminActor): OrapNavigationItem[] {
@@ -822,6 +1077,61 @@ function parseSiteSummaries(value: unknown): OrapSiteSummary[] {
           : [];
       })
     : [];
+}
+
+function parseSiteManagement(value: unknown): OrapSiteManagementModel | undefined {
+  const result = z
+    .object({
+      availability: z.object({
+        activeArtifact: z.boolean(),
+        preservedDuringDelinquency: z.literal(true),
+        publicDomain: z.boolean(),
+      }),
+      budget: z
+        .object({
+          capUsdMicros: z.number().nonnegative(),
+          policyVersion: z.number().int().nonnegative(),
+        })
+        .nullable(),
+      emergency: z.object({
+        autonomousChangesStopped: z.boolean(),
+        automationStopped: z.boolean(),
+        editingFrozen: z.boolean(),
+        policyVersion: z.number().int().nonnegative(),
+      }),
+      features: z.array(z.object({ enabled: z.boolean(), key: z.string(), readiness: z.string() })),
+      integrations: z.array(
+        z.object({
+          lastSyncedAt: z.string().nullable(),
+          propertyKind: z.string(),
+          status: z.string(),
+        }),
+      ),
+      plans: z.array(
+        z.object({
+          code: z.string(),
+          commercialStatus: z.string(),
+          id: z.string(),
+          name: z.string(),
+          version: z.number().int().positive(),
+        }),
+      ),
+      subscription: z
+        .object({
+          aiReviewCyclesPerMonth: z.number().int().nonnegative(),
+          code: z.string(),
+          customerSeatLimit: z.number().int().nonnegative(),
+          graceEndsAt: z.string().nullable(),
+          planId: z.string(),
+          seoAuditIntervalHours: z.number().int().positive(),
+          standardPageLimit: z.number().int().nonnegative(),
+          status: z.string(),
+          version: z.number().int().positive(),
+        })
+        .nullable(),
+    })
+    .safeParse(value);
+  return result.success ? result.data : undefined;
 }
 
 function siteNotice(value: string | undefined): string | undefined {

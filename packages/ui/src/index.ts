@@ -14,6 +14,7 @@ export {
   type OrapNavigationItem,
   type OrapOverviewModel,
   type OrapSiteSummary,
+  type OrapSiteManagementModel,
   type OrapStaffSummary,
   type OrapStaffRoleOption,
 } from './admin.ts';

@@ -10,14 +10,21 @@ function source(path: string): string {
 }
 
 describe('WebAuthn enrollment security boundary', () => {
-  it('keeps production enrollment disabled until assertion authentication ships', () => {
+  it('enables enrollment only alongside exact-host assertion authentication', () => {
     const main = source('apps/api/src/main.ts');
     const service = source('packages/auth/src/service.ts');
+    const routes = source('apps/api/src/auth-routes.ts');
+    const repository = source('packages/auth/src/postgres-webauthn.ts');
 
-    expect(main).toContain('webAuthnAuthenticationEnabled: false');
+    expect(main).toContain('webAuthnAuthenticationEnabled: true');
     expect(main).not.toMatch(/WEBAUTHN_AUTHENTICATION_ENABLED/u);
     expect(service).toContain('if (!this.webAuthnEnrollmentAvailable()');
     expect(service).toContain('this.options.webAuthnAuthenticationEnabled');
+    expect(service).toContain('verifyExactHostWebAuthnAuthentication');
+    expect(routes).toContain('/auth/mfa/webauthn/prepare');
+    expect(routes).toContain('/auth/mfa/webauthn/complete');
+    expect(repository).toContain('async completeAuthentication');
+    expect(repository).toContain('authentication_method, authentication_assurance, verified_at');
   });
 
   it('binds registration to exact host, recent assurance, current state, and one-use storage', () => {

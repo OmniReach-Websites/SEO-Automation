@@ -13,6 +13,45 @@ export interface OrapSiteSummary {
   tenantName: string;
 }
 
+export interface OrapSiteManagementModel {
+  availability: {
+    activeArtifact: boolean;
+    preservedDuringDelinquency: boolean;
+    publicDomain: boolean;
+  };
+  budget: { capUsdMicros: number; policyVersion: number } | null;
+  emergency: {
+    autonomousChangesStopped: boolean;
+    automationStopped: boolean;
+    editingFrozen: boolean;
+    policyVersion: number;
+  };
+  features: readonly { enabled: boolean; key: string; readiness: string }[];
+  integrations: readonly {
+    lastSyncedAt: string | null;
+    propertyKind: string;
+    status: string;
+  }[];
+  plans: readonly {
+    code: string;
+    commercialStatus: string;
+    id: string;
+    name: string;
+    version: number;
+  }[];
+  subscription: {
+    aiReviewCyclesPerMonth: number;
+    code: string;
+    customerSeatLimit: number;
+    graceEndsAt: string | null;
+    planId: string;
+    seoAuditIntervalHours: number;
+    standardPageLimit: number;
+    status: string;
+    version: number;
+  } | null;
+}
+
 export interface OrapStaffSummary {
   activeSessions: number;
   createdAt: string;
@@ -304,16 +343,65 @@ export function renderOrapSiteForm(
 export function renderOrapSiteDetails(
   site: OrapSiteSummary,
   navigation?: readonly OrapNavigationItem[],
+  management?: OrapSiteManagementModel,
+  permissions: {
+    canEditAutomation?: boolean;
+    canEditBudget?: boolean;
+    canEditSubscription?: boolean;
+  } = {},
 ): string {
+  const effective = management ? renderEffectiveSiteManagement(site, management, permissions) : '';
   return renderOrapShell({
     actions: '<a class="button secondary" href="/orap/sites">Back to sites</a>',
-    content: `<section class="panel"><h2>Site record</h2><dl class="detail-list"><dt>Site</dt><dd>${escapeHtml(site.name)}</dd><dt>Tenant</dt><dd>${escapeHtml(site.tenantName)}</dd><dt>Status</dt><dd><span class="badge${site.status === 'disabled' ? ' disabled' : ''}">${escapeHtml(site.status)}</span></dd>${site.id ? `<dt>Site ID</dt><dd><code>${escapeHtml(site.id)}</code></dd>` : ''}${site.tenantId ? `<dt>Tenant ID</dt><dd><code>${escapeHtml(site.tenantId)}</code></dd>` : ''}</dl></section><section class="panel"><h2>Management controls</h2><p class="lede">Subscription, customer access, integrations, feature overrides, and publishing controls will appear here as each tested service is connected to this screen. No unavailable control is presented as functional.</p></section>`,
+    content: `<section class="panel"><h2>Site record</h2><dl class="detail-list"><dt>Site</dt><dd>${escapeHtml(site.name)}</dd><dt>Tenant</dt><dd>${escapeHtml(site.tenantName)}</dd><dt>Status</dt><dd><span class="badge${site.status === 'disabled' ? ' disabled' : ''}">${escapeHtml(site.status)}</span></dd>${site.id ? `<dt>Site ID</dt><dd><code>${escapeHtml(site.id)}</code></dd>` : ''}${site.tenantId ? `<dt>Tenant ID</dt><dd><code>${escapeHtml(site.tenantId)}</code></dd>` : ''}</dl></section>${effective || '<section class="panel"><h2>Management controls</h2><p class="lede">Effective controls are unavailable for this account.</p></section>'}`,
     current: 'sites',
     eyebrow: 'Site management',
     heading: site.name,
     ...(navigation ? { navigation } : {}),
     title: site.name,
   });
+}
+
+function renderEffectiveSiteManagement(
+  site: OrapSiteSummary,
+  management: OrapSiteManagementModel,
+  permissions: {
+    canEditAutomation?: boolean;
+    canEditBudget?: boolean;
+    canEditSubscription?: boolean;
+  },
+): string {
+  if (!site.id || !site.tenantId) return '';
+  const hidden = `<input type="hidden" name="tenantId" value="${escapeHtml(site.tenantId)}">`;
+  const subscription = management.subscription;
+  const planOptions = management.plans
+    .map(
+      (plan) =>
+        `<option value="${escapeHtml(plan.id)}"${subscription?.planId === plan.id ? ' selected' : ''}>${escapeHtml(plan.code)} v${plan.version}${plan.commercialStatus === 'approved' ? '' : ' — draft commercial terms'}</option>`,
+    )
+    .join('');
+  const features = management.features
+    .map(
+      (feature) =>
+        `<tr><th scope="row">${escapeHtml(feature.key)}</th><td>${feature.enabled ? 'Enabled' : 'Disabled'}</td><td>${escapeHtml(feature.readiness)}</td></tr>`,
+    )
+    .join('');
+  const integrations = management.integrations
+    .map(
+      (integration) =>
+        `<tr><th scope="row">${escapeHtml(integration.propertyKind)}</th><td>${escapeHtml(integration.status)}</td><td>${escapeHtml(integration.lastSyncedAt ?? 'Never')}</td></tr>`,
+    )
+    .join('');
+  const planControl = permissions.canEditSubscription
+    ? `<form method="post" action="/orap/sites/${encodeURIComponent(site.id)}/plan">${hidden}<label for="planId">Assigned plan</label><select id="planId" name="planId" required>${planOptions}</select><label for="planReason">Audit reason</label><textarea id="planReason" name="reason" minlength="3" maxlength="500" required></textarea><button type="submit">Assign plan</button></form><form method="post" action="/orap/sites/${encodeURIComponent(site.id)}/subscription">${hidden}<label for="subscriptionStatus">Subscription status</label><select id="subscriptionStatus" name="status"><option value="active"${subscription?.status === 'active' ? ' selected' : ''}>Active</option><option value="past_due"${subscription?.status === 'past_due' ? ' selected' : ''}>Past due (public site stays online)</option><option value="cancelled"${subscription?.status === 'cancelled' ? ' selected' : ''}>Cancelled (public site stays online)</option></select><label for="subscriptionReason">Audit reason</label><textarea id="subscriptionReason" name="reason" minlength="3" maxlength="500" required></textarea><button type="submit">Update subscription</button></form>`
+    : '<p class="help">Subscription changes require the subscriptions permission.</p>';
+  const emergencyControl = permissions.canEditAutomation
+    ? `<form method="post" action="/orap/sites/${encodeURIComponent(site.id)}/emergency">${hidden}<input type="hidden" name="policyVersion" value="${management.emergency.policyVersion + 1}"><label><input type="checkbox" name="editingFrozen" value="true"${management.emergency.editingFrozen ? ' checked' : ''}> Freeze editing</label><label><input type="checkbox" name="automationStopped" value="true"${management.emergency.automationStopped ? ' checked' : ''}> Stop automation</label><label><input type="checkbox" name="autonomousChangesStopped" value="true"${management.emergency.autonomousChangesStopped ? ' checked' : ''}> Stop autonomous changes</label><label for="emergencyReason">Audit reason</label><textarea id="emergencyReason" name="reason" minlength="3" maxlength="500" required></textarea><button type="submit">Apply emergency controls</button></form>`
+    : '<p class="help">Emergency changes require the automation-control permission.</p>';
+  const budgetControl = permissions.canEditBudget
+    ? `<form method="post" action="/orap/sites/${encodeURIComponent(site.id)}/ai-budget">${hidden}<input type="hidden" name="policyVersion" value="${(management.budget?.policyVersion ?? 0) + 1}"><label for="budgetUsd">Monthly AI ceiling in USD</label><input id="budgetUsd" name="budgetUsd" type="number" min="0" max="10000" step="0.01" value="${((management.budget?.capUsdMicros ?? 0) / 1_000_000).toFixed(2)}" required><label for="budgetReason">Audit reason</label><textarea id="budgetReason" name="reason" minlength="3" maxlength="500" required></textarea><button type="submit">Update hard ceiling</button></form>`
+    : '<p class="help">Budget changes require the site AI-budget permission.</p>';
+  return `<section class="panel"><h2>Effective subscription</h2><dl class="detail-list"><dt>Plan</dt><dd>${escapeHtml(subscription ? `${subscription.code} v${subscription.version}` : 'Not assigned')}</dd><dt>Status</dt><dd>${escapeHtml(subscription?.status ?? 'Not assigned')}</dd><dt>Seats</dt><dd>${subscription?.customerSeatLimit ?? 0}</dd><dt>Pages</dt><dd>${subscription?.standardPageLimit ?? 0}</dd><dt>SEO cadence</dt><dd>${subscription ? `${subscription.seoAuditIntervalHours} hours` : 'Unavailable'}</dd><dt>AI review cycles</dt><dd>${subscription?.aiReviewCyclesPerMonth ?? 0}</dd><dt>Grace ends</dt><dd>${escapeHtml(subscription?.graceEndsAt ?? 'None')}</dd><dt>Public availability</dt><dd>${management.availability.activeArtifact && management.availability.publicDomain ? 'Published static site available' : 'Not fully activated'}</dd></dl><p class="help">Past-due or cancelled billing state never removes an existing static artifact.</p>${planControl}</section><section class="panel flush"><div class="panel-header"><h2>Effective features</h2></div><table><caption>Effective feature settings</caption><thead><tr><th>Feature</th><th>State</th><th>Readiness</th></tr></thead><tbody>${features || '<tr><td colspan="3">No feature definitions found.</td></tr>'}</tbody></table></section><section class="panel"><h2>Emergency controls</h2>${emergencyControl}</section><section class="panel"><h2>AI cost ceiling</h2><p class="help">Provider execution remains separately disabled until owner approval.</p>${budgetControl}</section><section class="panel flush"><div class="panel-header"><h2>Integrations</h2></div><table><caption>Connected data providers</caption><thead><tr><th>Property</th><th>Status</th><th>Last sync</th></tr></thead><tbody>${integrations || '<tr><td colspan="3">Not connected</td></tr>'}</tbody></table></section>`;
 }
 
 export function renderOrapNotFound(navigation?: readonly OrapNavigationItem[]): string {

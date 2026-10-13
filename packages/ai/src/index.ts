@@ -22,3 +22,9 @@ export {
   type ProviderConfiguration,
   type SampledMentionRecord,
 } from './provider.ts';
+export {
+  evaluateProposal,
+  ProposalEvaluationError,
+  type ProposalEvaluation,
+  type ProposalViolationCode,
+} from './evaluation.ts';

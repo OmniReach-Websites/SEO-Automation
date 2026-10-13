@@ -4,9 +4,11 @@ import { hasPermission, type Action } from '@omnireach/auth';
 import { PublicationPendingError, RevisionConflictError } from '@omnireach/content';
 import {
   renderEditor,
+  renderReportingDashboard,
   renderRevisionHistory,
   type EditorField,
   type PublicationStatus,
+  type ReportMeasurement,
   type RevisionHistoryEntry,
   type RevisionOrigin,
 } from '@omnireach/customer-admin';
@@ -70,6 +72,84 @@ export function registerCustomerUiRoutes(
   service: CustomerEndpointService,
   resolvePrincipal: ResolveCustomerPrincipal,
 ): void {
+  server.get<{ Querystring: { notice?: string } }>('/proposals', async (request, reply) => {
+    const principal = await authorizeUi(request, reply, resolvePrincipal, 'content.read');
+    if (!principal) return;
+    if (!service.proposals) return reply.code(404).send();
+    const proposals = await service.proposals(principal);
+    return reply
+      .type('text/html; charset=utf-8')
+      .send(
+        renderCustomerDocument(
+          'AI proposals',
+          'AI proposals',
+          renderProposalList(proposals, hasPermission(principal.role, 'content.edit')),
+          'proposals',
+          request.query.notice === 'reviewed'
+            ? 'Proposal review saved to the draft.'
+            : request.query.notice === 'stale'
+              ? 'The proposal became stale and was not applied.'
+              : undefined,
+        ),
+      );
+  });
+
+  server.post(
+    '/proposals/:proposalId/review',
+    { preHandler: requireSameOrigin },
+    async (request, reply) => {
+      const principal = await authorizeUi(request, reply, resolvePrincipal, 'content.edit');
+      if (!principal) return;
+      if (!service.reviewProposal) return reply.code(404).send();
+      const proposalId = draftIdSchema.safeParse(
+        (request.params as { proposalId?: unknown }).proposalId,
+      );
+      const body = formBody(request.body);
+      const action =
+        body?.action === 'approve' || body?.action === 'reject' ? body.action : undefined;
+      const reviewReason = reasonSchema.safeParse(body?.reason);
+      if (!proposalId.success || !action || !reviewReason.success) {
+        return reply.code(400).type('text/html; charset=utf-8').send(renderForbidden());
+      }
+      let editedValue: unknown = body?.editedValue;
+      if (action === 'approve' && body?.valueFormat === 'json' && typeof editedValue === 'string') {
+        try {
+          editedValue = JSON.parse(editedValue) as unknown;
+        } catch {
+          return reply.code(400).type('text/html; charset=utf-8').send(renderForbidden());
+        }
+      }
+      const result = await service.reviewProposal(principal, {
+        action,
+        ...(action === 'approve' ? { editedValue } : {}),
+        proposalId: proposalId.data,
+        reason: reviewReason.data,
+      });
+      const state = isRecord(result) ? String(result.state ?? '') : '';
+      return reply
+        .code(303)
+        .redirect(state === 'stale' ? '/proposals?notice=stale' : '/proposals?notice=reviewed');
+    },
+  );
+
+  server.get('/reports', async (request, reply) => {
+    const principal = await authorizeUi(request, reply, resolvePrincipal, 'content.read');
+    if (!principal) return;
+    const raw = await service.reports(principal);
+    const report = isRecord(raw) && Array.isArray(raw.measurements) ? raw.measurements : [];
+    const measurements = report.filter(isReportMeasurement) as ReportMeasurement[];
+    return reply
+      .type('text/html; charset=utf-8')
+      .send(
+        renderCustomerDocument(
+          'Reports',
+          'Reports',
+          renderReportingDashboard(measurements, principal.role),
+          'reports',
+        ),
+      );
+  });
+
   server.get<{ Querystring: { notice?: string } }>('/editor', async (request, reply) => {
     const principal = await authorizeUi(request, reply, resolvePrincipal, 'content.read');
     if (!principal) return;
@@ -605,13 +685,47 @@ function renderCustomerDocument(
   title: string,
   heading: string,
   content: string,
-  current: 'editor' | 'history',
+  current: 'editor' | 'history' | 'proposals' | 'reports',
   notice?: string,
 ): string {
   const editorCurrent = current === 'editor' ? ' aria-current="page"' : '';
   const historyCurrent = current === 'history' ? ' aria-current="page"' : '';
+  const reportsCurrent = current === 'reports' ? ' aria-current="page"' : '';
+  const proposalsCurrent = current === 'proposals' ? ' aria-current="page"' : '';
   const status = notice ? `<div role="status" tabindex="-1">${escapeHtml(notice)}</div>` : '';
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><title>${escapeHtml(title)} | OmniReach</title></head><body><a href="#main">Skip to content</a><header><strong>OmniReach</strong><nav aria-label="Site administration"><a href="/">Overview</a><a href="/editor"${editorCurrent}>Editor</a><a href="/history"${historyCurrent}>History</a><a href="/security">Security</a></nav></header><main id="main"><h1>${escapeHtml(heading)}</h1>${status}${content}</main></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><title>${escapeHtml(title)} | OmniReach</title></head><body><a href="#main">Skip to content</a><header><strong>OmniReach</strong><nav aria-label="Site administration"><a href="/">Overview</a><a href="/editor"${editorCurrent}>Editor</a><a href="/proposals"${proposalsCurrent}>Proposals</a><a href="/history"${historyCurrent}>History</a><a href="/reports"${reportsCurrent}>Reports</a><a href="/security">Security</a></nav></header><main id="main"><h1>${escapeHtml(heading)}</h1>${status}${content}</main></body></html>`;
+}
+
+function renderProposalList(raw: unknown, canEdit: boolean): string {
+  const proposals = Array.isArray(raw) ? raw.filter(isRecord) : [];
+  if (proposals.length === 0) {
+    return '<p>No AI proposals are waiting for review. The AI provider remains disabled unless an owner explicitly enables it.</p>';
+  }
+  return proposals
+    .map((proposal) => {
+      const id = stringValue(proposal.id);
+      const fieldId = stringValue(proposal.field_id) ?? 'Unknown field';
+      const state = stringValue(proposal.state) ?? 'unknown';
+      if (!id) return '';
+      const currentValue = proposal.current_value;
+      const proposedValue = proposal.proposed_value;
+      const proposedText =
+        typeof proposedValue === 'string' ? proposedValue : JSON.stringify(proposedValue, null, 2);
+      const valueFormat = typeof proposedValue === 'string' ? 'text' : 'json';
+      const stale = proposal.stale === true;
+      const evidence = Array.isArray(proposal.evidence)
+        ? proposal.evidence
+            .filter((value): value is string => typeof value === 'string')
+            .map((value) => `<li>${escapeHtml(value)}</li>`)
+            .join('')
+        : '';
+      const decision =
+        canEdit && state === 'pending' && !stale
+          ? `<form method="post" action="/proposals/${escapeHtml(id)}/review"><input name="action" type="hidden" value="approve"><input name="valueFormat" type="hidden" value="${valueFormat}"><label for="proposal-value-${escapeHtml(id)}">Approved or edited value</label><textarea id="proposal-value-${escapeHtml(id)}" name="editedValue" rows="6" required>${escapeHtml(proposedText ?? '')}</textarea><label for="proposal-reason-${escapeHtml(id)}">Review reason</label><input id="proposal-reason-${escapeHtml(id)}" name="reason" minlength="3" maxlength="500" required><button type="submit">Apply to versioned draft</button></form><form method="post" action="/proposals/${escapeHtml(id)}/review"><input name="action" type="hidden" value="reject"><label for="proposal-reject-${escapeHtml(id)}">Rejection reason</label><input id="proposal-reject-${escapeHtml(id)}" name="reason" minlength="3" maxlength="500" required><button type="submit">Reject proposal</button></form>`
+          : `<p>${stale ? 'This proposal is stale and cannot overwrite newer work.' : 'This proposal is read-only.'}</p>`;
+      return `<article><h2>${escapeHtml(fieldId)}</h2><p>Status: ${escapeHtml(state)} · Mode: ${escapeHtml(stringValue(proposal.effective_mode) ?? 'SUGGEST')} · Model: ${escapeHtml(stringValue(proposal.model) ?? 'not recorded')}</p><h3>Current value</h3><pre>${escapeHtml(JSON.stringify(currentValue, null, 2))}</pre><h3>Suggested value</h3><pre>${escapeHtml(proposedText ?? '')}</pre><p>${escapeHtml(stringValue(proposal.rationale) ?? 'No rationale was recorded.')}</p><h3>Evidence</h3>${evidence ? `<ul>${evidence}</ul>` : '<p>No evidence was recorded.</p>'}${decision}</article>`;
+    })
+    .join('');
 }
 
 function renderForbidden(): string {
@@ -620,6 +734,21 @@ function renderForbidden(): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function isReportMeasurement(value: unknown): value is ReportMeasurement {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.kind === 'string' &&
+    typeof value.label === 'string' &&
+    typeof value.source === 'string' &&
+    typeof value.state === 'string' &&
+    typeof value.freshness === 'string'
+  );
 }
 
 function escapeHtml(value: string): string {

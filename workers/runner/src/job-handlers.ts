@@ -15,6 +15,7 @@ import { PostgresAlertCenter } from '@omnireach/worker-monitoring';
 import { runQueuedPublication } from '@omnireach/worker-publisher/run-publication';
 
 import type { DurableExecution } from './runtime.ts';
+import { runGoogleMetricsSync } from './google-metrics.ts';
 
 export interface JobHandlerContext {
   environment: NodeJS.ProcessEnv;
@@ -45,8 +46,14 @@ export async function executeCategory(
       return;
     case 'aio_proposal':
       throw new JobExecutionError('AIO execution is disabled by policy', 'cancelled');
-    case 'backup':
     case 'metrics_sync':
+      await runGoogleMetricsSync(envelope, {
+        environment: context.environment,
+        jobId: context.execution.jobId,
+        pool: context.pool,
+      });
+      return;
+    case 'backup':
       throw new JobExecutionError('No approved production handler is configured', 'cancelled');
   }
 }

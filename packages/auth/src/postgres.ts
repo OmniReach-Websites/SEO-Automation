@@ -1461,6 +1461,187 @@ export class PostgresAuthenticationRepository implements AuthenticationRepositor
     });
   }
 
+  async updateCustomerTotpPolicy(input: {
+    enabled: boolean;
+    encryptedSecret?: Uint8Array;
+    host: string;
+    keyVersion?: number;
+    lastUsedCounter?: number;
+    now: Date;
+    recoveryCodeHashes: string[];
+    sessionTokenHash: string;
+    traceId: string;
+    userId: string;
+  }): Promise<boolean> {
+    const host = normalizeHost(input.host);
+    if (host === this.#orapHostname) return false;
+    if (
+      input.enabled &&
+      (!input.encryptedSecret ||
+        !input.keyVersion ||
+        input.lastUsedCounter === undefined ||
+        input.recoveryCodeHashes.length === 0)
+    ) {
+      throw new Error('Verified TOTP enrollment material is missing');
+    }
+    return withAuthTransaction(this.pool, async (client) => {
+      const users = await query<{ id: string }>(
+        client,
+        `SELECT id FROM users WHERE id = $1 AND status = 'active' FOR UPDATE`,
+        [input.userId],
+      );
+      if (users.rows.length !== 1) return false;
+      const credentials = await query<{ user_id: string }>(
+        client,
+        `SELECT user_id FROM credentials WHERE user_id = $1 FOR UPDATE`,
+        [input.userId],
+      );
+      if (credentials.rows.length !== 1) return false;
+      const sessions = await query<{ site_id: string; tenant_id: string }>(
+        client,
+        `SELECT session.tenant_id, session.site_id
+           FROM sessions session
+           JOIN memberships membership
+             ON membership.user_id = session.user_id
+            AND membership.tenant_id = session.tenant_id
+            AND membership.site_id = session.site_id
+            AND membership.active
+            AND membership.role IN ('customer_owner','customer_editor','customer_viewer')
+           JOIN tenants tenant ON tenant.id = membership.tenant_id AND tenant.status = 'active'
+           JOIN sites site ON site.tenant_id = membership.tenant_id
+             AND site.id = membership.site_id AND site.status = 'active'
+           JOIN domains domain ON domain.tenant_id = membership.tenant_id
+             AND domain.site_id = membership.site_id AND domain.kind = 'admin'
+             AND domain.active AND domain.verification_status = 'verified'
+             AND domain.hostname = $3
+          WHERE session.token_hash = $1 AND session.user_id = $2 AND session.host = $3
+            AND session.revoked_at IS NULL AND session.expires_at > $4
+            AND session.last_seen_at > $4 - interval '30 minutes'
+            AND NOT session.recovery_restricted
+            AND NOT EXISTS (
+              SELECT 1 FROM platform_memberships platform
+               WHERE platform.user_id = session.user_id AND platform.active
+            )
+          FOR UPDATE OF session, membership, tenant, site, domain`,
+        [input.sessionTokenHash, input.userId, host, input.now],
+      );
+      if (sessions.rows.length !== 1 || !sessions.rows[0]) return false;
+      const policy = await query<{
+        email_code_enabled: boolean;
+        user_id: string;
+      }>(
+        client,
+        `SELECT user_id, email_code_enabled FROM account_authentication_policies
+          WHERE user_id = $1 FOR UPDATE`,
+        [input.userId],
+      );
+      if (policy.rows.length !== 1 || !policy.rows[0]) return false;
+      const factors = await query<{ id: string }>(
+        client,
+        `SELECT id FROM mfa_factors
+          WHERE user_id = $1 AND kind = 'totp' AND revoked_at IS NULL
+          FOR UPDATE`,
+        [input.userId],
+      );
+      const webauthn = await query<{ enabled: boolean }>(
+        client,
+        `SELECT EXISTS (
+           SELECT 1 FROM webauthn_scopes scope
+           JOIN webauthn_credentials credential
+             ON credential.scope_id = scope.id AND credential.revoked_at IS NULL
+          WHERE scope.user_id = $1 AND scope.tenant_id = $2
+            AND scope.site_id = $3 AND scope.rp_id = $4
+         ) AS enabled`,
+        [input.userId, sessions.rows[0].tenant_id, sessions.rows[0].site_id, host],
+      );
+      let factorId: string | undefined;
+      if (input.enabled) {
+        if (factors.rows.length !== 0) return false;
+        const created = await query<{ id: string }>(
+          client,
+          `INSERT INTO mfa_factors
+             (user_id, kind, encrypted_secret, key_version, last_used_counter, verified_at)
+           VALUES ($1, 'totp', $2, $3, $4, $5)
+           RETURNING id`,
+          [input.userId, input.encryptedSecret, input.keyVersion, input.lastUsedCounter, input.now],
+        );
+        factorId = created.rows[0]?.id;
+        if (!factorId) throw new Error('TOTP factor creation failed');
+        await client.query(
+          `UPDATE account_recovery_codes SET revoked_at = COALESCE(revoked_at, $2)
+            WHERE user_id = $1 AND used_at IS NULL AND revoked_at IS NULL`,
+          [input.userId, input.now],
+        );
+        const nextSet = requiredRow(
+          await query<{ set_version: number }>(
+            client,
+            `SELECT COALESCE(max(set_version), 0)::integer + 1 AS set_version
+               FROM account_recovery_codes WHERE user_id = $1`,
+            [input.userId],
+          ),
+          'Recovery-code version was not available',
+        );
+        await client.query(
+          `INSERT INTO account_recovery_codes
+             (user_id, set_version, code_hash, source_factor_id)
+           SELECT $1, $2, unnest($3::text[]), $4`,
+          [input.userId, nextSet.set_version, input.recoveryCodeHashes, factorId],
+        );
+      } else {
+        const revoked = await query<{ id: string }>(
+          client,
+          `UPDATE mfa_factors SET revoked_at = $2
+            WHERE user_id = $1 AND kind = 'totp' AND revoked_at IS NULL
+            RETURNING id`,
+          [input.userId, input.now],
+        );
+        factorId = revoked.rows[0]?.id;
+        if (revoked.rows.length !== 1 || !factorId) return false;
+        await client.query(
+          `UPDATE account_recovery_codes SET revoked_at = COALESCE(revoked_at, $2)
+            WHERE user_id = $1 AND source_factor_id = $3
+              AND used_at IS NULL AND revoked_at IS NULL`,
+          [input.userId, input.now, factorId],
+        );
+      }
+      const hasWebAuthn = webauthn.rows[0]?.enabled === true;
+      const emailEnabled = policy.rows[0].email_code_enabled;
+      await client.query(
+        `UPDATE account_authentication_policies
+            SET second_step_requirement = $2,
+                preferred_method = $3,
+                updated_at = $4
+          WHERE user_id = $1`,
+        [
+          input.userId,
+          input.enabled || emailEnabled || hasWebAuthn ? 'required' : 'optional',
+          input.enabled ? 'totp' : hasWebAuthn ? 'webauthn' : emailEnabled ? 'email_code' : null,
+          input.now,
+        ],
+      );
+      await client.query(
+        `UPDATE sessions SET revoked_at = $2, revoke_reason = 'authentication-policy-changed'
+          WHERE user_id = $1 AND revoked_at IS NULL`,
+        [input.userId, input.now],
+      );
+      await insertAudit(client, {
+        action: 'auth.totp_policy.changed',
+        actorId: input.userId,
+        metadata: {
+          enabled: input.enabled,
+          recoveryCodesReplaced: input.enabled,
+          sessionsRevoked: true,
+        },
+        siteId: sessions.rows[0].site_id,
+        targetId: factorId,
+        targetType: 'mfa_factor',
+        tenantId: sessions.rows[0].tenant_id,
+        traceId: input.traceId,
+      });
+      return true;
+    });
+  }
+
   async findSessionOwner(input: {
     host: string;
     tokenHash: string;

@@ -93,6 +93,7 @@ test('agency onboarding and customer edit-to-restore flow stays host scoped', as
         return { version: state.draftVersion };
       },
       history: async () => state.revisions,
+      reports: async () => ({ generatedAt: new Date(0).toISOString(), measurements: [] }),
       pages: async () => [{ fields: state.content, stableId: 'home' }],
       preview: async () => ({ previewToken: 'e2e-preview-token' }),
       previewFile: async (_principal, input) => {

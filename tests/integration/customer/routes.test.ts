@@ -42,6 +42,11 @@ function service() {
     fieldUpdate: vi.fn(async () => ({ version: 2 })),
     history: vi.fn(async () => []),
     pages: vi.fn(async () => []),
+    proposals: vi.fn(async () => [] as unknown[]),
+    reports: vi.fn(async () => ({
+      generatedAt: new Date(0).toISOString(),
+      measurements: [] as unknown[],
+    })),
     preview: vi.fn(async () => ({ previewToken: 'fictional-preview-token' })),
     previewFile: vi.fn(async () => ({
       body: new TextEncoder().encode('<h1>Preview</h1>'),
@@ -49,6 +54,7 @@ function service() {
     })),
     publish: vi.fn(async () => ({ status: 'queued' })),
     restore: vi.fn(async () => ({ status: 'queued' })),
+    reviewProposal: vi.fn(async () => ({ proposalId: 'proposal-a', state: 'applied' })),
     updateContactForm: vi.fn(async () => ({ status: 'updated' })),
   };
 }
@@ -427,5 +433,83 @@ describe('customer content routes', () => {
       owner,
       expect.objectContaining({ formId: 'general-inquiry' }),
     );
+  });
+
+  it('returns only the authenticated site report assembled by the customer service', async () => {
+    const content = service();
+    content.reports.mockResolvedValueOnce({
+      generatedAt: '2026-10-13T00:00:00.000Z',
+      measurements: [
+        {
+          caveat: 'Search Console may omit low-volume queries.',
+          freshness: 'delayed',
+          kind: 'traffic',
+          label: 'Search clicks',
+          source: 'Google Search Console',
+          state: 'available',
+          value: 12,
+        },
+      ],
+    });
+    const server = buildApiServer({
+      customerService: content,
+      logLevel: 'silent',
+      resolveCustomerPrincipal: async () => owner,
+    });
+    servers.push(server);
+
+    const response = await server.inject({ method: 'GET', url: '/v1/customer/reports' });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      measurements: [{ source: 'Google Search Console', value: 12 }],
+    });
+    expect(content.reports).toHaveBeenCalledWith(owner);
+  });
+
+  it('lists scoped AI proposals and applies approval only through the review service', async () => {
+    const content = service();
+    content.proposals.mockResolvedValueOnce([
+      {
+        base_revision: 3,
+        current_value: 'Current heading',
+        evidence: ['crawl:home'],
+        field_id: 'home.heading',
+        id: '90000000-0000-4000-8000-000000000009',
+        model: 'fixture-model',
+        proposed_value: 'Reviewed heading',
+        rationale: 'Clearer summary',
+        stale: false,
+        state: 'pending',
+      },
+    ]);
+    const server = buildApiServer({
+      customerService: content,
+      logLevel: 'silent',
+      resolveCustomerPrincipal: async () => owner,
+    });
+    servers.push(server);
+
+    const listed = await server.inject({ method: 'GET', url: '/v1/customer/proposals' });
+    expect(listed.statusCode).toBe(200);
+    expect(listed.json()).toMatchObject([{ field_id: 'home.heading', stale: false }]);
+
+    const reviewed = await server.inject({
+      headers: { host: 'admin.alpha.test', origin: 'https://admin.alpha.test' },
+      method: 'POST',
+      payload: {
+        action: 'approve',
+        editedValue: 'Owner edited heading',
+        reason: 'Approved after review',
+      },
+      url: '/v1/customer/proposals/90000000-0000-4000-8000-000000000009/review',
+    });
+    expect(reviewed.statusCode).toBe(200);
+    expect(content.reviewProposal).toHaveBeenCalledWith(owner, {
+      action: 'approve',
+      editedValue: 'Owner edited heading',
+      proposalId: '90000000-0000-4000-8000-000000000009',
+      reason: 'Approved after review',
+    });
   });
 });

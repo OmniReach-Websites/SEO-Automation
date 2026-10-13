@@ -30,6 +30,7 @@ describe('Google integration management routes', () => {
       disconnect: vi.fn(),
       finishGoogle: vi.fn(),
       list: vi.fn(async () => [{ status: 'disconnected' }]),
+      selectGoogleProperty: vi.fn(async () => ({ status: 'connected' })),
       startGoogle: vi.fn(async () => ({
         authorizationUrl: 'https://accounts.google.test/fictional',
       })),
@@ -65,5 +66,20 @@ describe('Google integration management routes', () => {
     });
     expect(started.statusCode).toBe(201);
     expect(service.startGoogle).toHaveBeenCalledWith(actor, expect.objectContaining({ siteId }));
+    const selected = await server.inject({
+      headers: { host: 'admin.omnireach.test', origin: 'https://admin.omnireach.test' },
+      method: 'POST',
+      payload: {
+        pendingSelectionId: '80000000-0000-4000-8000-000000000001',
+        propertyId: 'properties/1234',
+        propertyKind: 'ga4',
+      },
+      url: `/v1/orap/sites/${siteId}/integrations/google/select`,
+    });
+    expect(selected.statusCode).toBe(200);
+    expect(service.selectGoogleProperty).toHaveBeenCalledWith(
+      actor,
+      expect.objectContaining({ propertyId: 'properties/1234', siteId }),
+    );
   });
 });

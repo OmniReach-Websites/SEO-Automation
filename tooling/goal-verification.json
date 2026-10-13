@@ -55,6 +55,7 @@
       "redis-auth.test.ts",
       "redis-email-code-challenge.test.ts",
       "resend-auth-alert.test.ts",
+      "webauthn-enrollment.test.ts",
       "webauthn.test.ts"
     ],
     ["npm", "run", "test:integration", "--", "auth/routes.test.ts"],
@@ -208,18 +209,19 @@
     ["npm", "run", "check:migrations"]
   ],
   "G25": [
-    ["npm", "test", "--", "ai-provider.test.ts", "aio-worker.test.ts"],
+    ["npm", "test", "--", "ai-provider.test.ts", "ai-evaluation.test.ts", "aio-worker.test.ts"],
     ["npm", "run", "typecheck"],
     ["npm", "run", "check:migrations"]
   ],
   "G26": [
-    ["npm", "test", "--", "ai-policy.test.ts", "aio-worker.test.ts"],
+    ["npm", "test", "--", "ai-policy.test.ts", "aio-worker.test.ts", "postgres-content.test.ts"],
     ["npm", "run", "verify:publication-flow"],
     ["npm", "run", "check:migrations"]
   ],
   "G27": [
-    ["npm", "test", "--", "google-integration.test.ts"],
+    ["npm", "test", "--", "google-integration.test.ts", "google-metrics-worker.test.ts"],
     ["npm", "run", "test:integration", "--", "orap/integration-routes.test.ts"],
+    ["npm", "run", "test:security", "--", "google-provider-schema.test.ts"],
     ["npm", "run", "check:migrations"]
   ],
   "G28": [
@@ -228,6 +230,7 @@
   ],
   "G29": [
     ["npm", "run", "verify:backup-harness"],
+    ["npm", "run", "verify:offsite-backup"],
     ["npm", "run", "check:migrations"],
     ["npm", "run", "scan:secrets"]
   ],
@@ -273,6 +276,7 @@
     ["node", "tooling/check-docs.mjs"],
     ["npm", "run", "validate:sites"],
     ["npm", "run", "test:contracts"],
+    ["npm", "test", "--", "site-onboarding.test.ts"],
     [
       "npm",
       "run",

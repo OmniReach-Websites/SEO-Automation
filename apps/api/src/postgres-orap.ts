@@ -795,6 +795,158 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
     });
   }
 
+  siteManagement(actor: AdminActor, input: { siteId: string; tenantId: string }): Promise<unknown> {
+    assertOrapCapability(actor, 'websites.view', input);
+    return this.transaction(actor, async (client) => {
+      await assertSite(client, input.tenantId, input.siteId);
+      const [plans, subscription, features, controls, budget, integrations, availability] =
+        await Promise.all([
+          query<{
+            code: string;
+            commercial_status: string;
+            id: string;
+            monthly_price_cents: number;
+            name: string;
+            version: number;
+          }>(
+            client,
+            `SELECT id, code, name, version, commercial_status, monthly_price_cents
+               FROM plans WHERE active ORDER BY code, version DESC`,
+            [],
+          ),
+          query<{
+            ai_review_cycles_per_month: number;
+            code: string;
+            customer_seat_limit: number;
+            grace_ends_at: Date | null;
+            plan_id: string;
+            seo_audit_interval_hours: number;
+            standard_page_limit: number;
+            status: string;
+            version: number;
+          }>(
+            client,
+            `SELECT subscription.plan_id, subscription.status, subscription.grace_ends_at,
+                    plan.code, plan.version, plan.customer_seat_limit,
+                    plan.standard_page_limit, plan.seo_audit_interval_hours,
+                    COALESCE(quota.quota_limit, plan.ai_review_cycles_per_month)
+                      AS ai_review_cycles_per_month
+               FROM subscriptions subscription
+               JOIN plans plan ON plan.id = subscription.plan_id
+               LEFT JOIN site_plan_quota_overrides quota
+                 ON quota.tenant_id = subscription.tenant_id
+                AND quota.site_id = subscription.site_id
+                AND quota.quota_key = 'ai_review_cycles_per_month'
+              WHERE subscription.tenant_id = $1 AND subscription.site_id = $2`,
+            [input.tenantId, input.siteId],
+          ),
+          query<{ enabled: boolean; key: string; readiness: string }>(
+            client,
+            `SELECT definition.key, definition.readiness,
+                    COALESCE(override.enabled, plan_feature.enabled, definition.safe_default) AS enabled
+               FROM feature_definitions definition
+               LEFT JOIN subscriptions subscription
+                 ON subscription.tenant_id = $1 AND subscription.site_id = $2
+               LEFT JOIN plan_features plan_feature
+                 ON plan_feature.plan_id = subscription.plan_id
+                AND plan_feature.feature_key = definition.key
+               LEFT JOIN site_feature_overrides override
+                 ON override.tenant_id = $1 AND override.site_id = $2
+                AND override.feature_key = definition.key
+              ORDER BY definition.key`,
+            [input.tenantId, input.siteId],
+          ),
+          query<{
+            autonomous_changes_stopped: boolean;
+            automation_stopped: boolean;
+            editing_frozen: boolean;
+            policy_version: number;
+          }>(
+            client,
+            `SELECT autonomous_changes_stopped, automation_stopped, editing_frozen,
+                    policy_version
+               FROM site_emergency_controls WHERE tenant_id = $1 AND site_id = $2`,
+            [input.tenantId, input.siteId],
+          ),
+          query<{ cap_usd_micros: string; policy_version: number }>(
+            client,
+            `SELECT cap_usd_micros::text, policy_version FROM site_ai_budgets
+              WHERE tenant_id = $1 AND site_id = $2`,
+            [input.tenantId, input.siteId],
+          ),
+          query<{ last_synced_at: Date | null; property_kind: string; status: string }>(
+            client,
+            `SELECT property_kind, status, last_synced_at FROM integration_connections
+              WHERE tenant_id = $1 AND site_id = $2 ORDER BY property_kind`,
+            [input.tenantId, input.siteId],
+          ),
+          query<{ active_artifact: boolean; public_domain: boolean }>(
+            client,
+            `SELECT
+               EXISTS (SELECT 1 FROM domains WHERE tenant_id = $1 AND site_id = $2
+                        AND kind = 'public' AND active AND verification_status = 'verified')
+                 AS public_domain,
+               EXISTS (SELECT 1 FROM active_artifacts WHERE tenant_id = $1 AND site_id = $2)
+                 AS active_artifact`,
+            [input.tenantId, input.siteId],
+          ),
+        ]);
+      const current = subscription.rows[0];
+      const emergency = controls.rows[0] ?? {
+        autonomous_changes_stopped: false,
+        automation_stopped: false,
+        editing_frozen: false,
+        policy_version: 0,
+      };
+      return {
+        availability: {
+          activeArtifact: availability.rows[0]?.active_artifact ?? false,
+          publicDomain: availability.rows[0]?.public_domain ?? false,
+          preservedDuringDelinquency: true,
+        },
+        budget: budget.rows[0]
+          ? {
+              capUsdMicros: Number(budget.rows[0].cap_usd_micros),
+              policyVersion: budget.rows[0].policy_version,
+            }
+          : null,
+        emergency: {
+          autonomousChangesStopped: emergency.autonomous_changes_stopped,
+          automationStopped: emergency.automation_stopped,
+          editingFrozen: emergency.editing_frozen,
+          policyVersion: emergency.policy_version,
+        },
+        features: features.rows,
+        integrations: integrations.rows.map((row) => ({
+          lastSyncedAt: row.last_synced_at?.toISOString() ?? null,
+          propertyKind: row.property_kind,
+          status: row.status,
+        })),
+        plans: plans.rows.map((plan) => ({
+          code: plan.code,
+          commercialStatus: plan.commercial_status,
+          id: plan.id,
+          monthlyPriceCents: plan.monthly_price_cents,
+          name: plan.name,
+          version: plan.version,
+        })),
+        subscription: current
+          ? {
+              aiReviewCyclesPerMonth: current.ai_review_cycles_per_month,
+              code: current.code,
+              customerSeatLimit: current.customer_seat_limit,
+              graceEndsAt: current.grace_ends_at?.toISOString() ?? null,
+              planId: current.plan_id,
+              seoAuditIntervalHours: current.seo_audit_interval_hours,
+              standardPageLimit: current.standard_page_limit,
+              status: current.status,
+              version: current.version,
+            }
+          : null,
+      };
+    });
+  }
+
   createTenantAndSite(
     actor: AdminActor,
     input: { reason: string; siteName: string; sourcePath: string; tenantName: string },

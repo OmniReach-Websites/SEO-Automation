@@ -40,6 +40,7 @@ export {
   type ContentActorContext,
   type DraftRecord,
   type PreparedPublication,
+  type ProposalReviewInput,
 } from './postgres.ts';
 export { PostgresAssetRepository, type StoredAsset } from './postgres-assets.ts';
 export {

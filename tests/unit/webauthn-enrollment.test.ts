@@ -6,8 +6,10 @@ import {
   type MfaChallengeStore,
   type WebAuthnCeremony,
   type WebAuthnCeremonyStore,
+  type WebAuthnCredentialRecord,
   type WebAuthnEnrollmentRepository,
   type WebAuthnEnrollmentTarget,
+  type WebAuthnAuthenticationResponse,
   type WebAuthnRegistrationResponse,
 } from '@omnireach/auth';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
@@ -109,6 +111,7 @@ function baseRepository(): AuthenticationRepository {
     revokeSession: vi.fn(async () => false),
     revokeSessionByToken: vi.fn(async () => undefined),
     updateCustomerEmailCodePolicy: vi.fn(async () => false),
+    updateCustomerTotpPolicy: vi.fn(async () => false),
     verifyOwnerBootstrap: vi.fn(async () => false),
   };
 }
@@ -371,5 +374,151 @@ describe('WebAuthn enrollment service', () => {
     await expect(prepare(service({ repository: atLimit }).auth)).resolves.toBeUndefined();
     expect(noFallback.completeEnrollment).not.toHaveBeenCalled();
     expect(atLimit.completeEnrollment).not.toHaveBeenCalled();
+  });
+
+  it('binds password-first passkey authentication to one challenge and atomically issues a session', async () => {
+    const loginChallenges = new Map<string, Parameters<MfaChallengeStore['create']>[0]>();
+    const challengeStore: MfaChallengeStore = {
+      consume: vi.fn(async (id) => {
+        const value = loginChallenges.get(id);
+        loginChallenges.delete(id);
+        return value;
+      }),
+      create: vi.fn(async (challenge) => {
+        loginChallenges.set('login-challenge', structuredClone(challenge));
+        return 'login-challenge';
+      }),
+      read: vi.fn(async (id) => loginChallenges.get(id)),
+      refresh: vi.fn(async () => false),
+    };
+    const credential: WebAuthnCredentialRecord = {
+      backedUp: false,
+      backupEligible: false,
+      createdAt: now,
+      credentialId: new Uint8Array([1, 2, 3]),
+      deviceType: 'singleDevice',
+      id: '50000000-0000-4000-8000-000000000001',
+      name: 'Windows Hello',
+      publicKey: new Uint8Array([4, 5, 6]),
+      signCount: 7,
+      transports: ['internal'],
+      verifiedAt: now,
+    };
+    const webAuthnRepository: WebAuthnEnrollmentRepository = {
+      completeAuthentication: vi.fn(async () => true),
+      completeEnrollment: vi.fn(async () => false),
+      findActiveCredential: vi.fn(async () => credential),
+      findEnrollmentTarget: vi.fn(async () => undefined),
+      findScope: vi.fn(async () => ({
+        createdAt: now,
+        id: scopeId,
+        rpId: host,
+        siteId,
+        tenantId,
+        userHandle: new Uint8Array(64).fill(7),
+        userId,
+      })),
+      listActiveCredentials: vi.fn(async () => [credential]),
+    };
+    const authenticationRepository = baseRepository();
+    authenticationRepository.findLoginTarget = vi.fn(async () => ({
+      authStateVersion: '7',
+      emailCodeEnabled: false,
+      hasRecoveryCodes: false,
+      host,
+      normalizedEmail: 'owner@example.test',
+      passwordHash,
+      privilegedRecoveryRequired: false,
+      role: 'customer_owner' as const,
+      siteId,
+      tenantId,
+      userId,
+      verificationRequired: true,
+    }));
+    const ceremonies = ceremonyStore();
+    const auth = new AuthenticationService(
+      authenticationRepository,
+      challengeStore,
+      { send: vi.fn(async () => undefined) },
+      {
+        authenticationPepper: 'fictional-authentication-pepper-material-0001',
+        mfaEncryptionKey: 'fictional-mfa-encryption-key-material-0001',
+        now: () => now,
+        orapHostname: 'admin.omnireach.cloud',
+        verifyWebAuthnAuthentication: vi.fn(async () => ({
+          authenticationInfo: {
+            credentialBackedUp: false,
+            credentialDeviceType: 'singleDevice' as const,
+            credentialID: 'AQID',
+            newCounter: 8,
+            origin: `https://${host}`,
+            rpID: host,
+            userVerified: true,
+          },
+          verified: true as const,
+        })),
+        webAuthnAuthenticationEnabled: true,
+        webAuthnCeremonies: ceremonies,
+        webAuthnRepository,
+      },
+    );
+    const login = await auth.login({
+      email: 'owner@example.test',
+      host,
+      password: 'fictional-current-password',
+      traceId: 'trace-login',
+    });
+    expect(login).toMatchObject({
+      challengeId: 'login-challenge',
+      kind: 'mfa-required',
+      methods: ['webauthn'],
+    });
+    const prepared = await auth.prepareWebAuthnAuthentication({
+      challengeId: 'login-challenge',
+      host,
+    });
+    expect(prepared?.options.rpId).toBe(host);
+    expect(prepared?.options.allowCredentials?.[0]?.id).toBe('AQID');
+    const response: WebAuthnAuthenticationResponse = {
+      clientExtensionResults: {},
+      id: 'AQID',
+      rawId: 'AQID',
+      response: {
+        authenticatorData: 'AQ',
+        clientDataJSON: 'AQ',
+        signature: 'AQ',
+      },
+      type: 'public-key',
+    };
+    await expect(
+      auth.completeWebAuthnAuthentication({
+        challengeId: 'login-challenge',
+        ceremonyId: prepared?.ceremonyId ?? '',
+        host,
+        response,
+        traceId: 'trace-assertion',
+      }),
+    ).resolves.toMatchObject({ audience: 'customer', kind: 'authenticated' });
+    expect(webAuthnRepository.completeAuthentication).toHaveBeenCalledWith(
+      expect.objectContaining({
+        expectedAuthStateVersion: '7',
+        expectedSignCount: 7,
+        host,
+        newSignCount: 8,
+        siteId,
+        tenantId,
+        userId,
+      }),
+    );
+    await expect(
+      auth.completeWebAuthnAuthentication({
+        challengeId: 'login-challenge',
+        ceremonyId: prepared?.ceremonyId ?? '',
+        host,
+        response,
+        traceId: 'trace-replay',
+      }),
+    ).resolves.toEqual({ kind: 'invalid' });
+    expect(webAuthnRepository.completeAuthentication).toHaveBeenCalledTimes(1);
   });
 });

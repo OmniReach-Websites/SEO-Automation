@@ -1,10 +1,11 @@
 # Backups
 
 `backup.mjs` creates authenticated AES-256-GCM archives with per-member and envelope
-checksums, supports a separate off-server filesystem adapter, selects the recent seven
-daily and four weekly recovery points, and restores only into an explicit isolated
-namespace. Production destination, budget, key custody, deletion authority, and privacy
-policy remain owner inputs.
+checksums. `backup-cli.mjs` adds an opt-in S3-compatible off-site adapter plus
+`backup`, `list`, `verify`, `restore-to-disposable`, and dry-run `prune` commands. The
+retention selector keeps the recent seven daily and four weekly recovery points, and
+restore accepts only an explicit isolated namespace. Production destination, budget,
+key custody, deletion authority, schedule and privacy policy remain owner inputs.
 
 The production job first runs `pg_dump --format=custom`, inventories original media and
 artifact manifests by site, encrypts before transfer, validates both copies, and records
@@ -31,5 +32,7 @@ manifest/checksum. Automated deletion is permitted only when enforcing the produ
 7-daily/4-weekly policy, so the development profile must alert and pause on capacity
 pressure rather than automatically prune to its 3-daily/2-weekly target.
 
-This is a documented plan only. No host directory, schedule, software, backup, pruning,
-or transfer is created or performed without separate explicit authorization.
+The repository tooling and disposable verification harness are implemented. No host
+directory, schedule, real bucket, production backup, pruning, transfer or spending is
+created or performed without separate explicit authorization. See
+`docs/offsite-backup.md` for activation and restore evidence.

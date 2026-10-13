@@ -92,6 +92,7 @@ export interface OrapAdministrationEndpointService {
     input: { siteId: string; tenantId: string; userId: string },
   ): Promise<unknown>;
   listSites(actor: AdminActor): Promise<unknown>;
+  siteManagement?(actor: AdminActor, input: { siteId: string; tenantId: string }): Promise<unknown>;
   listOperations?(actor: AdminActor): Promise<unknown>;
   listStaff?(actor: AdminActor): Promise<unknown>;
   listStaffRoles?(actor: AdminActor): Promise<unknown>;
@@ -235,6 +236,17 @@ export function registerOrapRoutes(
     if (!authorizedCapability(actor, 'dashboard.view', {}, reply)) return;
     if (!service.listOperations) return reply.code(501).send({ error: 'not_available' });
     return service.listOperations(actor);
+  });
+
+  server.get('/v1/orap/sites/:siteId/effective-settings', async (request, reply) => {
+    const actor = await authorizedActor(request, reply, resolveActor);
+    if (!actor) return;
+    const params = parse(z.object({ siteId: z.string().uuid() }), request.params, reply);
+    const query = parse(z.object({ tenantId: z.string().uuid() }), request.query, reply);
+    if (!params || !query) return;
+    if (!authorizedCapability(actor, 'websites.view', { ...params, ...query }, reply)) return;
+    if (!service.siteManagement) return reply.code(501).send({ error: 'not_available' });
+    return service.siteManagement(actor, { ...params, ...query });
   });
 
   server.get('/v1/orap/staff', async (request, reply) => {

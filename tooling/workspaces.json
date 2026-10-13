@@ -85,6 +85,7 @@
       "allowedWorkspaceDependencies": [
         "@omnireach/contracts",
         "@omnireach/database",
+        "@omnireach/integrations",
         "@omnireach/observability",
         "@omnireach/queue",
         "@omnireach/seo-core",
