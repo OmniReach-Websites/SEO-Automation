@@ -82,4 +82,51 @@ describe('Google integration management routes', () => {
       expect.objectContaining({ propertyId: 'properties/1234', siteId }),
     );
   });
+
+  it('returns browser callbacks to ORAP and renders exact property selection when needed', async () => {
+    const service = {
+      disconnect: vi.fn(),
+      finishGoogle: vi
+        .fn()
+        .mockResolvedValueOnce({ connectionId: 'connection-1', status: 'connected' })
+        .mockResolvedValueOnce({
+          eligibleProperties: [
+            {
+              id: 'properties/1234',
+              kind: 'ga4',
+              siteUrl: 'https://example.test',
+            },
+          ],
+          pendingSelectionId: '80000000-0000-4000-8000-000000000001',
+          status: 'property_selection_required',
+        }),
+      list: vi.fn(),
+      startGoogle: vi.fn(),
+    };
+    const server = buildApiServer({
+      integrationService: service,
+      resolvePlatformActor: async () => actor,
+    });
+    servers.push(server);
+    const query = `code=code-value&siteId=${siteId}&state=${'s'.repeat(24)}`;
+
+    const connected = await server.inject({
+      headers: { accept: 'text/html', host: 'admin.omnireach.test' },
+      method: 'GET',
+      url: `/v1/orap/integrations/google/callback?${query}`,
+    });
+    expect(connected.statusCode).toBe(303);
+    expect(connected.headers.location).toBe(`/orap/sites/${siteId}?notice=google-connected`);
+
+    const selection = await server.inject({
+      headers: { accept: 'text/html', host: 'admin.omnireach.test' },
+      method: 'GET',
+      url: `/v1/orap/integrations/google/callback?${query}`,
+    });
+    expect(selection.statusCode).toBe(200);
+    expect(selection.headers['content-type']).toContain('text/html');
+    expect(selection.body).toContain('Select a property');
+    expect(selection.body).toContain('properties/1234');
+    expect(selection.body).toContain(`/orap/sites/${siteId}/integrations/google/select`);
+  });
 });

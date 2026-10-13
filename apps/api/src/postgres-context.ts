@@ -122,6 +122,18 @@ export class PostgresRequestContextResolver {
 
   async platform(request: FastifyRequest): Promise<AdminActor | undefined> {
     const token = readCookie(request, '__Host-omnireach_session');
+    return this.platformWithToken(request, token);
+  }
+
+  async platformGoogleCallback(request: FastifyRequest): Promise<AdminActor | undefined> {
+    const token = readCookie(request, '__Secure-omnireach_google_oauth');
+    return this.platformWithToken(request, token);
+  }
+
+  private async platformWithToken(
+    request: FastifyRequest,
+    token: string | undefined,
+  ): Promise<AdminActor | undefined> {
     if (!token || normalizeHostname(request.hostname) !== this.#orapHostname) return undefined;
     const result = await this.authSessionQuery<PlatformContextRow>(
       `SELECT s.user_id, s.authentication_assurance, s.verified_at,

@@ -234,6 +234,7 @@ const server = buildApiServer({
   platformInquiryService,
   resolveCustomerPrincipal: (request) => requestContext.customer(request),
   resolveContactSite: (request) => requestContext.contact(request),
+  resolveGoogleCallbackActor: (request) => requestContext.platformGoogleCallback(request),
   resolvePlatformActor: (request) => requestContext.platform(request),
   trustedProxyCidrs: config.TRUSTED_PROXY_CIDRS,
 });

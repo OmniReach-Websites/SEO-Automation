@@ -31,6 +31,11 @@ import { z } from 'zod';
 import type { AuthEndpointService } from './auth-routes.ts';
 import { clientNetworkIdentifier } from './client-network.ts';
 import type { CustomerEndpointService, ResolveCustomerPrincipal } from './customer-routes.ts';
+import {
+  googleOAuthCallbackCookieName,
+  googleOAuthCallbackCookieOptions,
+  type IntegrationEndpointService,
+} from './integration-routes.ts';
 import type { OrapAdministrationEndpointService, ResolvePlatformActor } from './orap-routes.ts';
 import { registerCustomerUiRoutes } from './customer-ui-routes.ts';
 import { readCookie } from './request-auth.ts';
@@ -49,6 +54,7 @@ export function registerUiRoutes(
   options: {
     authService?: AuthEndpointService;
     customerService?: CustomerEndpointService;
+    integrationService?: IntegrationEndpointService;
     orapService?: OrapAdministrationEndpointService;
     resolveCustomerPrincipal?: ResolveCustomerPrincipal;
     resolvePlatformActor?: ResolvePlatformActor;
@@ -426,6 +432,13 @@ export function registerUiRoutes(
                 siteId: site.id,
                 tenantId: site.tenantId,
               }),
+              canManageGoogle: Boolean(
+                options.integrationService &&
+                canOrap(actor, 'integrations.google.manage', {
+                  siteId: site.id,
+                  tenantId: site.tenantId,
+                }),
+              ),
             }),
           );
         }
@@ -433,6 +446,79 @@ export function registerUiRoutes(
           .code(404)
           .type('text/html; charset=utf-8')
           .send(renderOrapNotFound(orapNavigation(actor)));
+      },
+    );
+
+    server.post<{ Params: { siteIdentifier: string }; Body: unknown }>(
+      '/orap/sites/:siteIdentifier/integrations/google/start',
+      { preHandler: requireSameOrigin },
+      async (request, reply) => {
+        const actor = await options.resolvePlatformActor?.(request);
+        const body = z
+          .object({ propertyKind: z.enum(['ga4', 'search_console']) })
+          .safeParse(request.body);
+        if (!actor || !body.success || !options.integrationService) {
+          return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
+        }
+        if (
+          !canOrap(actor, 'integrations.google.manage', {
+            siteId: request.params.siteIdentifier,
+          })
+        ) {
+          return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
+        }
+        const result = await options.integrationService.startGoogle(actor, {
+          propertyKind: body.data.propertyKind,
+          redirectUri: `https://${request.hostname}/v1/orap/integrations/google/callback`,
+          siteId: request.params.siteIdentifier,
+        });
+        const authorizationUrl = parseGoogleAuthorizationUrl(result);
+        if (!authorizationUrl) {
+          request.log.error('Google authorization service returned an invalid redirect URL');
+          return reply.code(503).send({ error: 'integration_unavailable' });
+        }
+        const sessionToken = readCookie(request, '__Host-omnireach_session');
+        if (!sessionToken) {
+          return reply.code(401).send({ error: 'authentication_required' });
+        }
+        return reply
+          .setCookie(googleOAuthCallbackCookieName, sessionToken, googleOAuthCallbackCookieOptions)
+          .code(303)
+          .redirect(authorizationUrl);
+      },
+    );
+
+    server.post<{ Params: { siteIdentifier: string }; Body: unknown }>(
+      '/orap/sites/:siteIdentifier/integrations/google/select',
+      { preHandler: requireSameOrigin },
+      async (request, reply) => {
+        const actor = await options.resolvePlatformActor?.(request);
+        const body = z
+          .object({
+            pendingSelectionId: z.string().uuid(),
+            propertyId: z.string().min(1).max(300),
+            propertyKind: z.enum(['ga4', 'search_console']),
+          })
+          .safeParse(request.body);
+        if (
+          !actor ||
+          !body.success ||
+          !options.integrationService?.selectGoogleProperty ||
+          !canOrap(actor, 'integrations.google.manage', {
+            siteId: request.params.siteIdentifier,
+          })
+        ) {
+          return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
+        }
+        await options.integrationService.selectGoogleProperty(actor, {
+          ...body.data,
+          siteId: request.params.siteIdentifier,
+        });
+        return reply
+          .code(303)
+          .redirect(
+            `/orap/sites/${encodeURIComponent(request.params.siteIdentifier)}?notice=google-connected`,
+          );
       },
     );
 
@@ -1147,10 +1233,29 @@ function parseSiteManagement(value: unknown): OrapSiteManagementModel | undefine
   return result.success ? result.data : undefined;
 }
 
+function parseGoogleAuthorizationUrl(value: unknown): string | undefined {
+  if (!isRecord(value)) return undefined;
+  const candidate = stringValue(value.authorizationUrl);
+  if (!candidate) return undefined;
+  try {
+    const url = new URL(candidate);
+    return url.protocol === 'https:' &&
+      url.hostname === 'accounts.google.com' &&
+      url.pathname === '/o/oauth2/v2/auth'
+      ? url.toString()
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function siteNotice(value: string | undefined): string | undefined {
-  return value === 'created'
-    ? 'Site record created. No DNS or deployment changes were made.'
-    : undefined;
+  if (value === 'created') return 'Site record created. No DNS or deployment changes were made.';
+  if (value === 'google-connected') return 'Google reporting property connected successfully.';
+  if (value === 'google-no-match') {
+    return 'No authorized Google property exactly matched this website hostname.';
+  }
+  return undefined;
 }
 
 function operationNotice(
