@@ -221,6 +221,43 @@ services:
     stop_grace_period: 15s
     logging: *production-logging
 
+  omnireach-public-site:
+    image: omnireach-runtime:${OMNIREACH_RELEASE_SHA:?Set OMNIREACH_RELEASE_SHA to the verified commit SHA}
+    profiles: ['application']
+    entrypoint: ['node', 'infrastructure/compose/scripts/static-site-server.mjs']
+    environment:
+      STATIC_SITE_HOST: 0.0.0.0
+      STATIC_SITE_PORT: '8080'
+      STATIC_SITE_ROOT: /opt/omnireach/sites/omnireach/dist
+    init: true
+    networks:
+      proxy:
+        aliases:
+          - omnireach-public-site
+    restart: unless-stopped
+    read_only: true
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:8080/').then(async r=>{const b=await r.text();if(!r.ok||!b.includes('Websites, managed well'))process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cpus: 0.25
+    mem_limit: 128m
+    pids_limit: 64
+    stop_grace_period: 15s
+    logging: *production-logging
+
 networks:
   backend:
     name: ${OMNIREACH_RESOURCE_PREFIX:-omnireach-production}-backend

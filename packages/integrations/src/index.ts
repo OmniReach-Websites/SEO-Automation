@@ -28,6 +28,11 @@ export {
   type ResendContactSubmission,
 } from './resend-contact.ts';
 export {
+  ResendPlatformInquiryDelivery,
+  type PlatformInquiryMessage,
+  type ResendPlatformInquiryOptions,
+} from './resend-platform-inquiry.ts';
+export {
   ResendAuthenticationNotifier,
   type AuthenticationEmailInput,
   type AuthenticationEmailKind,

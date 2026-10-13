@@ -126,7 +126,7 @@ jobs:
           attempts=0
           until curl --fail --silent --show-error --max-time 15 "${origin}/" > coops-home.html; do
             attempts=$((attempts + 1))
-            test "${attempts}" -lt 12
+            test "${attempts}" -lt 24
             sleep 5
           done
           grep -Fq '<link rel="canonical" href="https://coopsmobiledetailingaledo.com/">' coops-home.html
@@ -139,6 +139,29 @@ jobs:
             --max-time 15 "${origin}/definitely-not-a-real-page")" = 404
           test "$(curl --silent --show-error --output /dev/null --write-out '%{redirect_url}' \
             --max-time 15 https://www.coopsmobiledetailingaledo.com/)" = "${origin}/"
+
+      - name: Verify OmniReach public site and contact endpoint
+        run: |
+          origin=https://omnireach.cloud
+          attempts=0
+          until curl --fail --silent --show-error --max-time 15 "${origin}/" > omnireach-home.html; do
+            attempts=$((attempts + 1))
+            test "${attempts}" -lt 12
+            sleep 5
+          done
+          grep -Fq '<link rel="canonical" href="https://omnireach.cloud/">' omnireach-home.html
+          grep -Fq 'Websites, managed well' omnireach-home.html
+          curl --fail --silent --show-error --max-time 15 "${origin}/robots.txt" |
+            grep -Fq 'Sitemap: https://omnireach.cloud/sitemap.xml'
+          curl --fail --silent --show-error --max-time 15 "${origin}/sitemap.xml" |
+            grep -Fq '<loc>https://omnireach.cloud/</loc>'
+          curl --fail --silent --show-error --max-time 15 \
+            "${origin}/v1/public/platform-inquiry/config" |
+            grep -Fq '"enabled":true'
+          test "$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+            --max-time 15 "${origin}/definitely-not-a-real-page")" = 404
+          test "$(curl --silent --show-error --output /dev/null --write-out '%{redirect_url}' \
+            --max-time 15 https://www.omnireach.cloud/)" = "${origin}/"
 
       - name: Remove ephemeral identity
         if: always()

@@ -7,6 +7,7 @@ const sitePaths = [
   'sites/restaurant-example',
   'sites/custom-portfolio-example',
   'sites/coops-mobile-detailing',
+  'sites/omnireach',
 ];
 
 function filesRecursively(directory) {
@@ -72,6 +73,14 @@ export function checkSiteBuilds() {
         'https://coopsmobiledetailingaledo.com/privacy/',
         'https://coopsmobiledetailingaledo.com/services/',
         'https://instagram.com/coops_mobile_detailing',
+        'https://admin.omnireach.cloud/login',
+        'https://omnireach.cloud',
+        'https://omnireach.cloud/',
+        'https://omnireach.cloud/about/',
+        'https://omnireach.cloud/404/',
+        'https://omnireach.cloud/contact/',
+        'https://omnireach.cloud/privacy/',
+        'https://omnireach.cloud/services/',
         'https://schema.org',
       ]);
       const externalUrls = [...html.matchAll(/https:\/\/[^\s"'`<>]+/giu)].map((match) => match[0]);
