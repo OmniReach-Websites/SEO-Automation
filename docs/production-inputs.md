@@ -10,14 +10,14 @@ has supplied the decision and the named approver has authorized its use.
 | R-002 | Owner identity, auth policy, recovery custodian, break-glass approver, credential channel | Complete: `rhajj@omnireach.cloud`; mandatory ORAP two-step may use five-minute email codes, TOTP, or WebAuthn; owner is initial recovery-code custodian and sole break-glass approver; approved credential policy recorded                                                                                                                                                            | Owner, 2026-10-11 |
 | R-003 | Read-only VPS/Caddy/Christians Reunite inventory access                                   | Complete: sanitized 2026-10-11 evidence reviewed and recorded in `infrastructure-inventory.md`; no mutation performed                                                                                                                                                                                                                                                                 | Owner, 2026-10-10 |
 | R-004 | Cloudflare zone/domain scope and token custodian                                          | Complete: owner controls `omnireach.cloud`; the host-only token/account pair resolved exactly one active matching zone in a read-only 2026-10-11 check. No identifier value was logged. The DNS adapter repeats this fail-closed lookup; each concrete DNS mutation remains separately approved.                                                                                      | Owner, 2026-10-11 |
-| R-005 | Off-server backup provider, key custodian, budget, deletion authority                     | Partial: Cloudflare R2 is the proposed production off-server provider with a proposed $5 monthly budget; owner is sole encryption-key custodian/manual-deletion approver; least-privilege setup, automated upload, cost validation, and a successful real restore remain pending                                                                                                      | Owner, 2026-10-11 |
+| R-005 | Off-server backup provider, key custodian, budget, deletion authority                     | TODO: Cloudflare R2 and the bucket name are selected, but the configured Cloudflare token returned HTTP 403 from the bucket-list API on 2026-10-13 and bucket-scoped S3 credentials are absent. Schedule, cost validation and a timed real restore remain TODO; off-site mode stays fail-closed.                                                                                      | Owner, 2026-10-13 |
 | R-006 | Jurisdictions and approved privacy/consent/terms/retention policies                       | Partial: initially operate in Texas, USA; privacy, cookie-consent, terms, and deletion policies require owner review before launch; exact approved texts remain pending                                                                                                                                                                                                               | Owner, 2026-10-10 |
-| R-007 | Google OAuth project, redirects, properties, permissions                                  | Partial: one owner-controlled OmniReach Google Cloud OAuth project; connect each customer's Search Console and GA4 properties individually through authorized accounts; concrete project, redirects, consent screen, properties, and access remain pending                                                                                                                            | Owner, 2026-10-10 |
+| R-007 | Google OAuth project, redirects, properties, permissions                                  | Partial: owner supplied the existing client credentials and approved `https://admin.omnireach.cloud/v1/orap/integrations/google/callback` on 2026-10-13. Provider consent-screen confirmation, customer-authorized properties and live source comparison remain TODO.                                                                                                                 | Owner, 2026-10-13 |
 | R-008 | Alert/auth-email provider, senders, recipients, escalation, spend                         | Planned: Resend free plan, `updates.omnireach.cloud`, alert sender `alerts@updates.omnireach.cloud`, auth sender `auth@updates.omnireach.cloud`, testing recipient `rhajj@omnireach.cloud`, $0 budget, 3 alert retries, dedupe, and ORAP failure history; invitation/recovery/verification delivery remains inactive pending verification, setup, credentials, limits, and activation | Owner, 2026-10-11 |
 | R-009 | Contact delivery, recipients, abuse/attachment/retention/consent policy                   | Partial: optional centralized forms use Resend, selected sender `forms@updates.omnireach.cloud`, verified site recipients, 30-day retention except legal/security holds, Turnstile, honeypots, and rate limits; recipient verification, provider/DNS setup, credentials, activation, and legal wording remain pending                                                                 | Owner, 2026-10-11 |
-| R-010 | GitHub approvers, VPS deploy identity, host key, key custodian                            | In progress: `omnireach-deploy`, its separate deploy key, the verified ED25519 host key, protected GitHub `production` environment, main-only branch policy, and repository variables/secrets are configured. Owner authorized end-to-end G31 work on 2026-10-11. One-time root install, live permission/prechecks, deployment, and rollback proof remain.                            | Owner, 2026-10-11 |
-| R-011 | Plans, prices, seats, exact nonpayment grace period                                       | Selected proposal: STARTER $500/2 seats/5 pages/weekly SEO/2 AI review cycles; GROWTH $1,000/5/10/daily/8; PRO $1,500/10/20/daily/16; ELITE $2,000/20/30/daily/30. Per-site assignment, one location, ORAP overrides, and 14-day grace apply. Final commercial approval remains pending.                                                                                              | Owner, 2026-10-11 |
-| R-012 | OpenAI project, key custodian, production spend authority/limit                           | Partial: dedicated project/key is host-configured; owner controls spend; $5/site and $50 platform-wide caps apply. Candidate aliases select `gpt-6.1-sol` for balanced content review and `gpt-6-luna` for economy. `OPENAI_PROVIDER_ENABLED=false` until representative cost/quality tests and explicit paid-call activation.                                                        | Owner, 2026-10-11 |
+| R-010 | GitHub approvers, VPS deploy identity, host key, key custodian                            | Complete for this release: `omnireach-deploy`, deploy key, verified host key, protected GitHub `production` environment and main-only workflow are configured. Owner gave full Phase 3–6 production authorization and confirmed temporary root access on 2026-10-13.                                                                                                                  | Owner, 2026-10-13 |
+| R-011 | Plans, prices, seats, exact nonpayment grace period                                       | TODO: draft tiers and effective ORAP plan/subscription/override/grace controls are implemented. Final prices, setup/bespoke fees, quota definitions, overages, collection, cancellation and commercial approval remain TODO.                                                                                                                                                          | Owner, 2026-10-13 |
+| R-012 | OpenAI project, key custodian, production spend authority/limit                           | Partial: owner selected `content-review-balanced` (`gpt-6.1-sol`) and authorized a $5/site/month hard ceiling on 2026-10-13. The provider gate remains off until the production job handler/material path, dated price record, representative benchmark and smoke evidence are complete; the $50 platform ceiling remains.                                                            | Owner, 2026-10-13 |
 | R-013 | Availability, maintenance, RPO, RTO, escalation objectives                                | 99.5% monthly; Sun 02:00–04:00 America/Chicago; RPO 24h; RTO 8h; critical ack 30m; noncritical ack 24h; ~10 sites on 2-core/8 GB                                                                                                                                                                                                                                                      | Owner, 2026-10-10 |
 
 R-003 authorized read-only inventory only. The sanitized output has been reviewed and
@@ -75,22 +75,24 @@ is authorized only when enforcing the production 7-daily/4-weekly policy, the
 development 3-daily/2-weekly target requires logged owner-approved manual deletion.
 Capacity pressure must alert and pause safely rather than trigger unauthorized pruning.
 
-R-005 production proposal selects Cloudflare R2 as the automated encrypted off-server
-destination with a proposed $5 monthly storage budget. Production backups cover
+R-005 selects Cloudflare R2 as the automated encrypted off-server destination with a
+$5 monthly storage budget. Production backups cover
 PostgreSQL, editable content, uploaded media, and necessary configuration; run daily,
 retain 7 daily and 4 weekly recovery points, validate integrity daily, and undergo a
 monthly isolated restoration test. Encryption keys stay separate from least-privilege R2
 credentials. Manual deletion still requires owner authorization and an audit record.
-Provider/account creation, spending, credentials, scheduling, upload, pruning, and
-production use are not authorized by this proposal. R-005 remains incomplete until an
-automated off-server copy meets the 24-hour RPO and a real restore succeeds.
+The owner authorized provider configuration on 2026-10-13. The configured Cloudflare
+token can reach the account but received HTTP 403 from the R2 bucket-list API, and the
+S3-compatible adapter still lacks its access-key pair. No backup upload or pruning may
+run until those least-privilege credentials pass a non-destructive check. R-005 remains
+incomplete until an automated off-server copy meets the 24-hour RPO and a real restore
+succeeds.
 
-R-006 through R-012 directions are approved as nonsecret configuration policy only. In
-this record, “owner” means the human OmniReach owner, never Codex or another automated
-agent. Provider projects, credentials, account identifiers, verified senders, recipients,
-prices, policy text, and host/deploy keys remain external inputs at their named gates. No
-external connection, production deployment, or provider mutation is authorized by
-recording these directions.
+In this record, “owner” means the human OmniReach owner, never Codex or another automated
+agent. The owner supplied full production-release and named provider-configuration
+authorization on 2026-10-13. Secret values remain host-only and must never be copied into
+Git, documentation, artifacts, or logs. Items explicitly marked TODO remain outside the
+current release authorization until their named evidence exists.
 
 R-008 remains a plan, not provider activation. The free-plan assumption must be checked
 again before activation and operation must stay within both monthly and daily provider
@@ -132,11 +134,12 @@ hardening is deferred until non-root deployment and emergency recovery are teste
 On 2026-10-11 the owner explicitly authorized G31 prerequisite and activation work,
 including the restricted deploy identity, scoped SSH/GitHub setup, isolated service
 installation, forward migrations, backup/provider setup, and the reviewed additive
-Caddy change. G30's pre-production gate is now complete. The initial execution window is
-Sunday, October 18, 2026, from 02:00 to 04:00 in `America/Chicago` (07:00–09:00 UTC).
-Execution still requires exact prechecks, rollback evidence, credential custody, and the
-earlier rule that each concrete DNS change receives separate explicit approval. It does
-not authorize a paid service, a real customer, or SSH hardening. Releases remain
+Caddy change. On 2026-10-13 the owner superseded the earlier proposed window with full
+authorization to complete this release using the supplied temporary root access and
+existing restricted deployment path. Execution still requires exact prechecks, rollback
+evidence, credential custody, and the earlier rule that each concrete DNS change receives
+separate explicit approval. It does not authorize an unlisted paid service, a new real
+customer, or SSH hardening. Releases remain
 immutable, locked, health-checked, and automatically reversible. Unfinished or failed
 work rolls back rather than silently extending past the approved window.
 
@@ -153,12 +156,16 @@ that admits a call only when both its site's $5 and the platform's $50 UTC calen
 hard caps have capacity. The owner retains key custody and spending authority. The
 initial application alias `content-review-balanced` maps to `gpt-6.1-sol`, while
 `content-review-economy` maps to `gpt-6-luna`. These are configurable benchmark
-candidates, not permanent promises. `OPENAI_PROVIDER_ENABLED=false` keeps paid calls
-disabled until representative tests pass and the owner explicitly authorizes activation.
+candidates, not permanent promises. On 2026-10-13 the owner selected the balanced alias
+and authorized a $5/site/month limit. `OPENAI_PROVIDER_ENABLED=false` still keeps paid
+calls disabled until the missing production job-material handler, dated price record,
+representative benchmark, and smoke evidence are complete.
 
-R-007 remains deferred at the owner's direction. Google OAuth identifiers and secrets
-stay blank, and Search Console/GA4 surfaces retain their not-connected state without
-blocking core production activation.
+R-007 is authorized for configuration using the existing host-only client credentials
+and the exact callback `https://admin.omnireach.cloud/v1/orap/integrations/google/callback`.
+Only explicitly customer-authorized Search Console/GA4 properties may be connected.
+Consent-screen confirmation and live source-console comparison remain TODO and do not
+block the core release.
 
 R-011 replaces the former three-tier model with four proposed tiers:
 

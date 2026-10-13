@@ -47,9 +47,14 @@ export { ResendUrgentEmailAdapter, type ResendUrgentEmailOptions } from './resen
 export {
   EncryptedTokenVault,
   GoogleConnectionManager,
+  GoogleHttpProvider,
+  GoogleProviderError,
   classifyAiReferral,
   createOAuthRequest,
   type GoogleMetricPoint,
   type GoogleProperty,
+  type GoogleProviderClient,
+  type GoogleTokenSet,
+  type GoogleHttpProviderOptions,
   type OAuthRequest,
 } from './google.ts';

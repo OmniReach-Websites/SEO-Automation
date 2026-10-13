@@ -1299,11 +1299,51 @@ model IntegrationConnection {
   syncCursor            Json?     @map("sync_cursor")
   lastSyncedAt          DateTime? @map("last_synced_at") @db.Timestamptz(3)
   disconnectedAt        DateTime? @map("disconnected_at") @db.Timestamptz(3)
+  consentedBy           String?   @map("consented_by") @db.Uuid
+  consentedAt           DateTime? @map("consented_at") @db.Timestamptz(3)
+  tokenExpiresAt        DateTime? @map("token_expires_at") @db.Timestamptz(3)
+  refreshFailureCode    String?   @map("refresh_failure_code") @db.VarChar(80)
+  collectionStoppedAt   DateTime? @map("collection_stopped_at") @db.Timestamptz(3)
   createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt             DateTime  @default(now()) @map("updated_at") @db.Timestamptz(3)
 
   @@unique([tenantId, siteId, provider, propertyKind])
   @@map("integration_connections")
+}
+
+model GoogleOAuthState {
+  id               String    @id @default(uuid()) @db.Uuid
+  stateHash        String    @unique @map("state_hash") @db.Char(64)
+  tenantId         String    @map("tenant_id") @db.Uuid
+  siteId           String    @map("site_id") @db.Uuid
+  propertyKind     String    @map("property_kind") @db.VarChar(40)
+  redirectUri      String    @map("redirect_uri") @db.VarChar(500)
+  encryptedRequest Bytes     @map("encrypted_request")
+  keyVersion       Int       @map("key_version")
+  initiatedBy      String    @map("initiated_by") @db.Uuid
+  scopes           Json
+  expiresAt        DateTime  @map("expires_at") @db.Timestamptz(3)
+  consumedAt       DateTime? @map("consumed_at") @db.Timestamptz(3)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([tenantId, siteId, expiresAt])
+  @@map("google_oauth_states")
+}
+
+model IntegrationCredential {
+  id               String    @id @default(uuid()) @db.Uuid
+  tenantId         String    @map("tenant_id") @db.Uuid
+  siteId           String    @map("site_id") @db.Uuid
+  provider         String    @db.VarChar(40)
+  encryptedPayload Bytes     @map("encrypted_payload")
+  keyVersion       Int       @map("key_version")
+  expiresAt        DateTime? @map("expires_at") @db.Timestamptz(3)
+  revokedAt        DateTime? @map("revoked_at") @db.Timestamptz(3)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime  @default(now()) @map("updated_at") @db.Timestamptz(3)
+
+  @@index([tenantId, siteId, revokedAt])
+  @@map("integration_credentials")
 }
 
 model MetricSnapshot {

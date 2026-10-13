@@ -20,6 +20,7 @@ import {
 import { contractHash, validateSiteContract, type SiteContract } from '@omnireach/contracts';
 import {
   CloudflareTurnstileVerifier,
+  GoogleHttpProvider,
   MockTurnstileVerifier,
   ResendAuthenticationNotifier,
   ResendContactDelivery,
@@ -52,6 +53,7 @@ import {
   decodeContactEncryptionKey,
   type ContextQueryPool,
 } from './server.ts';
+import { PostgresGoogleIntegrationService } from './postgres-google.ts';
 
 const config = parseConfig(process.env);
 const database = createDatabase(config.DATABASE_URL);
@@ -97,12 +99,14 @@ const authService = new AuthenticationService(
     attemptLimiter: new RedisAuthenticationRateLimiter(redisEmailCodes, config.SESSION_SECRET),
     authenticationPepper: config.SESSION_SECRET,
     emailCodeStore: new RedisEmailCodeChallengeStore(redisEmailCodes),
+    factorEnrollmentStore: new RedisOwnerBootstrapPendingStore(
+      redisAuth,
+      'omnireach:auth:factor-enrollment:v1:',
+    ),
     mfaEncryptionKeyring,
     orapHostname: config.ORAP_HOSTNAME,
     ownerBootstrapStore: new RedisOwnerBootstrapPendingStore(redisAuth),
-    // This kill switch intentionally cannot be enabled from production configuration
-    // until assertion/login support lands and is tested in the same release.
-    webAuthnAuthenticationEnabled: false,
+    webAuthnAuthenticationEnabled: true,
     webAuthnCeremonies: new RedisWebAuthnCeremonyStore(redisAuth),
     webAuthnRepository,
     ...(verificationNotifier ? { verificationNotifier } : {}),
@@ -168,6 +172,16 @@ const orapService = new PostgresOrapService(
     ]),
   ),
 );
+const integrationService = config.GOOGLE_INTEGRATION_ENABLED
+  ? new PostgresGoogleIntegrationService(tenantPool, {
+      allowedRedirectUris: [`https://${config.ORAP_HOSTNAME}/v1/orap/integrations/google/callback`],
+      encryptionKeyHex: config.GOOGLE_TOKEN_ENCRYPTION_KEY ?? '',
+      provider: new GoogleHttpProvider({
+        clientId: config.GOOGLE_CLIENT_ID ?? '',
+        clientSecret: config.GOOGLE_CLIENT_SECRET ?? '',
+      }),
+    })
+  : undefined;
 const contactDelivery = config.CONTACT_DELIVERY_ENABLED
   ? new ResendContactDelivery({
       apiKey: config.RESEND_API_KEY ?? '',
@@ -215,6 +229,7 @@ const server = buildApiServer({
     { check: async () => void (await redis.ping()), name: 'redis' },
   ],
   logLevel: config.LOG_LEVEL,
+  ...(integrationService ? { integrationService } : {}),
   orapService,
   platformInquiryService,
   resolveCustomerPrincipal: (request) => requestContext.customer(request),

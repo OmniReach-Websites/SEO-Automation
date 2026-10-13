@@ -7,19 +7,16 @@ import { roles, type Role } from './roles.ts';
 import {
   createWebAuthnUserHandle,
   normalizeWebAuthnHost,
+  type WebAuthnAuthenticationCompletionInput,
   type WebAuthnCredentialRecord,
+  type WebAuthnCredentialRenameInput,
+  type WebAuthnCredentialRevocationInput,
   type WebAuthnEnrollmentCompletionInput,
   type WebAuthnEnrollmentRepository,
   type WebAuthnEnrollmentTarget,
   type WebAuthnScopeRecord,
+  type WebAuthnScopeTarget,
 } from './webauthn.ts';
-
-export interface WebAuthnScopeTarget {
-  host: string;
-  siteId?: string;
-  tenantId?: string;
-  userId: string;
-}
 
 interface ScopeRow extends Record<string, unknown> {
   created_at: Date;
@@ -63,6 +60,15 @@ interface EnrollmentTargetRow extends Record<string, unknown> {
   tenant_id: string | null;
   user_handle: Uint8Array | null;
   user_id: string;
+}
+
+interface CredentialManagementRow extends Record<string, unknown> {
+  active_credential_count: string;
+  auth_state_version: string;
+  credential_id: string;
+  email_code_enabled: boolean;
+  has_totp: boolean;
+  password_hash: string;
 }
 
 /**
@@ -622,6 +628,346 @@ export class PostgresWebAuthnRepository implements WebAuthnEnrollmentRepository 
     });
   }
 
+  async completeAuthentication(input: WebAuthnAuthenticationCompletionInput): Promise<boolean> {
+    const target = this.normalizeTarget(input);
+    if (
+      !/^[1-9][0-9]*$/u.test(input.expectedAuthStateVersion) ||
+      !/^[a-f0-9]{64}$/u.test(input.sessionTokenHash) ||
+      input.traceId.length < 1 ||
+      input.traceId.length > 128 ||
+      input.expiresAt <= input.now ||
+      !Number.isSafeInteger(input.expectedSignCount) ||
+      !Number.isSafeInteger(input.newSignCount) ||
+      input.expectedSignCount < 0 ||
+      input.newSignCount < 0 ||
+      input.newSignCount > 4_294_967_295
+    ) {
+      return false;
+    }
+    assertCredentialId(input.credentialId);
+    return withWebAuthnTransaction(this.pool, async (client) => {
+      const users = await query<{ id: string }>(
+        client,
+        `SELECT id FROM users WHERE id = $1 AND status = 'active' FOR UPDATE`,
+        [target.userId],
+      );
+      if (users.rows.length !== 1) return false;
+
+      const password = await query<{ password_hash: string }>(
+        client,
+        `SELECT password_hash FROM credentials WHERE user_id = $1 FOR UPDATE`,
+        [target.userId],
+      );
+      if (
+        password.rows.length !== 1 ||
+        password.rows[0]?.password_hash !== input.expectedPasswordHash
+      ) {
+        return false;
+      }
+
+      const policies = await query<{ auth_state_version: string }>(
+        client,
+        `SELECT auth_state_version::text
+           FROM account_authentication_policies
+          WHERE user_id = $1
+          FOR UPDATE`,
+        [target.userId],
+      );
+      if (
+        policies.rows.length !== 1 ||
+        policies.rows[0]?.auth_state_version !== input.expectedAuthStateVersion
+      ) {
+        return false;
+      }
+
+      const authorization = target.tenantId
+        ? await query<{ role: string }>(
+            client,
+            `SELECT membership.role
+               FROM memberships membership
+               JOIN tenants tenant
+                 ON tenant.id = membership.tenant_id AND tenant.status = 'active'
+               JOIN sites site
+                 ON site.tenant_id = membership.tenant_id
+                AND site.id = membership.site_id AND site.status = 'active'
+               JOIN domains domain
+                 ON domain.tenant_id = membership.tenant_id
+                AND domain.site_id = membership.site_id AND domain.hostname = $4
+                AND domain.kind = 'admin' AND domain.verification_status = 'verified'
+                AND domain.active
+              WHERE membership.user_id = $1 AND membership.tenant_id = $2
+                AND membership.site_id = $3 AND membership.active
+                AND NOT EXISTS (
+                  SELECT 1 FROM platform_memberships platform_membership
+                   WHERE platform_membership.user_id = membership.user_id
+                     AND platform_membership.active
+                )
+              FOR UPDATE OF membership, tenant, site, domain`,
+            [target.userId, target.tenantId, target.siteId, target.host],
+          )
+        : await query<{ role: string }>(
+            client,
+            `SELECT role
+               FROM platform_memberships
+              WHERE user_id = $1 AND active AND $2 = $3
+              FOR UPDATE`,
+            [target.userId, target.host, this.#orapHostname],
+          );
+      if (authorization.rows.length !== 1 || authorization.rows[0]?.role !== input.role) {
+        return false;
+      }
+
+      const credential = await query<{ id: string; sign_count: string }>(
+        client,
+        `SELECT webauthn_credential.id, webauthn_credential.sign_count::text
+           FROM webauthn_scopes webauthn_scope
+           JOIN webauthn_credentials webauthn_credential
+             ON webauthn_credential.scope_id = webauthn_scope.id
+          WHERE webauthn_scope.user_id = $1 AND webauthn_scope.rp_id = $2
+            AND webauthn_scope.tenant_id IS NOT DISTINCT FROM $3::uuid
+            AND webauthn_scope.site_id IS NOT DISTINCT FROM $4::uuid
+            AND webauthn_credential.credential_id = $5
+            AND webauthn_credential.revoked_at IS NULL
+          FOR UPDATE OF webauthn_credential`,
+        [
+          target.userId,
+          target.host,
+          target.tenantId ?? null,
+          target.siteId ?? null,
+          input.credentialId,
+        ],
+      );
+      if (
+        credential.rows.length !== 1 ||
+        Number(credential.rows[0]?.sign_count) !== input.expectedSignCount
+      ) {
+        return false;
+      }
+
+      const counter = await query<{ id: string }>(
+        client,
+        `UPDATE webauthn_credentials
+            SET sign_count = $2, last_used_at = $3, updated_at = $3
+          WHERE id = $1 AND sign_count = $4 AND revoked_at IS NULL
+          RETURNING id`,
+        [credential.rows[0]?.id, input.newSignCount, input.now, input.expectedSignCount],
+      );
+      if (counter.rows.length !== 1) return false;
+
+      await client.query(
+        `INSERT INTO sessions
+           (user_id, tenant_id, site_id, host, token_hash, expires_at,
+            authentication_method, authentication_assurance, verified_at,
+            recovery_restricted, created_at, last_seen_at)
+         VALUES ($1, $2, $3, $4, $5, $6, 'webauthn', 'strong', $7, false, $7, $7)`,
+        [
+          target.userId,
+          target.tenantId ?? null,
+          target.siteId ?? null,
+          target.host,
+          input.sessionTokenHash,
+          input.expiresAt,
+          input.now,
+        ],
+      );
+      await client.query(
+        `INSERT INTO audit_events
+           (tenant_id, site_id, actor_id, action, trace_id, target_type, target_id, metadata)
+         VALUES ($1, $2, $3, 'auth.login.succeeded', $4, 'session', NULL, $5::jsonb)`,
+        [
+          target.tenantId ?? null,
+          target.siteId ?? null,
+          target.userId,
+          input.traceId,
+          JSON.stringify({
+            assuranceLevel: 'strong',
+            authenticationMethod: 'webauthn',
+            credentialId: credential.rows[0]?.id,
+            host: target.host,
+          }),
+        ],
+      );
+      return true;
+    });
+  }
+
+  async renameCredential(input: WebAuthnCredentialRenameInput): Promise<boolean> {
+    const target = this.normalizeTarget(input);
+    const name = input.name.trim();
+    if (
+      !validCredentialManagementInput(input) ||
+      name !== input.name ||
+      name.length < 1 ||
+      name.length > 80 ||
+      /[\u0000-\u001f\u007f]/u.test(name)
+    ) {
+      return false;
+    }
+    return withWebAuthnTransaction(this.pool, async (client) => {
+      const locked = await this.lockCredentialManagementTarget(client, input);
+      if (!locked) return false;
+      const renamed = await query<{ id: string }>(
+        client,
+        `UPDATE webauthn_credentials
+            SET name = $2, updated_at = $3
+          WHERE id = $1 AND revoked_at IS NULL
+          RETURNING id`,
+        [input.credentialId, name, input.now],
+      );
+      if (renamed.rows.length !== 1) return false;
+      await client.query(
+        `INSERT INTO audit_events
+           (tenant_id, site_id, actor_id, action, trace_id, target_type, target_id, metadata)
+         VALUES ($1, $2, $3, 'auth.webauthn.renamed', $4, 'webauthn_credential', $5, $6::jsonb)`,
+        [
+          target.tenantId ?? null,
+          target.siteId ?? null,
+          target.userId,
+          input.traceId,
+          input.credentialId,
+          JSON.stringify({ host: target.host, name }),
+        ],
+      );
+      return true;
+    });
+  }
+
+  async revokeCredential(input: WebAuthnCredentialRevocationInput): Promise<boolean> {
+    const target = this.normalizeTarget(input);
+    if (!validCredentialManagementInput(input)) return false;
+    return withWebAuthnTransaction(this.pool, async (client) => {
+      const locked = await this.lockCredentialManagementTarget(client, input);
+      if (!locked) return false;
+      const alternativeAllowed =
+        Number(locked.active_credential_count) > 1 ||
+        locked.has_totp ||
+        (target.host !== this.#orapHostname && locked.email_code_enabled);
+      if (!alternativeAllowed) return false;
+      const revoked = await query<{ id: string }>(
+        client,
+        `UPDATE webauthn_credentials
+            SET revoked_at = $2, updated_at = $2
+          WHERE id = $1 AND revoked_at IS NULL
+          RETURNING id`,
+        [input.credentialId, input.now],
+      );
+      if (revoked.rows.length !== 1) return false;
+      const remaining = Number(locked.active_credential_count) - 1;
+      await client.query(
+        `UPDATE account_authentication_policies
+            SET preferred_method = CASE
+                  WHEN $3::integer > 0 THEN preferred_method
+                  WHEN $4::boolean THEN 'totp'
+                  WHEN $5::boolean THEN 'email_code'
+                  ELSE NULL
+                END,
+                updated_at = $2
+          WHERE user_id = $1`,
+        [target.userId, input.now, remaining, locked.has_totp, locked.email_code_enabled],
+      );
+      const sessions = await query<{ id: string }>(
+        client,
+        `UPDATE sessions
+            SET revoked_at = $2, revoke_reason = 'webauthn-credential-revoked'
+          WHERE user_id = $1 AND revoked_at IS NULL
+          RETURNING id`,
+        [target.userId, input.now],
+      );
+      await client.query(
+        `INSERT INTO audit_events
+           (tenant_id, site_id, actor_id, action, trace_id, target_type, target_id, metadata)
+         VALUES ($1, $2, $3, 'auth.webauthn.revoked', $4, 'webauthn_credential', $5, $6::jsonb)`,
+        [
+          target.tenantId ?? null,
+          target.siteId ?? null,
+          target.userId,
+          input.traceId,
+          input.credentialId,
+          JSON.stringify({ host: target.host, sessionsRevoked: sessions.rows.length }),
+        ],
+      );
+      return true;
+    });
+  }
+
+  private async lockCredentialManagementTarget(
+    client: AuthenticationTransactionClient,
+    input: WebAuthnCredentialRenameInput | WebAuthnCredentialRevocationInput,
+  ): Promise<CredentialManagementRow | undefined> {
+    const target = this.normalizeTarget(input);
+    const result = await query<CredentialManagementRow>(
+      client,
+      `SELECT webauthn_credential.id AS credential_id,
+              password_credential.password_hash,
+              policy.auth_state_version::text,
+              policy.email_code_enabled,
+              EXISTS (
+                SELECT 1 FROM mfa_factors factor
+                 WHERE factor.user_id = auth_user.id AND factor.kind = 'totp'
+                   AND factor.verified_at IS NOT NULL AND factor.revoked_at IS NULL
+              ) AS has_totp,
+              (
+                SELECT count(*)::text
+                  FROM webauthn_credentials active_credential
+                 WHERE active_credential.scope_id = webauthn_scope.id
+                   AND active_credential.revoked_at IS NULL
+              ) AS active_credential_count
+         FROM sessions session
+         JOIN users auth_user ON auth_user.id = session.user_id AND auth_user.status = 'active'
+         JOIN credentials password_credential ON password_credential.user_id = auth_user.id
+         JOIN account_authentication_policies policy ON policy.user_id = auth_user.id
+         JOIN webauthn_scopes webauthn_scope
+           ON webauthn_scope.user_id = auth_user.id AND webauthn_scope.rp_id = session.host
+          AND webauthn_scope.tenant_id IS NOT DISTINCT FROM session.tenant_id
+          AND webauthn_scope.site_id IS NOT DISTINCT FROM session.site_id
+         JOIN webauthn_credentials webauthn_credential
+           ON webauthn_credential.scope_id = webauthn_scope.id
+          AND webauthn_credential.id = $5 AND webauthn_credential.revoked_at IS NULL
+        WHERE session.token_hash = $1 AND session.user_id = $2 AND session.host = $3
+          AND session.revoked_at IS NULL AND session.expires_at > $4
+          AND session.last_seen_at > $4 - interval '10 minutes'
+          AND session.verified_at > $4 - interval '10 minutes'
+          AND session.authentication_assurance IN ('baseline', 'strong')
+          AND NOT session.recovery_restricted
+          AND password_credential.password_hash = $6
+          AND (
+            ($7::uuid IS NOT NULL AND $8::uuid IS NOT NULL AND $3 <> $9
+              AND EXISTS (
+                SELECT 1 FROM memberships membership
+                JOIN tenants tenant ON tenant.id = membership.tenant_id AND tenant.status = 'active'
+                JOIN sites site ON site.id = membership.site_id
+                 AND site.tenant_id = membership.tenant_id AND site.status = 'active'
+                JOIN domains domain ON domain.tenant_id = membership.tenant_id
+                 AND domain.site_id = membership.site_id AND domain.hostname = $3
+                 AND domain.kind = 'admin' AND domain.verification_status = 'verified'
+                 AND domain.active
+               WHERE membership.user_id = auth_user.id AND membership.tenant_id = $7
+                 AND membership.site_id = $8 AND membership.active
+              ))
+            OR
+            ($7::uuid IS NULL AND $8::uuid IS NULL AND $3 = $9
+              AND session.authentication_assurance = 'strong'
+              AND EXISTS (
+                SELECT 1 FROM platform_memberships platform_membership
+                 WHERE platform_membership.user_id = auth_user.id AND platform_membership.active
+              ))
+          )
+        FOR UPDATE OF session, auth_user, password_credential, policy, webauthn_credential`,
+      [
+        input.sessionTokenHash,
+        target.userId,
+        target.host,
+        input.now,
+        input.credentialId,
+        input.expectedPasswordHash,
+        target.tenantId ?? null,
+        target.siteId ?? null,
+        this.#orapHostname,
+      ],
+    );
+    return result.rows.length === 1 ? result.rows[0] : undefined;
+  }
+
   private eligibleTargetQuery(): string {
     return `SELECT 1
               FROM users auth_user
@@ -813,6 +1159,20 @@ function validEnrollmentCompletion(input: WebAuthnEnrollmentCompletionInput): bo
     input.recoveryCodeHashes.length === 10 &&
     input.recoveryCodeHashes.every((digest) => /^[a-f0-9]{64}$/u.test(digest)) &&
     new Set(input.recoveryCodeHashes).size === input.recoveryCodeHashes.length &&
+    input.traceId.length >= 1 &&
+    input.traceId.length <= 128,
+  );
+}
+
+function validCredentialManagementInput(
+  input: WebAuthnCredentialRenameInput | WebAuthnCredentialRevocationInput,
+): boolean {
+  return Boolean(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+      input.credentialId,
+    ) &&
+    /^[a-f0-9]{64}$/u.test(input.sessionTokenHash) &&
+    input.expectedPasswordHash.length >= 32 &&
     input.traceId.length >= 1 &&
     input.traceId.length <= 128,
   );

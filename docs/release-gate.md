@@ -58,3 +58,24 @@ production or paid providers. The production observation helper is prepared at
 5. A deliberately unhealthy production candidate proving automatic prior-release restore.
 6. Owner production-release sign-off that no critical/high blocker remains under the
    supplied R-013 objectives.
+
+## Phase 3–6 branch evidence (2026-10-13)
+
+Before merge/deploy, the final branch must pass formatting, lint, types, unit,
+integration, security, browser, contract, migration, Compose, backup, secret and full
+goal-registry checks. The current development snapshot has passed formatting, lint,
+types, 337 unit tests (one intentional skip), 62 integration tests, 61 security tests,
+nine contract tests, one load test, four browser tests, and all G01–G32 registry
+commands. These results are local evidence only and must be repeated on the final commit.
+
+Additional pass/fail criteria:
+
+- **Fail** on any cross-tenant access, stale/revoked-session acceptance, WebAuthn
+  counter reuse, factor change without reauthentication, protected-fact mutation,
+  direct AI publication, cap bypass, secret scan finding, corrupt-backup acceptance,
+  non-isolated restore target, or static-site dependency on an application service.
+- **Pass locally** only when Google and AI missing credentials surface disabled/Waiting
+  states, rather than mock success, and the generic onboarding command is idempotent.
+- **Production Waiting** until R2 upload/restore/freshness, Google consent/real property,
+  legal/commercial decisions and paid-AI authorization (if desired) have their own
+  evidence. None is required to keep those optional providers safely disabled.

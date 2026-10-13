@@ -245,7 +245,9 @@ describe('account authentication database boundary', () => {
     );
     expect(repositorySource).not.toContain('async updateCredentialUsage(');
     expect(repositorySource).not.toContain('async createCredential(');
-    expect(repositorySource).not.toContain('async revokeCredential(');
+    expect(repositorySource).toContain('async revokeCredential(');
+    expect(repositorySource).toContain("revoke_reason = 'webauthn-credential-revoked'");
+    expect(repositorySource).toContain("'auth.webauthn.revoked'");
     expect(repositorySource).toContain(
       'assertion counter updates\n * must commit in the same transaction as session issuance',
     );

@@ -56,10 +56,13 @@ try {
     [scheduleId],
   );
   const row = persisted.rows[0];
+  const fixtureEnqueued = enqueued.some(
+    (envelope) => envelope.tenantId === tenantId && envelope.siteId === siteId,
+  );
   if (
-    result.claimed !== 1 ||
-    result.enqueued !== 1 ||
-    enqueued.length !== 1 ||
+    result.claimed < 1 ||
+    result.enqueued < 1 ||
+    !fixtureEnqueued ||
     !row?.last_window_key ||
     row.next_attempt_at <= now ||
     Number(row.job_count) < 1
@@ -71,6 +74,7 @@ try {
       check: 'scheduler-runtime',
       claimed: result.claimed,
       enqueued: result.enqueued,
+      fixtureEnqueued,
       lease: 'released',
       nextAttemptAdvanced: true,
       ok: true,

@@ -36,6 +36,7 @@ describe('AIO proposal orchestration', () => {
         now: new Date('2026-10-10T00:00:00Z'),
         protectedFacts: ['555-0100'],
         provider,
+        providerEnabled: true,
         reviewCycles: reviewCycles(),
       }),
     ).resolves.toMatchObject({ action: 'review' });
@@ -49,9 +50,10 @@ describe('AIO proposal orchestration', () => {
         now: new Date('2026-10-10T00:00:00Z'),
         protectedFacts: ['555-0100'],
         provider,
+        providerEnabled: true,
         reviewCycles: reviewCycles(),
       }),
-    ).resolves.toMatchObject({ action: 'publish_candidate' });
+    ).resolves.toMatchObject({ action: 'draft_candidate' });
   });
   it('never calls the provider for protected mode and releases failed reservations', async () => {
     let calls = 0;
@@ -75,6 +77,7 @@ describe('AIO proposal orchestration', () => {
         now: new Date('2026-10-10T00:00:00Z'),
         protectedFacts: [],
         provider,
+        providerEnabled: true,
         reviewCycles: reviewCycles(),
       }),
     ).rejects.toThrow(/before provider/u);
@@ -94,9 +97,10 @@ describe('AIO proposal orchestration', () => {
           replacement: 'Call 555-9999',
           supportedClaims: [],
         }),
+        providerEnabled: true,
         reviewCycles: reviewCycles(),
       }),
-    ).rejects.toThrow(/protected business/u);
+    ).rejects.toThrow(/restricted_fact_changed/u);
     expect(budget.reservations[0]?.state).toBe('released');
   });
 
@@ -117,9 +121,10 @@ describe('AIO proposal orchestration', () => {
         now: new Date('2026-10-10T00:00:00Z'),
         protectedFacts: ['555-0100'],
         provider: rejectedProvider,
+        providerEnabled: true,
         reviewCycles: cycles,
       }),
-    ).rejects.toThrow('protected business');
+    ).rejects.toThrow('restricted_fact_changed');
     await expect(
       generateFieldProposal({
         ...scope,
@@ -134,6 +139,7 @@ describe('AIO proposal orchestration', () => {
           replacement: 'Call 555-0100 for a warm welcome',
           supportedClaims: [],
         }),
+        providerEnabled: true,
         reviewCycles: cycles,
       }),
     ).resolves.toMatchObject({ action: 'review' });
@@ -147,12 +153,13 @@ describe('AIO proposal orchestration', () => {
         now: new Date('2026-10-10T00:02:00Z'),
         protectedFacts: ['555-0100'],
         provider: rejectedProvider,
+        providerEnabled: true,
         reviewCycles: cycles,
       }),
     ).rejects.toThrow('review-cycle quota');
   });
 
-  it('publishes AUTO only through the supplied normal publication gate and alerts on failure', async () => {
+  it('stages AUTO as a reviewable proposal without publishing and alerts on staging failure', async () => {
     const provider = new MockProposalProvider({
       rationale: 'Clearer',
       replacement: 'Call 555-0100 for a warm welcome',
@@ -169,13 +176,20 @@ describe('AIO proposal orchestration', () => {
         now: new Date('2026-10-10T00:00:00Z'),
         protectedFacts: ['555-0100'],
         provider,
+        providerEnabled: true,
         reviewCycles: reviewCycles(),
-        publishCandidate: async () => ({ artifactId: 'artifact-fixture' }),
         raiseAlert: async () => {
           alerts += 1;
         },
+        stageProposal: async () => ({
+          draftId: 'draft-fixture',
+          proposalId: 'proposal-fixture',
+        }),
       }),
-    ).resolves.toEqual({ action: 'published', artifactId: 'artifact-fixture' });
+    ).resolves.toEqual({
+      action: 'review_staged',
+      proposalId: 'proposal-fixture',
+    });
     await expect(
       executeAiAutomation({
         ...scope,
@@ -186,15 +200,47 @@ describe('AIO proposal orchestration', () => {
         now: new Date('2026-10-10T00:00:00Z'),
         protectedFacts: ['555-0100'],
         provider,
+        providerEnabled: true,
         reviewCycles: reviewCycles(),
-        publishCandidate: async () => {
-          throw new Error('staging health failed');
-        },
         raiseAlert: async () => {
           alerts += 1;
         },
+        stageProposal: async () => {
+          throw new Error('proposal persistence failed');
+        },
       }),
-    ).rejects.toThrow(/health/u);
+    ).rejects.toThrow(/persistence/u);
     expect(alerts).toBe(1);
+  });
+
+  it('checks the centralized provider gate before quota, budget, or provider use', async () => {
+    const budget = new MemoryBudgetLedger();
+    let providerCalls = 0;
+    const provider = {
+      generate: async () => {
+        providerCalls += 1;
+        return new MockProposalProvider({
+          rationale: 'fixture',
+          replacement: 'Call 555-0100 for a warm welcome',
+          supportedClaims: [],
+        }).generate(input);
+      },
+    };
+    await expect(
+      generateFieldProposal({
+        ...scope,
+        budget,
+        input,
+        mode: 'AUTO',
+        modelPrice: price,
+        now: new Date('2026-10-10T00:00:00Z'),
+        protectedFacts: ['555-0100'],
+        provider,
+        providerEnabled: false,
+        reviewCycles: reviewCycles(),
+      }),
+    ).rejects.toThrow(/centralized provider gate/u);
+    expect(providerCalls).toBe(0);
+    expect(budget.reservations).toHaveLength(0);
   });
 });

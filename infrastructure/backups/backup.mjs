@@ -9,10 +9,39 @@ const gzipAsync = promisify(gzip);
 const gunzipAsync = promisify(gunzip);
 const execFileAsync = promisify(execFile);
 export async function runLogicalDump(databaseUrl, targetPath) {
+  const parsed = new URL(databaseUrl);
+  if (
+    !['postgres:', 'postgresql:'].includes(parsed.protocol) ||
+    !parsed.hostname ||
+    !parsed.pathname
+  ) {
+    throw new Error('Invalid PostgreSQL backup connection URL');
+  }
+  const databaseName = decodeURIComponent(parsed.pathname.replace(/^\//u, ''));
+  if (!databaseName || databaseName.includes('/'))
+    throw new Error('Invalid PostgreSQL database name');
   await execFileAsync(
     'pg_dump',
-    ['--format=custom', '--no-owner', '--no-privileges', '--file', targetPath, databaseUrl],
-    { timeout: 300_000, windowsHide: true },
+    [
+      '--format=custom',
+      '--no-owner',
+      '--no-privileges',
+      '--file',
+      targetPath,
+      '--host',
+      parsed.hostname,
+      '--port',
+      parsed.port || '5432',
+      '--username',
+      decodeURIComponent(parsed.username),
+      '--dbname',
+      databaseName,
+    ],
+    {
+      env: { ...process.env, PGPASSWORD: decodeURIComponent(parsed.password) },
+      timeout: 300_000,
+      windowsHide: true,
+    },
   );
 }
 export async function createEncryptedBackup(options) {
@@ -69,6 +98,35 @@ export async function createEncryptedBackup(options) {
 export async function restoreEncryptedBackup(options) {
   const destination = resolve(options.destinationRoot);
   if (destination === resolve(sep)) throw new Error('Refusing broad restore target');
+  const parsed = await readAndVerifyEncryptedBackup(options);
+  let destinationState;
+  try {
+    destinationState = await stat(destination);
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+  if (destinationState && !destinationState.isDirectory()) {
+    throw new Error('Restore target must be a directory');
+  }
+  if (destinationState && (await readdir(destination)).length !== 0) {
+    throw new Error('Restore target must be new or empty');
+  }
+  await mkdir(destination, { recursive: true });
+  for (const file of parsed.files) {
+    const target = resolve(destination, file.name);
+    if (!target.startsWith(`${destination}${sep}`)) throw new Error('Unsafe backup path rejected');
+    await mkdir(dirname(target), { recursive: true });
+    await writeFile(target, file.data, { flag: 'wx', mode: 0o600 });
+  }
+  return parsed.manifest;
+}
+
+export async function verifyEncryptedBackup(options) {
+  const parsed = await readAndVerifyEncryptedBackup(options);
+  return parsed.manifest;
+}
+
+async function readAndVerifyEncryptedBackup(options) {
   const envelope = await readFile(options.backupPath);
   if (envelope.subarray(0, 5).toString() !== 'ORBK1')
     throw new Error('Unknown or corrupt backup format');
@@ -84,26 +142,36 @@ export async function restoreEncryptedBackup(options) {
   } catch (error) {
     throw new Error('Backup authentication failed', { cause: error });
   }
-  const parsed = JSON.parse((await gunzipAsync(archive)).toString('utf8'));
-  if (parsed?.manifest?.formatVersion !== 1 || !Array.isArray(parsed.files)) {
+  let parsed;
+  try {
+    parsed = JSON.parse((await gunzipAsync(archive)).toString('utf8'));
+  } catch (error) {
+    throw new Error('Backup archive is not valid compressed JSON', { cause: error });
+  }
+  if (
+    parsed?.manifest?.formatVersion !== 1 ||
+    !Array.isArray(parsed.manifest.files) ||
+    !Array.isArray(parsed.files)
+  ) {
     throw new Error('Unsupported or incomplete backup archive');
   }
   const expected = new Map(parsed.manifest.files.map((file) => [file.name, file.sha256]));
   if (expected.size !== parsed.files.length) throw new Error('Backup manifest member mismatch');
-  await mkdir(destination, { recursive: true });
+  const verifiedFiles = [];
   for (const file of parsed.files) {
     assertSafeMemberName(file.name);
-    if (expected.get(file.name) !== file.sha256)
+    if (
+      typeof file.data !== 'string' ||
+      typeof file.sha256 !== 'string' ||
+      expected.get(file.name) !== file.sha256
+    )
       throw new Error('Backup manifest checksum mismatch');
     const data = Buffer.from(file.data, 'base64');
     if (createHash('sha256').update(data).digest('hex') !== file.sha256)
       throw new Error('Backup member checksum mismatch');
-    const target = resolve(destination, file.name);
-    if (!target.startsWith(`${destination}${sep}`)) throw new Error('Unsafe backup path rejected');
-    await mkdir(dirname(target), { recursive: true });
-    await writeFile(target, data, { flag: 'wx', mode: 0o600 });
+    verifiedFiles.push({ data, name: file.name });
   }
-  return parsed.manifest;
+  return { files: verifiedFiles, manifest: parsed.manifest };
 }
 export async function copyOffServer(backupPath, offServerRoot) {
   await mkdir(offServerRoot, { recursive: true });
@@ -119,15 +187,17 @@ export async function copyOffServer(backupPath, offServerRoot) {
   }
   return target;
 }
-export function selectRetention(manifests, now) {
+export function selectRetention(manifests, now, policy = {}) {
   void now;
+  const daily = validateRetentionCount(policy.daily ?? 7, 'daily');
+  const weekly = validateRetentionCount(policy.weekly ?? 4, 'weekly');
   const sorted = [...manifests]
     .filter((item) => item.complete)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const keep = new Set();
-  for (const item of sorted.filter((entry) => entry.kind === 'daily').slice(0, 7))
+  for (const item of sorted.filter((entry) => entry.kind === 'daily').slice(0, daily))
     keep.add(item.id);
-  for (const item of sorted.filter((entry) => entry.kind === 'weekly').slice(0, 4))
+  for (const item of sorted.filter((entry) => entry.kind === 'weekly').slice(0, weekly))
     keep.add(item.id);
   return {
     keep: [...keep],
@@ -137,9 +207,14 @@ export function selectRetention(manifests, now) {
   };
 }
 export async function listBackupManifests(root) {
-  return (await readdir(root))
-    .filter((name) => name.endsWith('.manifest.json'))
-    .map((name) => join(root, name));
+  let entries;
+  try {
+    entries = await readdir(root);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return [];
+    throw error;
+  }
+  return entries.filter((name) => name.endsWith('.manifest.json')).map((name) => join(root, name));
 }
 export async function removeBackup(root, path) {
   const absoluteRoot = resolve(root);
@@ -147,9 +222,31 @@ export async function removeBackup(root, path) {
   if (!absolute.startsWith(`${absoluteRoot}${sep}`)) throw new Error('Backup prune escaped root');
   await rm(absolute);
 }
+
+export async function readBackupManifest(path) {
+  const parsed = JSON.parse(await readFile(path, 'utf8'));
+  if (
+    parsed?.formatVersion !== 1 ||
+    typeof parsed.id !== 'string' ||
+    typeof parsed.createdAt !== 'string' ||
+    !['daily', 'weekly'].includes(parsed.kind) ||
+    typeof parsed.envelopeHash !== 'string' ||
+    !Array.isArray(parsed.files)
+  ) {
+    throw new Error('Invalid backup manifest');
+  }
+  return parsed;
+}
 function parseKey(value) {
   if (!/^[a-f0-9]{64}$/iu.test(value)) throw new Error('Backup key must be exactly 32 bytes');
   return Buffer.from(value, 'hex');
+}
+
+function validateRetentionCount(value, label) {
+  if (!Number.isInteger(value) || value < 0 || value > 366) {
+    throw new Error(`Invalid ${label} retention count`);
+  }
+  return value;
 }
 
 async function walkFiles(root) {

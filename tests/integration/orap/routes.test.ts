@@ -39,6 +39,12 @@ function service() {
       ],
     })),
     listSites: vi.fn(async () => []),
+    siteManagement: vi.fn(async () => ({
+      availability: { activeArtifact: true, preservedDuringDelinquency: true, publicDomain: true },
+      features: [],
+      plans: [],
+      subscription: null,
+    })),
     listOperations: vi.fn(async () => ({
       alerts: [],
       budget: {
@@ -83,6 +89,29 @@ afterEach(async () => {
 });
 
 describe('ORAP administration routes', () => {
+  it('returns effective site settings only through an authorized scoped request', async () => {
+    const administration = service();
+    const server = buildApiServer({
+      logLevel: 'silent',
+      orapService: administration,
+      resolvePlatformActor: async () => actor,
+    });
+    servers.push(server);
+    const siteId = '20000000-0000-4000-8000-000000000001';
+    const tenantId = '10000000-0000-4000-8000-000000000001';
+
+    const response = await server.inject({
+      method: 'GET',
+      url: `/v1/orap/sites/${siteId}/effective-settings?tenantId=${tenantId}`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      availability: { preservedDuringDelinquency: true },
+    });
+    expect(administration.siteManagement).toHaveBeenCalledWith(actor, { siteId, tenantId });
+  });
+
   it('keeps the internal staff directory restricted to the Platform Owner identity', async () => {
     const administration = service();
     const ownerServer = buildApiServer({

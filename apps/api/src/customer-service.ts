@@ -4,7 +4,9 @@ import type {
   ContentActorContext,
 } from '@omnireach/content';
 import { hasPermission } from '@omnireach/auth';
+import { classifyAiReferral } from '@omnireach/integrations';
 import { withTenantTransaction, type TenantTransactionPool } from '@omnireach/tenant';
+import type { ReportMeasurement } from '@omnireach/ui';
 
 import type { CustomerEndpointService, CustomerPrincipal } from './customer-routes.ts';
 import { decryptContactPayload } from './postgres-contact.ts';
@@ -66,13 +68,29 @@ export class PostgresCustomerService implements CustomerEndpointService {
       };
       const site = result.rows[0];
       if (!site) throw new Error('Site was not found');
+      const integrations = (await client.query(
+        `SELECT property_kind, status, last_synced_at
+           FROM integration_connections
+          WHERE tenant_id = $1 AND site_id = $2 AND provider = 'google'
+          ORDER BY property_kind`,
+        [principal.tenantId, principal.siteId],
+      )) as { rows: { last_synced_at: Date | null; property_kind: string; status: string }[] };
       return {
         controls: {
           autonomousChangesStopped: site.autonomous_changes_stopped,
           automationStopped: site.automation_stopped,
           editingFrozen: site.editing_frozen,
         },
-        integrations: { status: 'not_configured' },
+        integrations: {
+          connections: integrations.rows.map((connection) => ({
+            kind: connection.property_kind,
+            lastSyncedAt: connection.last_synced_at,
+            status: connection.status,
+          })),
+          status: integrations.rows.some((connection) => connection.status === 'connected')
+            ? 'connected'
+            : 'not_configured',
+        },
         publication: site.artifact_hash
           ? {
               artifactHash: site.artifact_hash,
@@ -261,6 +279,218 @@ export class PostgresCustomerService implements CustomerEndpointService {
     return this.content.listHistory(actorContext(principal));
   }
 
+  proposals(principal: CustomerPrincipal): Promise<unknown> {
+    return this.content.listProposals(actorContext(principal));
+  }
+
+  reviewProposal(
+    principal: CustomerPrincipal,
+    input: {
+      action: 'approve' | 'reject';
+      editedValue?: unknown;
+      proposalId: string;
+      reason: string;
+    },
+  ): Promise<unknown> {
+    if (!hasPermission(principal.role, 'content.edit')) {
+      throw new Error('Customer role cannot review proposals');
+    }
+    return this.content.reviewProposal(actorContext(principal), input);
+  }
+
+  reports(principal: CustomerPrincipal): Promise<unknown> {
+    return withTenantTransaction(this.pool, tenantContext(principal), async (client) => {
+      const now = new Date();
+      const [metricRows, connections, publications, findings, jobs] = await Promise.all([
+        client.query(
+          `SELECT source, metric,
+                  CASE WHEN metric IN ('ctr','position') THEN avg(value) ELSE sum(value) END AS value,
+                  min(window_start) AS window_start, max(window_end) AS window_end,
+                  max(ingested_at) AS ingested_at
+             FROM metric_snapshots
+            WHERE tenant_id = $1 AND site_id = $2 AND expires_at > now()
+            GROUP BY source, metric ORDER BY source, metric`,
+          [principal.tenantId, principal.siteId],
+        ),
+        client.query(
+          `SELECT property_kind, status, last_synced_at, refresh_failure_code
+             FROM integration_connections
+            WHERE tenant_id = $1 AND site_id = $2 AND provider = 'google'
+            ORDER BY property_kind`,
+          [principal.tenantId, principal.siteId],
+        ),
+        client.query(
+          `SELECT count(*)::integer AS count, max(completed_at) AS last_completed_at
+             FROM publication_requests
+            WHERE tenant_id = $1 AND site_id = $2 AND status = 'published'`,
+          [principal.tenantId, principal.siteId],
+        ),
+        client.query(
+          `SELECT count(*) FILTER (WHERE state <> 'resolved')::integer AS open_count,
+                  count(*) FILTER (WHERE state <> 'resolved' AND rule_id LIKE 'structured-data%')::integer AS structured_count,
+                  max(last_seen_at) AS last_seen_at
+             FROM findings WHERE tenant_id = $1 AND site_id = $2`,
+          [principal.tenantId, principal.siteId],
+        ),
+        client.query(
+          `SELECT count(*) FILTER (WHERE state = 'completed')::integer AS completed_count,
+                  count(*) FILTER (WHERE state = 'failed')::integer AS failed_count,
+                  max(updated_at) AS last_updated_at
+             FROM jobs WHERE tenant_id = $1 AND site_id = $2
+              AND created_at > now() - interval '30 days'`,
+          [principal.tenantId, principal.siteId],
+        ),
+      ]);
+      const metricResult = metricRows as {
+        rows: {
+          ingested_at: Date;
+          metric: string;
+          source: 'ga4' | 'search_console';
+          value: string;
+          window_end: Date;
+          window_start: Date;
+        }[];
+      };
+      const connectionResult = connections as {
+        rows: {
+          last_synced_at: Date | null;
+          property_kind: string;
+          refresh_failure_code: string | null;
+          status: string;
+        }[];
+      };
+      const publicationResult = publications as {
+        rows: { count: number; last_completed_at: Date | null }[];
+      };
+      const findingResult = findings as {
+        rows: {
+          last_seen_at: Date | null;
+          open_count: number;
+          structured_count: number;
+        }[];
+      };
+      const jobResult = jobs as {
+        rows: {
+          completed_count: number;
+          failed_count: number;
+          last_updated_at: Date | null;
+        }[];
+      };
+      const measurements: ReportMeasurement[] = [];
+      for (const row of metricResult.rows) {
+        measurements.push({
+          caveat:
+            row.source === 'ga4'
+              ? 'GA4 modeled, thresholded, or consent-limited data can differ from server logs.'
+              : 'Search Console data can be delayed, rounded, and omit low-volume queries.',
+          freshness: reportFreshness(row.ingested_at, now),
+          kind: 'traffic',
+          label: `${row.source === 'ga4' ? 'GA4' : 'Search Console'} ${row.metric}`,
+          source: row.source === 'ga4' ? 'Google Analytics 4' : 'Google Search Console',
+          state: 'available',
+          value: Number(row.value),
+          windowEnd: row.window_end.toISOString(),
+          windowStart: row.window_start.toISOString(),
+        });
+      }
+      const referralRows = (await client.query(
+        `SELECT dimensions->>'sessionSource' AS source, sum(value) AS sessions,
+                min(window_start) AS window_start, max(window_end) AS window_end,
+                max(ingested_at) AS ingested_at
+           FROM metric_snapshots
+          WHERE tenant_id = $1 AND site_id = $2 AND source = 'ga4' AND metric = 'sessions'
+            AND expires_at > now() AND dimensions ? 'sessionSource'
+          GROUP BY dimensions->>'sessionSource'`,
+        [principal.tenantId, principal.siteId],
+      )) as {
+        rows: {
+          ingested_at: Date;
+          sessions: string;
+          source: string;
+          window_end: Date;
+          window_start: Date;
+        }[];
+      };
+      for (const row of referralRows.rows) {
+        const classification = classifyAiReferral(row.source);
+        if (!classification.classification) continue;
+        measurements.push({
+          caveat:
+            'Observed GA4 referral sessions only; this is not an AI ranking or citation measurement.',
+          freshness: reportFreshness(row.ingested_at, now),
+          kind: 'ai_referral',
+          label: `${classification.classification} referral sessions`,
+          source: `GA4 sessionSource mapping v${classification.mappingVersion}`,
+          state: 'available',
+          value: Number(row.sessions),
+          windowEnd: row.window_end.toISOString(),
+          windowStart: row.window_start.toISOString(),
+        });
+      }
+      const connectedKinds = new Set(
+        connectionResult.rows
+          .filter((connection) => connection.status === 'connected')
+          .map((connection) => connection.property_kind),
+      );
+      for (const kind of ['ga4', 'search_console'] as const) {
+        if (connectedKinds.has(kind)) continue;
+        const connection = connectionResult.rows.find((item) => item.property_kind === kind);
+        measurements.push({
+          caveat: connection?.refresh_failure_code
+            ? `Collection stopped safely: ${connection.refresh_failure_code}`
+            : 'Connect an authorized matching property to collect data.',
+          freshness: 'unknown',
+          kind: 'integration',
+          label: kind === 'ga4' ? 'Google Analytics 4' : 'Google Search Console',
+          source: kind === 'ga4' ? 'Google Analytics 4' : 'Google Search Console',
+          state: connection ? 'unavailable' : 'not_connected',
+        });
+      }
+      const publication = publicationResult.rows[0];
+      measurements.push({
+        caveat: 'Counts successfully activated immutable publication requests.',
+        freshness: publication?.last_completed_at ? 'current' : 'unknown',
+        kind: 'publication',
+        label: 'Successful publications',
+        source: 'OmniReach publication history',
+        state: 'available',
+        value: publication?.count ?? 0,
+      });
+      const finding = findingResult.rows[0];
+      measurements.push(
+        {
+          caveat: 'Deterministic audit findings are not a search-ranking guarantee.',
+          freshness: reportFreshness(finding?.last_seen_at, now),
+          kind: 'seo_finding',
+          label: 'Open SEO findings',
+          source: 'OmniReach deterministic SEO audit',
+          state: 'available',
+          value: finding?.open_count ?? 0,
+        },
+        {
+          caveat: 'Open structured-data rule findings only.',
+          freshness: reportFreshness(finding?.last_seen_at, now),
+          kind: 'structured_data',
+          label: 'Structured-data findings',
+          source: 'OmniReach structured-data audit',
+          state: 'available',
+          value: finding?.structured_count ?? 0,
+        },
+      );
+      const job = jobResult.rows[0];
+      measurements.push({
+        caveat: `Last 30 days; ${job?.failed_count ?? 0} failed jobs are reported separately to operations.`,
+        freshness: reportFreshness(job?.last_updated_at, now),
+        kind: 'usage',
+        label: 'Completed scheduled jobs',
+        source: 'OmniReach durable job ledger',
+        state: 'available',
+        value: job?.completed_count ?? 0,
+      });
+      return { generatedAt: now.toISOString(), measurements };
+    });
+  }
+
   async assetUpload(
     principal: CustomerPrincipal,
     input: { filename: string; stream: AsyncIterable<Uint8Array> },
@@ -334,4 +564,15 @@ function tenantContext(principal: CustomerPrincipal) {
 function stringArray(value: unknown): string[] {
   if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) return [];
   return value;
+}
+
+function reportFreshness(
+  value: Date | null | undefined,
+  now: Date,
+): ReportMeasurement['freshness'] {
+  if (!value) return 'unknown';
+  const age = now.getTime() - value.getTime();
+  if (age <= 36 * 60 * 60_000) return 'current';
+  if (age <= 7 * 24 * 60 * 60_000) return 'delayed';
+  return 'stale';
 }

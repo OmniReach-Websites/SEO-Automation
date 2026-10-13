@@ -69,6 +69,7 @@ test('served ORAP and customer shells remain accessible and host isolated', asyn
           revision: 1,
         },
       ],
+      reports: async () => ({ generatedAt: new Date(0).toISOString(), measurements: [] }),
       pages: async () => [
         {
           fields: [

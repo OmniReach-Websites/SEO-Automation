@@ -3,6 +3,8 @@ import {
   sessionCookieOptions,
   type AccountSecuritySettings,
   type EmailCodePolicyChangeResult,
+  type WebAuthnAuthenticationPreparation,
+  type WebAuthnAuthenticationResponse,
   type WebAuthnEnrollmentPreparation,
   type WebAuthnRegistrationResponse,
 } from '@omnireach/auth';
@@ -43,6 +45,23 @@ const webAuthnRegistrationResponseSchema = z
         publicKey: base64UrlValue.optional(),
         publicKeyAlgorithm: z.number().int().optional(),
         transports: z.array(z.string().min(1).max(32)).max(8).optional(),
+      })
+      .strict(),
+    type: z.literal('public-key'),
+  })
+  .strict();
+const webAuthnAuthenticationResponseSchema = z
+  .object({
+    authenticatorAttachment: z.enum(['cross-platform', 'platform']).optional(),
+    clientExtensionResults: z.record(z.string(), z.unknown()),
+    id: base64UrlValue,
+    rawId: base64UrlValue,
+    response: z
+      .object({
+        authenticatorData: base64UrlValue,
+        clientDataJSON: base64UrlValue,
+        signature: base64UrlValue,
+        userHandle: base64UrlValue.optional(),
       })
       .strict(),
     type: z.literal('public-key'),
@@ -109,6 +128,13 @@ export interface AuthEndpointService {
     sessionToken: string | undefined;
     traceId: string;
   }): Promise<{ challengeId: string } | undefined>;
+  prepareCustomerTotpEnrollment?(input: {
+    currentPassword: string;
+    host: string;
+    networkIdentifier?: string;
+    sessionToken: string | undefined;
+    traceId: string;
+  }): Promise<{ recoveryCodes: string[]; setupId: string; uri: string } | undefined>;
   prepareWebAuthnEnrollment?(input: {
     credentialName: string;
     currentPassword: string;
@@ -117,6 +143,11 @@ export interface AuthEndpointService {
     sessionToken: string | undefined;
     traceId: string;
   }): Promise<WebAuthnEnrollmentPreparation | undefined>;
+  prepareWebAuthnAuthentication?(input: {
+    challengeId: string;
+    host: string;
+    networkIdentifier?: string;
+  }): Promise<WebAuthnAuthenticationPreparation | undefined>;
   requestPasswordRecovery(input: {
     host: string;
     networkIdentifier?: string;
@@ -145,6 +176,22 @@ export interface AuthEndpointService {
     sessionToken: string | undefined;
     traceId: string;
   }): Promise<{ recoveryCodes: string[]; sessionsRevoked: true } | undefined>;
+  completeCustomerTotpEnrollment?(input: {
+    code: string;
+    host: string;
+    networkIdentifier?: string;
+    recoveryCodesAcknowledged: boolean;
+    sessionToken: string | undefined;
+    setupId: string;
+    traceId: string;
+  }): Promise<{ sessionsRevoked: true } | undefined>;
+  disableCustomerTotp?(input: {
+    confirmed: boolean;
+    currentPassword: string;
+    host: string;
+    sessionToken: string | undefined;
+    traceId: string;
+  }): Promise<{ sessionsRevoked: true } | undefined>;
   completeWebAuthnEnrollment?(input: {
     ceremonyId: string;
     host: string;
@@ -154,12 +201,36 @@ export interface AuthEndpointService {
     sessionToken: string | undefined;
     traceId: string;
   }): Promise<{ sessionsRevoked: true } | undefined>;
+  completeWebAuthnAuthentication?(input: {
+    challengeId: string;
+    ceremonyId: string;
+    host: string;
+    networkIdentifier?: string;
+    response: WebAuthnAuthenticationResponse;
+    traceId: string;
+  }): Promise<LoginResult>;
   resendEmailCode?(input: {
     challengeId: string;
     host: string;
     networkIdentifier?: string;
     sessionToken?: string;
   }): Promise<'cooldown' | 'sent' | 'unavailable'>;
+  renameWebAuthnCredential?(input: {
+    credentialId: string;
+    currentPassword: string;
+    host: string;
+    name: string;
+    sessionToken: string | undefined;
+    traceId: string;
+  }): Promise<boolean>;
+  revokeWebAuthnCredential?(input: {
+    confirmed: boolean;
+    credentialId: string;
+    currentPassword: string;
+    host: string;
+    sessionToken: string | undefined;
+    traceId: string;
+  }): Promise<{ sessionsRevoked: true } | undefined>;
   securitySettings?(
     sessionToken: string | undefined,
     host: string,
@@ -436,6 +507,220 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
   );
 
   server.post<{ Body: { challengeId?: string } }>(
+    '/auth/mfa/webauthn/prepare',
+    { config: { rateLimit: { max: 10, timeWindow: '15 minutes' } }, preHandler: requireSameOrigin },
+    async (request, reply) => {
+      if (!service.prepareWebAuthnAuthentication || typeof request.body?.challengeId !== 'string') {
+        return reply.code(400).send({ error: 'invalid_request' });
+      }
+      const prepared = await service.prepareWebAuthnAuthentication({
+        challengeId: request.body.challengeId,
+        host: request.hostname,
+        networkIdentifier: clientNetworkIdentifier(request.ip),
+      });
+      return prepared
+        ? reply.header('Cache-Control', 'no-store').code(200).send(prepared)
+        : reply.code(403).send({ error: 'webauthn_not_allowed' });
+    },
+  );
+
+  server.post<{
+    Body: { challengeId?: string; ceremonyId?: string; response?: unknown };
+  }>(
+    '/auth/mfa/webauthn/complete',
+    { config: { rateLimit: { max: 10, timeWindow: '15 minutes' } }, preHandler: requireSameOrigin },
+    async (request, reply) => {
+      const response = webAuthnAuthenticationResponseSchema.safeParse(request.body?.response);
+      if (
+        !service.completeWebAuthnAuthentication ||
+        typeof request.body?.challengeId !== 'string' ||
+        typeof request.body.ceremonyId !== 'string' ||
+        !response.success
+      ) {
+        return reply.code(400).send({ error: 'invalid_request' });
+      }
+      const result = await service.completeWebAuthnAuthentication({
+        challengeId: request.body.challengeId,
+        ceremonyId: request.body.ceremonyId,
+        host: request.hostname,
+        networkIdentifier: clientNetworkIdentifier(request.ip),
+        response: response.data as WebAuthnAuthenticationResponse,
+        traceId: String(request.id),
+      });
+      if (result.kind !== 'authenticated') {
+        return reply.code(401).send({ error: 'invalid_challenge' });
+      }
+      return reply
+        .setCookie('__Host-omnireach_session', result.sessionToken, sessionCookieOptions())
+        .clearCookie(challengeCookieName, sessionCookieOptions(300))
+        .code(200)
+        .send({
+          redirect: result.audience === 'platform' ? '/orap/sites' : '/',
+          status: result.kind,
+        });
+    },
+  );
+
+  server.post<{ Body: { currentPassword?: string } }>(
+    '/auth/security/totp/prepare',
+    { config: { rateLimit: { max: 5, timeWindow: '15 minutes' } }, preHandler: requireSameOrigin },
+    async (request, reply) => {
+      if (
+        !service.prepareCustomerTotpEnrollment ||
+        typeof request.body?.currentPassword !== 'string' ||
+        request.body.currentPassword.length < 1 ||
+        request.body.currentPassword.length > 128
+      ) {
+        return reply.code(400).send({ error: 'invalid_request' });
+      }
+      const result = await service.prepareCustomerTotpEnrollment({
+        currentPassword: request.body.currentPassword,
+        host: request.hostname,
+        networkIdentifier: clientNetworkIdentifier(request.ip),
+        sessionToken: sessionToken(request),
+        traceId: String(request.id),
+      });
+      if (!result) return reply.code(403).send({ error: 'totp_enrollment_not_allowed' });
+      reply.header('Cache-Control', 'no-store');
+      return isFormSubmission(request)
+        ? reply.type('text/html; charset=utf-8').send(renderCustomerTotpPreparation(result))
+        : reply.code(200).send(result);
+    },
+  );
+
+  server.post<{
+    Body: {
+      code?: string;
+      recoveryCodesAcknowledged?: boolean | string;
+      setupId?: string;
+    };
+  }>(
+    '/auth/security/totp/complete',
+    { config: { rateLimit: { max: 10, timeWindow: '15 minutes' } }, preHandler: requireSameOrigin },
+    async (request, reply) => {
+      const acknowledged =
+        request.body?.recoveryCodesAcknowledged === true ||
+        request.body?.recoveryCodesAcknowledged === 'true' ||
+        request.body?.recoveryCodesAcknowledged === 'on';
+      if (
+        !service.completeCustomerTotpEnrollment ||
+        typeof request.body?.code !== 'string' ||
+        typeof request.body.setupId !== 'string' ||
+        !acknowledged
+      ) {
+        return reply.code(400).send({ error: 'invalid_request' });
+      }
+      const result = await service.completeCustomerTotpEnrollment({
+        code: request.body.code,
+        host: request.hostname,
+        networkIdentifier: clientNetworkIdentifier(request.ip),
+        recoveryCodesAcknowledged: acknowledged,
+        sessionToken: sessionToken(request),
+        setupId: request.body.setupId,
+        traceId: String(request.id),
+      });
+      if (!result) return reply.code(403).send({ error: 'totp_enrollment_not_allowed' });
+      const cleared = reply.clearCookie('__Host-omnireach_session', sessionCookieOptions());
+      return isFormSubmission(request)
+        ? cleared.code(303).redirect('/login?security=updated')
+        : cleared.code(200).send(result);
+    },
+  );
+
+  server.post<{ Body: { confirmed?: boolean | string; currentPassword?: string } }>(
+    '/auth/security/totp/disable',
+    { config: { rateLimit: { max: 5, timeWindow: '15 minutes' } }, preHandler: requireSameOrigin },
+    async (request, reply) => {
+      const confirmed =
+        request.body?.confirmed === true ||
+        request.body?.confirmed === 'true' ||
+        request.body?.confirmed === 'on';
+      if (
+        !service.disableCustomerTotp ||
+        typeof request.body?.currentPassword !== 'string' ||
+        !confirmed
+      ) {
+        return reply.code(400).send({ error: 'invalid_request' });
+      }
+      const result = await service.disableCustomerTotp({
+        confirmed,
+        currentPassword: request.body.currentPassword,
+        host: request.hostname,
+        sessionToken: sessionToken(request),
+        traceId: String(request.id),
+      });
+      if (!result) return reply.code(403).send({ error: 'totp_change_not_allowed' });
+      const cleared = reply.clearCookie('__Host-omnireach_session', sessionCookieOptions());
+      return isFormSubmission(request)
+        ? cleared.code(303).redirect('/login?security=updated')
+        : cleared.code(200).send(result);
+    },
+  );
+
+  server.post<{
+    Body: { credentialId?: string; currentPassword?: string; name?: string };
+  }>(
+    '/auth/security/webauthn/rename',
+    { config: { rateLimit: { max: 10, timeWindow: '15 minutes' } }, preHandler: requireSameOrigin },
+    async (request, reply) => {
+      const parsed = z
+        .object({
+          credentialId: z.string().uuid(),
+          currentPassword: z.string().min(1).max(128),
+          name: z.string().trim().min(1).max(80),
+        })
+        .safeParse(request.body);
+      if (!service.renameWebAuthnCredential || !parsed.success) {
+        return reply.code(400).send({ error: 'invalid_request' });
+      }
+      const renamed = await service.renameWebAuthnCredential({
+        ...parsed.data,
+        host: request.hostname,
+        sessionToken: sessionToken(request),
+        traceId: String(request.id),
+      });
+      if (!renamed) return reply.code(403).send({ error: 'webauthn_change_not_allowed' });
+      return isFormSubmission(request)
+        ? reply.code(303).redirect('/security?notice=passkey-renamed')
+        : reply.code(200).send({ status: 'renamed' });
+    },
+  );
+
+  server.post<{
+    Body: { confirmed?: boolean | string; credentialId?: string; currentPassword?: string };
+  }>(
+    '/auth/security/webauthn/revoke',
+    { config: { rateLimit: { max: 5, timeWindow: '15 minutes' } }, preHandler: requireSameOrigin },
+    async (request, reply) => {
+      const confirmed =
+        request.body?.confirmed === true ||
+        request.body?.confirmed === 'true' ||
+        request.body?.confirmed === 'on';
+      const parsed = z
+        .object({
+          credentialId: z.string().uuid(),
+          currentPassword: z.string().min(1).max(128),
+        })
+        .safeParse(request.body);
+      if (!service.revokeWebAuthnCredential || !parsed.success || !confirmed) {
+        return reply.code(400).send({ error: 'invalid_request' });
+      }
+      const revoked = await service.revokeWebAuthnCredential({
+        ...parsed.data,
+        confirmed,
+        host: request.hostname,
+        sessionToken: sessionToken(request),
+        traceId: String(request.id),
+      });
+      if (!revoked) return reply.code(403).send({ error: 'webauthn_change_not_allowed' });
+      const cleared = reply.clearCookie('__Host-omnireach_session', sessionCookieOptions());
+      return isFormSubmission(request)
+        ? cleared.code(303).redirect('/login?security=updated')
+        : cleared.code(200).send(revoked);
+    },
+  );
+
+  server.post<{ Body: { challengeId?: string } }>(
     '/auth/mfa/email/resend',
     { config: { rateLimit: { max: 3, timeWindow: '15 minutes' } }, preHandler: requireSameOrigin },
     async (request, reply) => {
@@ -669,6 +954,22 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
       return revoked ? reply.code(204).send() : reply.code(404).send({ error: 'not_found' });
     },
   );
+  server.post<{ Params: { sessionId?: string } }>(
+    '/auth/sessions/:sessionId/revoke',
+    { preHandler: requireSameOrigin },
+    async (request, reply) => {
+      const sessionId = z.string().uuid().safeParse(request.params?.sessionId);
+      if (!sessionId.success) return reply.code(400).send({ error: 'invalid_request' });
+      const revoked = await service.revokeSession({
+        currentToken: sessionToken(request),
+        host: request.hostname,
+        sessionId: sessionId.data,
+        traceId: String(request.id),
+      });
+      if (!revoked) return reply.code(404).send({ error: 'not_found' });
+      return reply.code(303).redirect('/security?notice=session-revoked');
+    },
+  );
 }
 
 function isFormSubmission(request: FastifyRequest): boolean {
@@ -684,6 +985,7 @@ function sessionToken(request: FastifyRequest): string | undefined {
 function mfaLocation(methods: string[] | undefined): string {
   const parameters = new URLSearchParams();
   if (methods?.includes('email_code')) parameters.set('email', '1');
+  if (methods?.includes('webauthn')) parameters.set('passkey', '1');
   const query = parameters.toString();
   return query ? `/mfa?${query}` : '/mfa';
 }
@@ -707,6 +1009,17 @@ function renderEmailPolicyChangeCompletion(recoveryCodes: string[]): string {
 
 function renderCustomerRecoveryCompletion(recoveryCodes: string[]): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><title>Recovery completed | OmniReach</title></head><body><main><h1>Recovery completed</h1><p>Optional two-step methods and passkeys were disabled, every active session was signed out, and password-reset links were invalidated. Save these replacement recovery codes now. They will not be shown again.</p><ul>${recoveryCodes.map((code) => `<li><code>${escapeHtml(code)}</code></li>`).join('')}</ul><p><a href="/login">Sign in again with your password</a></p></main></body></html>`;
+}
+
+function renderCustomerTotpPreparation(input: {
+  recoveryCodes: string[];
+  setupId: string;
+  uri: string;
+}): string {
+  const recoveryCodes = input.recoveryCodes
+    .map((code) => `<li><code>${escapeHtml(code)}</code></li>`)
+    .join('');
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><link rel="stylesheet" href="/assets/admin.css?v=orap-2"><title>Finish authenticator setup | OmniReach</title></head><body><main class="content"><p class="eyebrow">Account protection</p><h1>Finish authenticator setup</h1><p>Add this setup URI to your authenticator app, then enter the current six-digit code.</p><p class="surface-note"><code>${escapeHtml(input.uri)}</code></p><h2>Save these one-time recovery codes</h2><ul>${recoveryCodes}</ul><form method="post" action="/auth/security/totp/complete"><input name="setupId" type="hidden" value="${escapeHtml(input.setupId)}"><label for="code">Authenticator code</label><input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" required autofocus><label class="checkbox-label"><input name="recoveryCodesAcknowledged" type="checkbox" value="true" required><span>I saved every recovery code.</span></label><button type="submit">Enable authenticator app</button></form></main></body></html>`;
 }
 
 function escapeHtml(value: string): string {

@@ -109,7 +109,7 @@ export {
   type AuthenticationTransactionClient,
   type AuthenticationTransactionPool,
 } from './postgres.ts';
-export { PostgresWebAuthnRepository, type WebAuthnScopeTarget } from './postgres-webauthn.ts';
+export { PostgresWebAuthnRepository } from './postgres-webauthn.ts';
 export {
   createWebAuthnAuthenticationOptions,
   createWebAuthnRegistrationOptions,
@@ -124,6 +124,11 @@ export {
   type WebAuthnCeremonyPurpose,
   type WebAuthnCeremonyStore,
   type WebAuthnCredentialRecord,
+  type WebAuthnCredentialRenameInput,
+  type WebAuthnCredentialRevocationInput,
+  type WebAuthnAuthenticationCompletionInput,
+  type WebAuthnAuthenticationPreparation,
+  type WebAuthnAuthenticationResponse,
   type WebAuthnEnrollmentCompletionInput,
   type WebAuthnEnrollmentPreparation,
   type WebAuthnEnrollmentRepository,
@@ -131,4 +136,5 @@ export {
   type WebAuthnRegistrationResponse,
   type WebAuthnRelyingParty,
   type WebAuthnScopeRecord,
+  type WebAuthnScopeTarget,
 } from './webauthn.ts';

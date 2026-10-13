@@ -35,6 +35,7 @@ grep -Eq "$keyring_pattern" "$keyring_path" || {
 export MFA_ENCRYPTION_KEYRING_JSON="$(cat "$keyring_path")"
 export PREVIEW_SIGNING_KEY="$(read_hex_secret preview_signing_key)"
 export CONTACT_ENCRYPTION_KEY="$(read_hex_secret contact_encryption_key)"
+export GOOGLE_TOKEN_ENCRYPTION_KEY="$(read_hex_secret google_token_encryption_key)"
 unset postgres_password redis_password
 
 exec "$@"

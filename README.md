@@ -13,6 +13,10 @@ release gate. Production activation and real-customer onboarding remain human-ga
 - Setup guide: [`docs/setup-guide.md`](docs/setup-guide.md)
 - Release-gate evidence: [`docs/release-gate.md`](docs/release-gate.md)
 - Production Compose/runbook: [`docs/production-compose.md`](docs/production-compose.md)
+- Phase 3–6 implementation record: [`docs/phase3-6-execution.md`](docs/phase3-6-execution.md)
+- Generic customer onboarding: [`docs/onboarding-runbook.md`](docs/onboarding-runbook.md)
+- Google integration activation: [`docs/google-integration-runbook.md`](docs/google-integration-runbook.md)
+- Off-site backup and restore: [`docs/offsite-backup.md`](docs/offsite-backup.md)
 
 ## Toolchain
 

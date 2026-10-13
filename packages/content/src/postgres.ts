@@ -4,6 +4,7 @@ import {
   type TenantTransactionClient,
   type TenantTransactionPool,
 } from '@omnireach/tenant';
+import { createHash } from 'node:crypto';
 
 import {
   PublicationPendingError,
@@ -35,6 +36,13 @@ export interface DraftRecord {
 export interface PreparedPublication {
   contentRevision: number;
   status: 'building' | 'failed' | 'published' | 'queued';
+}
+
+export interface ProposalReviewInput {
+  action: 'approve' | 'reject';
+  editedValue?: unknown;
+  proposalId: string;
+  reason: string;
 }
 
 export class PostgresContentRepository {
@@ -268,6 +276,240 @@ export class PostgresContentRepository {
       return drafts.rows.map((draft) =>
         mapDraft(draft, draft.base_revision === base.revision, publicationStatus),
       );
+    });
+  }
+
+  async listProposals(context: ContentActorContext): Promise<unknown[]> {
+    return this.transaction(context, async (client) => {
+      const current = await editableBaseRevision(client, context);
+      const result = await query<Record<string, unknown>>(
+        client,
+        `SELECT proposal.id, proposal.base_revision, proposal.state,
+                proposal.proposed_value, proposal.provider, proposal.model,
+                proposal.prompt_version, proposal.evidence, proposal.rationale,
+                proposal.input_tokens, proposal.output_tokens, proposal.latency_ms,
+                proposal.provider_request_hash, proposal.expires_at,
+                proposal.effective_mode, proposal.validation, proposal.reviewed_value,
+                proposal.policy_version, proposal.created_at, proposal.decided_at,
+                proposal.decided_by, field.stable_id AS field_id,
+                field.field_type, field.protected, field.ai_mode,
+                COALESCE(draft.content, revision.content) -> field.stable_id AS current_value,
+                proposal.base_revision <> $3 AS stale_revision,
+                proposal.policy_version <> COALESCE(control.policy_version, 1) AS stale_policy
+           FROM content_proposals proposal
+           JOIN content_fields field
+             ON field.tenant_id = proposal.tenant_id AND field.site_id = proposal.site_id
+            AND field.id = proposal.field_id
+           LEFT JOIN content_drafts draft
+             ON draft.tenant_id = proposal.tenant_id AND draft.site_id = proposal.site_id
+            AND draft.state = 'active' AND draft.base_revision = $3
+           JOIN content_revisions revision
+             ON revision.tenant_id = proposal.tenant_id AND revision.site_id = proposal.site_id
+            AND revision.revision = $3
+           LEFT JOIN site_emergency_controls control
+             ON control.tenant_id = proposal.tenant_id AND control.site_id = proposal.site_id
+          WHERE proposal.tenant_id = $1 AND proposal.site_id = $2
+          ORDER BY (proposal.state = 'pending') DESC, proposal.created_at DESC
+          LIMIT 100`,
+        [context.tenantId, context.siteId, current.revision],
+      );
+      return result.rows.map((proposal) => {
+        const sourceHash = sourceHashFromValidation(proposal.validation);
+        return {
+          ...proposal,
+          stale:
+            proposal.stale_revision === true ||
+            proposal.stale_policy === true ||
+            (sourceHash !== undefined && proposalSourceHash(proposal.current_value) !== sourceHash),
+        };
+      });
+    });
+  }
+
+  async reviewProposal(
+    context: ContentActorContext,
+    input: ProposalReviewInput,
+  ): Promise<{ draftId?: string; proposalId: string; state: 'applied' | 'rejected' | 'stale' }> {
+    const reason = input.reason.trim();
+    if (reason.length < 3 || reason.length > 500) throw new Error('Invalid proposal review reason');
+    return this.transaction(context, async (client) => {
+      await assertSiteFeatureEnabled(client, context, 'content.edit');
+      await lockContentLifecycle(client, context);
+      await recoverAbandonedPublication(client, context);
+      if (await pendingPublicationStatus(client, context)) {
+        throw new PublicationPendingError(
+          'Proposal review is paused while publication is in progress',
+        );
+      }
+      const proposalResult = await query<{
+        ai_mode: FieldPolicy['aiMode'];
+        base_revision: number;
+        editable_by: string[];
+        expires_at: Date | null;
+        field_id: string;
+        field_type: FieldPolicy['type'];
+        policy_version: number;
+        proposed_value: ContentValue;
+        stable_id: string;
+        state: string;
+        validation: unknown;
+      }>(
+        client,
+        `SELECT proposal.base_revision, proposal.state, proposal.proposed_value,
+                proposal.expires_at, proposal.policy_version, proposal.validation,
+                field.id AS field_id, field.stable_id, field.field_type,
+                field.ai_mode, field.editable_by
+           FROM content_proposals proposal
+           JOIN content_fields field
+             ON field.tenant_id = proposal.tenant_id AND field.site_id = proposal.site_id
+            AND field.id = proposal.field_id
+          WHERE proposal.tenant_id = $1 AND proposal.site_id = $2 AND proposal.id = $3
+            AND NOT field.protected AND field.ai_mode <> 'disabled'
+          FOR UPDATE OF proposal, field`,
+        [context.tenantId, context.siteId, input.proposalId],
+      );
+      const proposal = required(proposalResult.rows[0], 'Proposal was not found');
+      if (proposal.state !== 'pending') throw new Error('Proposal is not pending');
+      if (!proposal.editable_by.includes(context.role)) {
+        throw new ProtectedFieldError('Role cannot review this proposal');
+      }
+      if (input.action === 'reject') {
+        await client.query(
+          `UPDATE content_proposals
+              SET state = 'rejected', decided_at = now(), decided_by = $4,
+                  reviewed_value = NULL
+            WHERE tenant_id = $1 AND site_id = $2 AND id = $3`,
+          [context.tenantId, context.siteId, input.proposalId, context.userId],
+        );
+        await audit(client, context, {
+          action: 'content.proposal.rejected',
+          metadata: { reason },
+          targetId: input.proposalId,
+          targetType: 'content_proposal',
+        });
+        return { proposalId: input.proposalId, state: 'rejected' as const };
+      }
+
+      const base = await editableBaseRevision(client, context);
+      const policy = await query<{ policy_version: number }>(
+        client,
+        `SELECT COALESCE(
+                  (SELECT policy_version FROM site_emergency_controls
+                    WHERE tenant_id = $1 AND site_id = $2),
+                  1
+                ) AS policy_version`,
+        [context.tenantId, context.siteId],
+      );
+      const draftResult = await query<{
+        base_revision: number;
+        content: ContentRecord;
+        id: string;
+        version: number;
+      }>(
+        client,
+        `SELECT id, base_revision, version, content
+           FROM content_drafts
+          WHERE tenant_id = $1 AND site_id = $2 AND state = 'active'
+          FOR UPDATE`,
+        [context.tenantId, context.siteId],
+      );
+      if (draftResult.rows.length > 1) throw new Error('Multiple active drafts violate lifecycle');
+      const sourceContent = draftResult.rows[0]?.content ?? base.content;
+      const sourceValue = sourceContent[proposal.stable_id] ?? null;
+      const sourceHash = sourceHashFromValidation(proposal.validation);
+      const stale =
+        proposal.base_revision !== base.revision ||
+        proposal.policy_version !== (policy.rows[0]?.policy_version ?? 1) ||
+        (sourceHash !== undefined && sourceHash !== proposalSourceHash(sourceValue)) ||
+        Boolean(proposal.expires_at && proposal.expires_at <= new Date());
+      if (stale) {
+        await client.query(
+          `UPDATE content_proposals
+              SET state = 'stale', decided_at = now(), decided_by = $4
+            WHERE tenant_id = $1 AND site_id = $2 AND id = $3`,
+          [context.tenantId, context.siteId, input.proposalId, context.userId],
+        );
+        await audit(client, context, {
+          action: 'content.proposal.stale',
+          metadata: { reason: 'source-or-policy-changed' },
+          targetId: input.proposalId,
+          targetType: 'content_proposal',
+        });
+        return { proposalId: input.proposalId, state: 'stale' as const };
+      }
+      const reviewedValue = input.editedValue ?? proposal.proposed_value;
+      if (!isContentValue(reviewedValue)) throw new Error('Proposal value is invalid');
+      const draft = draftResult.rows[0];
+      const changed = updateDraft({
+        actor: 'human',
+        current: sourceContent,
+        currentVersion: draft?.version ?? 1,
+        expectedVersion: draft?.version ?? 1,
+        fieldPolicies: new Map([
+          [
+            proposal.stable_id,
+            {
+              aiMode: proposal.ai_mode,
+              id: proposal.stable_id,
+              protected: false,
+              type: proposal.field_type,
+            },
+          ],
+        ]),
+        patch: { [proposal.stable_id]: reviewedValue },
+      });
+      const saved = draft
+        ? await query<{ id: string }>(
+            client,
+            `UPDATE content_drafts
+                SET content = $4::jsonb, version = $5, updated_at = now()
+              WHERE tenant_id = $1 AND site_id = $2 AND id = $3 AND version = $6
+              RETURNING id`,
+            [
+              context.tenantId,
+              context.siteId,
+              draft.id,
+              JSON.stringify(changed.content),
+              changed.version,
+              draft.version,
+            ],
+          )
+        : await query<{ id: string }>(
+            client,
+            `INSERT INTO content_drafts
+               (tenant_id, site_id, base_revision, version, content, created_by)
+             VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+             RETURNING id`,
+            [
+              context.tenantId,
+              context.siteId,
+              base.revision,
+              changed.version,
+              JSON.stringify(changed.content),
+              context.userId,
+            ],
+          );
+      const draftId = required(saved.rows[0]?.id, 'Proposal draft update failed');
+      await client.query(
+        `UPDATE content_proposals
+            SET state = 'applied', decided_at = now(), decided_by = $4,
+                reviewed_value = $5::jsonb
+          WHERE tenant_id = $1 AND site_id = $2 AND id = $3`,
+        [
+          context.tenantId,
+          context.siteId,
+          input.proposalId,
+          context.userId,
+          JSON.stringify(reviewedValue),
+        ],
+      );
+      await audit(client, context, {
+        action: 'content.proposal.applied_to_draft',
+        metadata: { draftId, fieldId: proposal.stable_id, reason },
+        targetId: input.proposalId,
+        targetType: 'content_proposal',
+      });
+      return { draftId, proposalId: input.proposalId, state: 'applied' as const };
     });
   }
 
@@ -880,4 +1122,16 @@ function isContentValue(value: unknown, seen = new Set<object>()): value is Cont
       Object.values(value as Record<string, unknown>).every((entry) => isContentValue(entry, seen));
   seen.delete(value);
   return valid;
+}
+
+function proposalSourceHash(value: unknown): string {
+  return createHash('sha256')
+    .update(JSON.stringify(value ?? null), 'utf8')
+    .digest('hex');
+}
+
+function sourceHashFromValidation(value: unknown): string | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const hash = (value as Record<string, unknown>).sourceValueHash;
+  return typeof hash === 'string' && /^[a-f0-9]{64}$/u.test(hash) ? hash : undefined;
 }
