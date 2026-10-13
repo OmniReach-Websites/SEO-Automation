@@ -318,7 +318,13 @@ describe('PostgreSQL authentication repository', () => {
     });
 
     expect(result).toBeUndefined();
-    expect(calls.some((sql) => sql.includes('pg_advisory_xact_lock'))).toBe(true);
+    const admissionLockIndex = calls.findIndex((sql) => sql.includes('pg_advisory_xact_lock'));
+    const capacityCheckIndex = calls.findIndex((sql) =>
+      sql.includes('SELECT p.customer_seat_limit'),
+    );
+    expect(admissionLockIndex).toBeGreaterThan(-1);
+    expect(capacityCheckIndex).toBeGreaterThan(admissionLockIndex);
+    expect(calls[capacityCheckIndex]).not.toContain('FOR UPDATE');
     expect(calls.some((sql) => sql.includes('INSERT INTO memberships'))).toBe(false);
   });
 
