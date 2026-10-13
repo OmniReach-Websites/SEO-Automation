@@ -147,6 +147,32 @@ test('served ORAP and customer shells remain accessible and host isolated', asyn
           tenantName: 'Fictional Group',
         },
       ],
+      siteManagement: async () => ({
+        availability: {
+          activeArtifact: true,
+          preservedDuringDelinquency: true,
+          publicDomain: true,
+        },
+        budget: { capUsdMicros: 5_000_000, policyVersion: 1 },
+        emergency: {
+          autonomousChangesStopped: false,
+          automationStopped: false,
+          editingFrozen: false,
+          policyVersion: 0,
+        },
+        features: [{ enabled: true, key: 'content.editing', readiness: 'tested' }],
+        integrations: [],
+        plans: [
+          {
+            code: 'STARTER',
+            commercialStatus: 'proposed',
+            id: '60000000-0000-4000-8000-000000000001',
+            name: 'Starter',
+            version: 1,
+          },
+        ],
+        subscription: null,
+      }),
       listStaff: async () => [
         {
           activeSessions: 1,
@@ -289,7 +315,17 @@ test('served ORAP and customer shells remain accessible and host isolated', asyn
     await expect(staffPage.getByRole('heading', { level: 1 })).toHaveText('Customer sites');
     await expect(staffPage.getByRole('table')).toContainText('Fictional Group');
     await expect(staffPage.getByRole('link', { name: 'Skip to content' })).toBeVisible();
-    await expect(staffPage.locator('html')).toHaveCSS('background-color', 'rgb(246, 247, 250)');
+    await expect(staffPage.locator('html')).toHaveCSS('background-color', 'rgb(11, 24, 32)');
+    await expect(staffPage.locator('html')).toHaveCSS('color-scheme', 'dark');
+    await expect(staffPage.locator('meta[name="theme-color"]')).toHaveAttribute(
+      'content',
+      '#0b1820',
+    );
+    const staffLogo = staffPage.locator('img.brand-mark').first();
+    await expect(staffLogo).toHaveAttribute('src', '/assets/omnireach-logo.png');
+    await expect
+      .poll(() => staffLogo.evaluate((image: HTMLImageElement) => image.naturalWidth))
+      .toBe(1000);
     await expect(staffPage.getByRole('link', { name: 'Users' })).toHaveCount(0);
     await expect(staffPage.getByRole('link', { name: 'Audit' })).toHaveCount(0);
     for (const width of [360, 768, 1024, 1440]) {
@@ -309,6 +345,16 @@ test('served ORAP and customer shells remain accessible and host isolated', asyn
         dimensions.documentWidth,
         `document width at ${width}px viewport; offenders=${JSON.stringify(dimensions.offenders)}`,
       ).toBeLessThanOrEqual(width);
+      if (width === 360) {
+        const openSiteBounds = await staffPage
+          .getByRole('link', { name: 'Open site' })
+          .evaluate((element) => {
+            const bounds = element.getBoundingClientRect();
+            return { left: bounds.left, right: bounds.right };
+          });
+        expect(openSiteBounds.left).toBeGreaterThanOrEqual(0);
+        expect(openSiteBounds.right).toBeLessThanOrEqual(width);
+      }
     }
 
     await staffPage.getByRole('link', { name: 'Team & access' }).click();
@@ -377,6 +423,7 @@ test('served ORAP and customer shells remain accessible and host isolated', asyn
     await staffPage.getByRole('link', { name: 'Open site' }).click();
     await expect(staffPage.getByRole('heading', { level: 1 })).toHaveText('Fictional Alpha');
     await expect(staffPage.getByText(customer.siteId, { exact: true })).toBeVisible();
+    await expect(staffPage.getByText('Published static site available')).toBeVisible();
 
     await staffPage.getByRole('link', { name: 'Jobs & alerts' }).click();
     await expect(staffPage.getByRole('heading', { level: 1 })).toHaveText('Operations');
