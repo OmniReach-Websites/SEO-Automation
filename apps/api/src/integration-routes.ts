@@ -3,19 +3,14 @@ import type { AdminActor } from '@omnireach/tenant';
 import { renderOrapShell } from '@omnireach/ui';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import {
+  googleOAuthCallbackCookieName,
+  googleOAuthCallbackCookieOptions,
+} from './google-oauth-cookie.ts';
 import type { ResolvePlatformActor } from './orap-routes.ts';
 import { assertOrapRoutePolicyRegistry } from './orap-route-policy.ts';
 import { readCookie } from './request-auth.ts';
 import { requireSameOrigin } from './request-security.ts';
-
-export const googleOAuthCallbackCookieName = '__Secure-omnireach_google_oauth';
-export const googleOAuthCallbackCookieOptions = {
-  httpOnly: true as const,
-  maxAge: 5 * 60,
-  path: '/v1/orap/integrations/google/callback',
-  sameSite: 'lax' as const,
-  secure: true as const,
-};
 
 export interface IntegrationEndpointService {
   disconnect(
