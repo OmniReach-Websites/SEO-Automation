@@ -28,6 +28,19 @@ export function checkSiteBuilds() {
       errors.push(`${sitePath}: missing build output`);
       continue;
     }
+    if (sitePath === 'sites/omnireach') {
+      const brandAsset = resolve(directory, 'public/omnireach-logo.png');
+      const stylesheet = readFileSync(resolve(directory, 'src/styles/global.css'), 'utf8');
+      if (!existsSync(brandAsset)) errors.push(`${sitePath}: missing approved logo asset`);
+      for (const color of ['#336699', '#86bbd8', '#2f4858', '#9ee493', '#daf7dc']) {
+        if (!stylesheet.toLowerCase().includes(color)) {
+          errors.push(`${sitePath}: brand palette is missing ${color}`);
+        }
+      }
+      if (!stylesheet.includes('color-scheme: dark')) {
+        errors.push(`${sitePath}: dark color scheme declaration is missing`);
+      }
+    }
     for (const route of manifest.routes) {
       const relative =
         route.path === '/' ? 'index.html' : `${route.path.replace(/^\//u, '')}index.html`;
@@ -44,6 +57,15 @@ export function checkSiteBuilds() {
         errors.push(`${sitePath}: missing nonempty title in ${file}`);
       if (!/<h1[\s>]/iu.test(html)) errors.push(`${sitePath}: missing h1 in ${file}`);
       if (!/<main[\s>]/iu.test(html)) errors.push(`${sitePath}: missing main landmark in ${file}`);
+      if (sitePath === 'sites/omnireach') {
+        if (!html.includes('<meta name="theme-color" content="#0b1820">')) {
+          errors.push(`${sitePath}: dark browser theme color is missing in ${file}`);
+        }
+        const logoUses = html.match(/src="\/omnireach-logo\.png"/gu)?.length ?? 0;
+        if (logoUses !== 2) {
+          errors.push(`${sitePath}: expected header and footer logo in ${file}`);
+        }
+      }
       const ids = [...html.matchAll(/\sid=["']([^"']+)["']/giu)].map((match) => match[1]);
       if (new Set(ids).size !== ids.length)
         errors.push(`${sitePath}: duplicate element id in ${file}`);

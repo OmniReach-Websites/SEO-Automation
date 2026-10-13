@@ -6,4 +6,6 @@ The site is a static Astro build served by the production static-site container.
 
 The public legal pages are `/privacy/` and `/tos/`. Their manifest fields are protected, owner-editable legal facts with AI editing disabled.
 
+The public site uses the approved transparent logo at `public/omnireach-logo.png` and the brand palette `#336699`, `#86bbd8`, `#2f4858`, `#9ee493`, and `#daf7dc`. All public routes share the dark color scheme in `src/styles/global.css`.
+
 Build locally with `npm run build --workspace @omnireach/site-omnireach`.
