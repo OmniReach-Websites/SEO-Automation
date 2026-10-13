@@ -641,6 +641,8 @@ export class PostgresAuthenticationRepository implements AuthenticationRepositor
       );
       if (credential.rows.length !== 1) return false;
 
+      // Lock only authentication-managed authorization rows. Tenant, site, and domain
+      // controls are read-only to this role and are revalidated on every authenticated request.
       const scope =
         input.tenantId && input.siteId
           ? await query<{
@@ -668,7 +670,7 @@ export class PostgresAuthenticationRepository implements AuthenticationRepositor
                 WHERE m.user_id = $1 AND m.tenant_id = $2 AND m.site_id = $3
                   AND m.active AND d.hostname = $4 AND $4 <> $5
                 LIMIT 2
-                FOR SHARE OF m, t, st, d, policy`,
+                FOR SHARE OF m, policy`,
               [input.userId, input.tenantId, input.siteId, host, this.#orapHostname],
             )
           : await query<{
