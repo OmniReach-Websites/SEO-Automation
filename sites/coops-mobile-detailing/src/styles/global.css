@@ -1706,6 +1706,22 @@ h3 {
   color: var(--blue);
 }
 
+.footer-link-button {
+  padding: 0;
+  border: 0;
+  color: var(--muted);
+  background: transparent;
+  font: inherit;
+  font-size: 0.82rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.footer-link-button:hover,
+.footer-link-button:focus-visible {
+  color: var(--blue);
+}
+
 .footer-bottom {
   display: flex;
   justify-content: space-between;
@@ -1722,6 +1738,43 @@ h3 {
 
 .mobile-actions {
   display: none;
+}
+
+.analytics-consent {
+  position: fixed;
+  z-index: 1000;
+  right: 1rem;
+  bottom: 1rem;
+  left: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: min(760px, calc(100% - 2rem));
+  margin-inline: auto;
+  padding: 1.15rem;
+  border: 1px solid rgba(54, 184, 233, 0.38);
+  border-radius: var(--radius);
+  background: rgba(8, 13, 18, 0.98);
+  box-shadow: var(--shadow);
+  color: var(--white);
+  gap: 1rem;
+}
+
+.analytics-consent[hidden] {
+  display: none;
+}
+
+.analytics-consent p {
+  max-width: 52ch;
+  margin: 0.3rem 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.analytics-consent-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 0.6rem;
 }
 
 .goal-card {
@@ -1908,6 +1961,15 @@ h3 {
 }
 
 @media (max-width: 680px) {
+  .analytics-consent {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .analytics-consent-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
   :root {
     --shell: min(100% - 28px, 1180px);
   }

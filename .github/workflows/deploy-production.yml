@@ -131,6 +131,8 @@ jobs:
           done
           grep -Fq '<link rel="canonical" href="https://coopsmobiledetailingaledo.com/">' coops-home.html
           grep -Fq 'application/ld+json' coops-home.html
+          test "$(grep -Fo 'https://www.googletagmanager.com/gtag/js?id=G-B6S8N9JHL8' coops-home.html | wc -l)" = 1
+          grep -Fq "gtag('config', 'G-B6S8N9JHL8');" coops-home.html
           curl --fail --silent --show-error --max-time 15 "${origin}/robots.txt" |
             grep -Fq 'Sitemap: https://coopsmobiledetailingaledo.com/sitemap.xml'
           curl --fail --silent --show-error --max-time 15 "${origin}/sitemap.xml" |

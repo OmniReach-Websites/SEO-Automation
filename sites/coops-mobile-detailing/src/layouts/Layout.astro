@@ -33,6 +33,27 @@ const serializedSchema = structuredData
 <!doctype html>
 <html lang="en-US">
   <head>
+    <!-- Google tag (gtag.js) -->
+    <script is:inline async src="https://www.googletagmanager.com/gtag/js?id=G-B6S8N9JHL8"></script>
+    <script is:inline>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      let analyticsConsent = 'denied';
+      try {
+        if (window.localStorage.getItem('coops_analytics_consent') === 'granted') {
+          analyticsConsent = 'granted';
+        }
+      } catch {}
+      gtag('consent', 'default', {
+        analytics_storage: analyticsConsent,
+        ad_storage: 'denied',
+        ad_user_data: 'denied',
+        ad_personalization: 'denied'
+      });
+      gtag('js', new Date());
+
+      gtag('config', 'G-B6S8N9JHL8');
+    </script>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content={description} />
@@ -60,5 +81,16 @@ const serializedSchema = structuredData
     <main id="main-content"><slot /></main>
     <Footer />
     <MobileActions />
+    <aside class="analytics-consent" data-analytics-consent hidden aria-labelledby="analytics-consent-title">
+      <div>
+        <strong id="analytics-consent-title">Optional website analytics</strong>
+        <p>Allow anonymous usage measurement to help improve this website. Advertising storage stays disabled.</p>
+      </div>
+      <div class="analytics-consent-actions">
+        <button class="button button-secondary" type="button" data-analytics-decline>Decline</button>
+        <button class="button button-primary" type="button" data-analytics-accept>Allow analytics</button>
+      </div>
+    </aside>
+    <script src="/analytics-consent.js" defer></script>
   </body>
 </html>

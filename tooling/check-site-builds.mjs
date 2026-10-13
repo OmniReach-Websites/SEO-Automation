@@ -80,6 +80,25 @@ export function checkSiteBuilds() {
           errors.push(`${sitePath}: Google tag must be the first content in head in ${file}`);
         }
       }
+      if (sitePath === 'sites/coops-mobile-detailing') {
+        const googleTagLoader = 'https://www.googletagmanager.com/gtag/js?id=G-B6S8N9JHL8';
+        const googleTagUses =
+          html.match(/https:\/\/www\.googletagmanager\.com\/gtag\/js\?id=G-B6S8N9JHL8/gu)?.length ??
+          0;
+        if (googleTagUses !== 1 || !html.includes(`async src="${googleTagLoader}"`)) {
+          errors.push(`${sitePath}: expected exactly one asynchronous Google tag in ${file}`);
+        }
+        if (!html.includes("gtag('config', 'G-B6S8N9JHL8');")) {
+          errors.push(`${sitePath}: Google tag configuration is missing in ${file}`);
+        }
+        if (
+          !/^<!DOCTYPE html><html lang="en-US">\s*<head><!-- Google tag \(gtag\.js\) -->/u.test(
+            html,
+          )
+        ) {
+          errors.push(`${sitePath}: Google tag must be the first content in head in ${file}`);
+        }
+      }
       const ids = [...html.matchAll(/\sid=["']([^"']+)["']/giu)].map((match) => match[1]);
       if (new Set(ids).size !== ids.length)
         errors.push(`${sitePath}: duplicate element id in ${file}`);
@@ -105,6 +124,30 @@ export function checkSiteBuilds() {
           errors.push(`${sitePath}: unapproved executable inline script in ${file}`);
         }
       }
+      if (sitePath === 'sites/coops-mobile-detailing') {
+        const executableInlineScripts = [
+          ...html.matchAll(
+            /<script\b(?![^>]*\bsrc=)(?![^>]*\btype=["']application\/ld\+json["'])[^>]*>([\s\S]*?)<\/script>/giu,
+          ),
+        ];
+        const approvedHashes = new Set([
+          'Auky1RF93bHadMyKgiBJYnh4IZdEeaJBanm3qGYOpyM=',
+          '5LQt8nuMFaxybQw44FhRwFCNluBmu0b9/68O/Xg8+hI=',
+          'THEVRzZdTFzfhUTrvRL1wzh4o+iNn5tETfLqraij3q4=',
+          'HwxHjYdadh60svsZJnUmyNDkEqfM6h5jvM7vx05DuWU=',
+        ]);
+        const inlineScriptHashes = executableInlineScripts.map((script) =>
+          createHash('sha256')
+            .update(script[1] ?? '')
+            .digest('base64'),
+        );
+        if (
+          !inlineScriptHashes.includes('Auky1RF93bHadMyKgiBJYnh4IZdEeaJBanm3qGYOpyM=') ||
+          inlineScriptHashes.some((hash) => !approvedHashes.has(hash))
+        ) {
+          errors.push(`${sitePath}: unapproved executable inline script in ${file}`);
+        }
+      }
       for (const control of html.matchAll(
         /<(?:input|textarea|select)\b[^>]*\sid=["']([^"']+)["'][^>]*>/giu,
       )) {
@@ -124,6 +167,7 @@ export function checkSiteBuilds() {
         'https://coopsmobiledetailingaledo.com/services/',
         'https://instagram.com/coops_mobile_detailing',
         'https://admin.omnireach.cloud/login',
+        'https://www.googletagmanager.com/gtag/js?id=G-B6S8N9JHL8',
         'https://www.googletagmanager.com/gtag/js?id=G-5H7ZB5HMLC',
         'https://omnireach.cloud',
         'https://omnireach.cloud/',
