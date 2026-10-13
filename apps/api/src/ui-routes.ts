@@ -34,8 +34,8 @@ import type { CustomerEndpointService, ResolveCustomerPrincipal } from './custom
 import {
   googleOAuthCallbackCookieName,
   googleOAuthCallbackCookieOptions,
-  type IntegrationEndpointService,
-} from './integration-routes.ts';
+} from './google-oauth-cookie.ts';
+import type { IntegrationEndpointService } from './integration-routes.ts';
 import type { OrapAdministrationEndpointService, ResolvePlatformActor } from './orap-routes.ts';
 import { registerCustomerUiRoutes } from './customer-ui-routes.ts';
 import { readCookie } from './request-auth.ts';
