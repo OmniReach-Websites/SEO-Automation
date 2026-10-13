@@ -102,6 +102,8 @@ export class PostgresAuthenticationRepository implements AuthenticationRepositor
       await client.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
         `site-seat:${invited.site_id}`,
       ]);
+      // The site-scoped advisory lock serializes seat admissions. Do not add a row-locking
+      // clause here: PostgreSQL would require subscription UPDATE rights for the auth role.
       const capacity = requiredRow(
         await query<{
           active_memberships: number;
@@ -125,8 +127,7 @@ export class PostgresAuthenticationRepository implements AuthenticationRepositor
              FROM subscriptions s JOIN plans p ON p.id = s.plan_id AND p.active
             WHERE s.tenant_id = $1 AND s.site_id = $2
               AND (s.status = 'active' OR
-                   (s.status IN ('past_due','cancelled') AND s.grace_ends_at >= $4))
-            FOR UPDATE OF s`,
+                   (s.status IN ('past_due','cancelled') AND s.grace_ends_at >= $4))`,
           [invited.tenant_id, invited.site_id, invited.id, input.now, existingUser?.id ?? null],
         ),
         'Active subscription seat entitlement was not found',
