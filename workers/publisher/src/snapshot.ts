@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 export interface PublicationSnapshot {
+  assets?: PublicationAsset[];
   assetManifestHash: string;
   codeSha: string;
   content: unknown;
@@ -10,6 +11,13 @@ export interface PublicationSnapshot {
   hash: string;
   facts?: unknown;
   siteId: string;
+}
+
+export interface PublicationAsset {
+  checksum: string;
+  id: string;
+  mime: 'image/jpeg' | 'image/png' | 'image/webp';
+  storageKey: string;
 }
 
 export function createPublicationSnapshot(

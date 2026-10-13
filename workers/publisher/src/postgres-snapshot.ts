@@ -52,27 +52,23 @@ export class PostgresSnapshotMaterializer {
         ) {
           throw new Error('Site contract identity is unavailable');
         }
-        const revisionResult = await query<{ content: unknown; revision: number }>(
+        const revisionResult = await query<{
+          content: unknown;
+          facts_snapshot: unknown;
+          revision: number;
+        }>(
           client,
-          `SELECT revision, content
+          `SELECT revision, content, facts_snapshot
              FROM content_revisions
             WHERE tenant_id = $1 AND site_id = $2 AND revision = $3`,
           [request.tenantId, request.siteId, request.contentRevision],
         );
         const revision = revisionResult.rows[0];
         if (!revision) throw new Error('Content revision is unavailable');
-        const factsResult = await query<{ stable_id: string; value: unknown; version: number }>(
-          client,
-          `SELECT stable_id, value, version
-             FROM business_facts
-            WHERE tenant_id = $1 AND site_id = $2
-            ORDER BY stable_id`,
-          [request.tenantId, request.siteId],
-        );
         const assetsResult = await query<{
           checksum: string;
           id: string;
-          mime: string;
+          mime: 'image/jpeg' | 'image/png' | 'image/webp';
           storage_key: string;
         }>(
           client,
@@ -83,12 +79,6 @@ export class PostgresSnapshotMaterializer {
             ORDER BY id`,
           [request.tenantId, request.siteId],
         );
-        const facts = Object.fromEntries(
-          factsResult.rows.map((fact) => [
-            fact.stable_id,
-            { value: structuredClone(fact.value), version: fact.version },
-          ]),
-        );
         const assetManifest = assetsResult.rows.map((asset) => ({
           checksum: asset.checksum,
           id: asset.id,
@@ -97,6 +87,7 @@ export class PostgresSnapshotMaterializer {
         }));
         return {
           snapshot: createPublicationSnapshot({
+            assets: assetManifest,
             assetManifestHash: createHash('sha256')
               .update(stableStringify(assetManifest))
               .digest('hex'),
@@ -105,7 +96,7 @@ export class PostgresSnapshotMaterializer {
             contentRevision: revision.revision,
             contractHash: site.contract_hash,
             contractVersion: site.contract_version,
-            facts,
+            facts: structuredClone(revision.facts_snapshot),
             siteId: request.siteId,
           }),
           sourcePath: site.source_path,

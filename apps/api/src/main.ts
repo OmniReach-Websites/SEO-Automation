@@ -130,6 +130,7 @@ const customerService = new PostgresCustomerService(
   new PostgresAssetRepository(tenantPool, new LocalAssetStorage(config.ASSET_STORAGE_ROOT)),
   new PostgresPreviewService(tenantPool, {
     artifactsRoot: config.PREVIEW_STORAGE_ROOT,
+    assetsRoot: config.ASSET_STORAGE_ROOT,
     codeSha: config.SOURCE_COMMIT_SHA,
     definitions: buildDefinitions,
     repositoryRoot: config.REPOSITORY_ROOT,

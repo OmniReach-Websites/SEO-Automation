@@ -41,6 +41,11 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+.managed-home-sections {
+  display: flex;
+  flex-direction: column;
+}
+
 body.menu-open,
 body.lightbox-open {
   overflow: hidden;

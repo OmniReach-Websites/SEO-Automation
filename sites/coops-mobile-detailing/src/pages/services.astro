@@ -2,12 +2,14 @@
 import FinalCta from '../components/FinalCta.astro';
 import ServiceCard from '../components/ServiceCard.astro';
 import Layout from '../layouts/Layout.astro';
-import { addOns, services } from '../data/site';
+import { addOns, metadataFor, services } from '../data/site';
+const metadata = metadataFor('services');
 ---
 
 <Layout
-  title="Mobile Detailing Services"
-  description="Explore exterior, interior, and full mobile detailing packages from Coop's Mobile Detailing in Aledo, Texas. Starting prices from $60."
+  title={metadata.title}
+  description={metadata.description}
+  image={metadata.image}
 >
   <section class="page-hero page-hero-services">
     <div class="page-hero-media"><img src="/images/work-2.webp" width="756" height="1008" alt="Blue Ford Mustang covered in foam during an exterior detail" fetchpriority="high" /></div>

@@ -4,6 +4,7 @@ export {
   RevisionConflictError,
   assertProtectedTokensPreserved,
   extractFactTokens,
+  normalizeContentValue,
   restoreRevision,
   transitionProposal,
   updateDraft,

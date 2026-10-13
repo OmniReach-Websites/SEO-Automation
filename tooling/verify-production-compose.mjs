@@ -262,6 +262,37 @@ try {
   );
   assert.equal(redisPersistence.stdout.trim(), 'retained');
 
+  for (const [service, expected] of [
+    ['coops-mobile-detailing', "Coop's Mobile Detailing"],
+    ['omnireach-public-site', 'Websites, managed well'],
+  ]) {
+    const staticResponse = dockerCompose(
+      [
+        'exec',
+        '--no-TTY',
+        service,
+        'node',
+        '-e',
+        `fetch('http://127.0.0.1:8080/').then(async r=>{const b=await r.text();if(!r.ok||!b.includes(${JSON.stringify(expected)}))process.exit(1)}).catch(()=>process.exit(1))`,
+      ],
+      { capture: true },
+    );
+    assert.equal(staticResponse.status, 0);
+  }
+
+  const workerHeartbeats = dockerCompose(
+    [
+      'exec',
+      '--no-TTY',
+      'postgres',
+      'sh',
+      '-ceu',
+      `PGPASSWORD="$(cat /run/secrets/postgres_admin_password)" psql -U omnireach_db_admin -d omnireach -Atc "SELECT count(DISTINCT worker_kind) FROM worker_heartbeats WHERE state = 'healthy' AND last_seen_at > now() - interval '2 minutes'"`,
+    ],
+    { capture: true },
+  );
+  assert.equal(workerHeartbeats.stdout.trim(), '6');
+
   let readiness;
   for (let attempt = 0; attempt < 10; attempt += 1) {
     try {
@@ -298,6 +329,8 @@ try {
       isolation: 'verified',
       ok: true,
       persistence: 'verified after restart',
+      staticAvailability: 'verified during control-plane restart',
+      workers: 'six kinds healthy',
       project: basename(project),
     }),
   );

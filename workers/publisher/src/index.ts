@@ -4,6 +4,7 @@ export { createPreviewToken, previewHeaders, verifyPreviewToken } from './previe
 export {
   createPublicationSnapshot,
   stableStringify,
+  type PublicationAsset,
   type PublicationSnapshot,
 } from './snapshot.ts';
 export { PostgresSnapshotMaterializer } from './postgres-snapshot.ts';

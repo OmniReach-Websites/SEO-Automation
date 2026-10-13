@@ -8,12 +8,22 @@ import Layout from '../layouts/Layout.astro';
 import {
   CALL_HREF,
   faqs,
+  goal,
+  heroImage,
+  highlights,
   homeCopy,
+  homeSectionOrder,
   localBusinessSchema,
+  metadataFor,
+  primaryCtaLabel,
   serviceAreas,
   services,
   TEXT_HREF,
 } from '../data/site';
+
+const metadata = metadataFor('home');
+const sectionOrder = new Map(homeSectionOrder.map((id, index) => [id, index + 1]));
+const order = (id: string) => `order:${sectionOrder.get(id) ?? 100}`;
 
 const faqSchema = {
   '@context': 'https://schema.org',
@@ -27,23 +37,30 @@ const faqSchema = {
 ---
 
 <Layout
-  title="Mobile Car Detailing in Aledo, TX"
-  description="Mobile interior, exterior, and full vehicle detailing in Aledo, Weatherford, Willow Park, Fort Worth, and surrounding communities. Call or text Cooper for a quote."
+  title={metadata.title}
+  description={metadata.description}
+  image={metadata.image}
   structuredData={[localBusinessSchema, faqSchema]}
 >
   <section class="hero">
-    <div class="hero-media" aria-hidden="true">
-      <img src="/images/work-3.webp" width="756" height="1008" alt="" fetchpriority="high" />
+    <div class="hero-media">
+      <img
+        src={heroImage.src}
+        width="756"
+        height="1008"
+        alt={heroImage.alt}
+        fetchpriority="high"
+      />
     </div>
     <div class="hero-shade"></div>
     <div class="hero-content shell">
       <p class="eyebrow"><span></span>Aledo, Texas · Mobile service</p>
       <h1>{homeCopy.heading}</h1>
-      <p class="hero-intro">{homeCopy.intro}</p>
+      <div class="hero-intro" set:html={homeCopy.intro}></div>
       <div class="button-row">
         <a class="button button-primary" href={CALL_HREF}>
           <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6.6 10.8a15.5 15.5 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.24c1.1.37 2.25.56 3.43.56A1.17 1.17 0 0 1 21 16.69v3.48a1.17 1.17 0 0 1-1.17 1.17A17.83 17.83 0 0 1 2 3.5 1.17 1.17 0 0 1 3.17 2.33h3.5A1.17 1.17 0 0 1 7.83 3.5c0 1.2.19 2.35.56 3.43a1 1 0 0 1-.25 1.02L6.6 10.8Z" /></svg>
-          Call Cooper
+          {primaryCtaLabel}
         </a>
         <a class="button button-secondary" href={TEXT_HREF}>Text for a quote</a>
         <a class="button button-ghost" href="/our-work/">View our work</a>
@@ -52,16 +69,14 @@ const faqSchema = {
     <a class="hero-scroll" href="#featured-work">Explore <span aria-hidden="true">↓</span></a>
   </section>
 
-  <section class="trust-strip" aria-label="Business highlights">
+  <div class="managed-home-sections">
+  <section class="trust-strip" aria-label="Business highlights" style={order('highlights')}>
     <div class="shell trust-grid">
-      <div><strong>Mobile service</strong><span>At your location</span></div>
-      <div><strong>Based in Aledo</strong><span>Serving nearby communities</span></div>
-      <div><strong>Inside + out</strong><span>Three detailing packages</span></div>
-      <div><strong>Call or text</strong><span>Contact Cooper directly</span></div>
+      {highlights.map((highlight) => <div><strong>{highlight.title}</strong><span>{highlight.description}</span></div>)}
     </div>
   </section>
 
-  <section class="section section-dark" id="featured-work">
+  <section class="section section-dark" id="featured-work" style={order('featured-work')}>
     <div class="shell">
       <div class="section-heading split-heading">
         <div><p class="eyebrow">Real work. Real vehicles.</p><h2>Results you can see.</h2></div>
@@ -84,7 +99,7 @@ const faqSchema = {
     </div>
   </section>
 
-  <section class="section section-light" aria-labelledby="services-heading">
+  <section class="section section-light" aria-labelledby="services-heading" style={order('services')}>
     <div class="shell">
       <div class="section-heading centered">
         <p class="eyebrow">Detailing packages</p>
@@ -98,7 +113,7 @@ const faqSchema = {
     </div>
   </section>
 
-  <section class="section mobile-detailing-section">
+  <section class="section mobile-detailing-section" style={order('mobile-detailing')}>
     <div class="shell two-column">
       <div class="stacked-photos">
         <img class="photo-back" src="/images/work-6-480.webp" width="480" height="640" alt="Detailed blue Jeep parked outside" loading="lazy" decoding="async" />
@@ -118,7 +133,7 @@ const faqSchema = {
     </div>
   </section>
 
-  <section class="section comparison-section" aria-labelledby="comparison-heading">
+  <section class="section comparison-section" aria-labelledby="comparison-heading" style={order('comparison')}>
     <div class="shell comparison-grid">
       <div>
         <p class="eyebrow">Before & after</p>
@@ -130,7 +145,7 @@ const faqSchema = {
     </div>
   </section>
 
-  <section class="section story-section">
+  <section class="section story-section" style={order('story')}>
     <div class="shell story-grid">
       <div class="story-photo">
         <img src="/images/work-1.webp" width="756" height="1008" alt="Cooper working on the front of a vehicle" loading="lazy" decoding="async" />
@@ -146,9 +161,9 @@ const faqSchema = {
     </div>
   </section>
 
-  <GoalProgress visible={false} target={7000} />
+  <div style={order('goal')}><GoalProgress visible={goal.visible} target={goal.target} currentAmount={goal.currentAmount} /></div>
 
-  <section class="section area-section" aria-labelledby="area-heading">
+  <section class="section area-section" aria-labelledby="area-heading" style={order('areas')}>
     <div class="shell area-grid">
       <div><p class="eyebrow">Service area</p><h2 id="area-heading">Mobile detailing around Aledo.</h2></div>
       <div class="area-list">
@@ -158,7 +173,7 @@ const faqSchema = {
     </div>
   </section>
 
-  <section class="section section-light faq-section" aria-labelledby="faq-heading">
+  <section class="section section-light faq-section" aria-labelledby="faq-heading" style={order('faq')}>
     <div class="shell faq-grid">
       <div class="section-heading">
         <p class="eyebrow">Good to know</p>
@@ -169,5 +184,6 @@ const faqSchema = {
     </div>
   </section>
 
-  <FinalCta />
+  <div style={order('cta')}><FinalCta /></div>
+  </div>
 </Layout>

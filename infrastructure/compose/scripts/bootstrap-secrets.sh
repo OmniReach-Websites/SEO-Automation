@@ -119,6 +119,12 @@ if [ "$secrets_dir" = /opt/servers/omnireach/shared/secrets ] &&
     exit 69
   }
   "$route_installer"
+  admin_route_installer=$script_root/deploy/configure-coops-admin-route.sh
+  [ -x "$admin_route_installer" ] || {
+    printf '%s\n' 'Coop customer-admin route installer is missing or not executable' >&2
+    exit 69
+  }
+  "$admin_route_installer"
   public_route_installer=$script_root/deploy/configure-omnireach-public-route.sh
   [ -x "$public_route_installer" ] || {
     printf '%s\n' 'OmniReach public route installer is missing or not executable' >&2

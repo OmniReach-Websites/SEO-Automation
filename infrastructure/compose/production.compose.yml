@@ -184,13 +184,145 @@ services:
     volumes:
       - platform-data:/var/lib/omnireach
 
+  scheduler:
+    <<: *omnireach-runtime
+    profiles: ['application']
+    command: ['node', '--experimental-transform-types', 'workers/scheduler/src/main.ts']
+    environment:
+      SOURCE_COMMIT_SHA: ${OMNIREACH_RELEASE_SHA}
+      WORKER_KIND: scheduler
+    depends_on: &worker-dependencies
+      migrate:
+        condition: service_completed_successfully
+      platform-data-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck: &worker-healthcheck
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "require('node:fs').stat('/tmp/omnireach-worker-healthy',(e,s)=>process.exit(e||Date.now()-s.mtimeMs>90000?1:0))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 4
+      start_period: 30s
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cpus: 0.25
+    mem_limit: 256m
+    pids_limit: 96
+    stop_grace_period: 45s
+
+  runner:
+    <<: *omnireach-runtime
+    profiles: ['application']
+    command: ['node', '--experimental-transform-types', 'workers/runner/src/main.ts']
+    environment:
+      SOURCE_COMMIT_SHA: ${OMNIREACH_RELEASE_SHA}
+      WORKER_CATEGORIES: ''
+      WORKER_KIND: runner
+    depends_on: *worker-dependencies
+    healthcheck: *worker-healthcheck
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cpus: 0.25
+    mem_limit: 256m
+    pids_limit: 96
+    stop_grace_period: 45s
+
+  publisher:
+    <<: *omnireach-runtime
+    profiles: ['application']
+    command: ['node', '--experimental-transform-types', 'workers/runner/src/main.ts']
+    environment:
+      SOURCE_COMMIT_SHA: ${OMNIREACH_RELEASE_SHA}
+      WORKER_CATEGORIES: publish
+      WORKER_KIND: publisher
+    depends_on: *worker-dependencies
+    healthcheck: *worker-healthcheck
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    volumes:
+      - platform-data:/var/lib/omnireach
+    cpus: 1.0
+    mem_limit: 1g
+    pids_limit: 256
+    stop_grace_period: 90s
+
+  crawler:
+    <<: *omnireach-runtime
+    profiles: ['application']
+    command: ['node', '--experimental-transform-types', 'workers/runner/src/main.ts']
+    environment:
+      SOURCE_COMMIT_SHA: ${OMNIREACH_RELEASE_SHA}
+      WORKER_CATEGORIES: crawl
+      WORKER_KIND: crawler
+    depends_on: *worker-dependencies
+    healthcheck: *worker-healthcheck
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cpus: 0.5
+    mem_limit: 512m
+    pids_limit: 128
+    stop_grace_period: 60s
+
+  seo:
+    <<: *omnireach-runtime
+    profiles: ['application']
+    command: ['node', '--experimental-transform-types', 'workers/runner/src/main.ts']
+    environment:
+      SOURCE_COMMIT_SHA: ${OMNIREACH_RELEASE_SHA}
+      WORKER_CATEGORIES: seo_audit
+      WORKER_KIND: seo
+    depends_on: *worker-dependencies
+    healthcheck: *worker-healthcheck
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cpus: 0.5
+    mem_limit: 512m
+    pids_limit: 128
+    stop_grace_period: 60s
+
+  monitoring:
+    <<: *omnireach-runtime
+    profiles: ['application']
+    command: ['node', '--experimental-transform-types', 'workers/runner/src/main.ts']
+    environment:
+      SOURCE_COMMIT_SHA: ${OMNIREACH_RELEASE_SHA}
+      WORKER_CATEGORIES: health_check
+      WORKER_KIND: monitoring
+    depends_on: *worker-dependencies
+    healthcheck: *worker-healthcheck
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cpus: 0.25
+    mem_limit: 256m
+    pids_limit: 96
+    stop_grace_period: 45s
+
   coops-mobile-detailing:
     image: omnireach-runtime:${OMNIREACH_RELEASE_SHA:?Set OMNIREACH_RELEASE_SHA to the verified commit SHA}
     profiles: ['application']
     entrypoint: ['node', 'infrastructure/compose/scripts/static-site-server.mjs']
+    env_file:
+      - path: ${OMNIREACH_ENV_FILE:?Set OMNIREACH_ENV_FILE to the host-only production environment file}
+        required: true
     environment:
       STATIC_SITE_HOST: 0.0.0.0
       STATIC_SITE_PORT: '8080'
+      STATIC_SITE_PUBLICATION_ROOT: /var/lib/omnireach/publications
       STATIC_SITE_ROOT: /opt/omnireach/sites/coops-mobile-detailing/dist
     init: true
     networks:
@@ -219,6 +351,8 @@ services:
     mem_limit: 128m
     pids_limit: 64
     stop_grace_period: 15s
+    volumes:
+      - platform-data:/var/lib/omnireach:ro
     logging: *production-logging
 
   omnireach-public-site:

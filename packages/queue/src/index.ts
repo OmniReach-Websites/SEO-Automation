@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 
-import { Queue, type JobsOptions } from 'bullmq';
+import { Queue, type ConnectionOptions, type JobsOptions } from 'bullmq';
 import { z } from 'zod';
 
 export const jobCategories = [
@@ -132,15 +132,8 @@ export class BullQueueAdapter {
   readonly queue: Queue<JobEnvelope>;
 
   constructor(name: string, redisUrl: string) {
-    const url = new URL(redisUrl);
     this.queue = new Queue<JobEnvelope>(name, {
-      connection: {
-        host: url.hostname,
-        ...(url.password ? { password: url.password } : {}),
-        port: Number(url.port || 6379),
-        ...(url.protocol === 'rediss:' ? { tls: {} } : {}),
-        ...(url.username ? { username: url.username } : {}),
-      },
+      connection: redisConnectionOptions(redisUrl),
       defaultJobOptions: { removeOnComplete: 1_000, removeOnFail: 5_000 },
     });
   }
@@ -158,6 +151,48 @@ export class BullQueueAdapter {
 
   async close(): Promise<void> {
     await this.queue.close();
+  }
+}
+
+export function jobQueueName(category: JobCategory, prefix = 'omnireach'): string {
+  if (!jobCategories.includes(category)) throw new Error('Invalid job queue category');
+  if (!/^[a-z][a-z0-9-]{0,39}$/u.test(prefix)) throw new Error('Invalid queue prefix');
+  return `${prefix}-${category.replaceAll('_', '-')}`;
+}
+
+export function redisConnectionOptions(redisUrl: string): ConnectionOptions {
+  const url = new URL(redisUrl);
+  if (!['redis:', 'rediss:'].includes(url.protocol)) throw new Error('Redis URL is invalid');
+  return {
+    host: url.hostname,
+    ...(url.password ? { password: url.password } : {}),
+    port: Number(url.port || 6379),
+    ...(url.protocol === 'rediss:' ? { tls: {} } : {}),
+    ...(url.username ? { username: url.username } : {}),
+  };
+}
+
+export class BullQueueRouter {
+  readonly #queues = new Map<JobCategory, BullQueueAdapter>();
+
+  constructor(
+    private readonly redisUrl: string,
+    private readonly prefix = 'omnireach',
+  ) {}
+
+  enqueue(envelopeInput: JobEnvelope): Promise<string> {
+    const envelope = jobEnvelopeSchema.parse(envelopeInput);
+    let queue = this.#queues.get(envelope.category);
+    if (!queue) {
+      queue = new BullQueueAdapter(jobQueueName(envelope.category, this.prefix), this.redisUrl);
+      this.#queues.set(envelope.category, queue);
+    }
+    return queue.enqueue(envelope);
+  }
+
+  async close(): Promise<void> {
+    await Promise.all([...this.#queues.values()].map((queue) => queue.close()));
+    this.#queues.clear();
   }
 }
 
