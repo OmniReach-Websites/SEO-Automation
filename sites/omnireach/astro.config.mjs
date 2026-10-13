@@ -4,4 +4,9 @@ export default defineConfig({
   site: 'https://omnireach.cloud',
   output: 'static',
   trailingSlash: 'always',
+  vite: {
+    build: {
+      assetsInlineLimit: 0,
+    },
+  },
 });
