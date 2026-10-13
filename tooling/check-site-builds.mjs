@@ -89,6 +89,7 @@ export function checkSiteBuilds() {
         'https://omnireach.cloud/contact/',
         'https://omnireach.cloud/privacy/',
         'https://omnireach.cloud/services/',
+        'https://omnireach.cloud/tos/',
         'https://schema.org',
       ]);
       const externalUrls = [...html.matchAll(/https:\/\/[^\s"'`<>]+/giu)].map((match) => match[0]);

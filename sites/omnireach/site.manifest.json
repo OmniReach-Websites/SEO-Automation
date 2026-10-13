@@ -8,12 +8,14 @@
     { "id": "services", "type": "page" },
     { "id": "about", "type": "page" },
     { "id": "contact", "type": "page" },
-    { "id": "privacy", "type": "page" }
+    { "id": "privacy", "type": "page" },
+    { "id": "terms", "type": "page" }
   ],
   "facts": [
     { "id": "business.services", "kind": "legal" },
     { "id": "business.process", "kind": "legal" },
-    { "id": "legal.privacy", "kind": "legal" }
+    { "id": "legal.privacy", "kind": "legal" },
+    { "id": "legal.terms", "kind": "legal" }
   ],
   "fields": [
     {
@@ -65,6 +67,16 @@
       "aiMode": "disabled"
     },
     {
+      "id": "terms.content",
+      "componentId": "terms",
+      "label": "Terms of Service",
+      "type": "richText",
+      "editableBy": ["platform_owner"],
+      "protected": true,
+      "factRef": "legal.terms",
+      "aiMode": "disabled"
+    },
+    {
       "id": "site.metadata",
       "componentId": "home",
       "label": "Search metadata",
@@ -88,7 +100,8 @@
     { "id": "services", "path": "/services/", "componentId": "services" },
     { "id": "about", "path": "/about/", "componentId": "about" },
     { "id": "contact", "path": "/contact/", "componentId": "contact" },
-    { "id": "privacy", "path": "/privacy/", "componentId": "privacy" }
+    { "id": "privacy", "path": "/privacy/", "componentId": "privacy" },
+    { "id": "terms", "path": "/tos/", "componentId": "terms" }
   ],
   "preview": { "entryRoute": "home" },
   "build": { "workspace": "@omnireach/site-omnireach", "outputDirectory": "dist" },
