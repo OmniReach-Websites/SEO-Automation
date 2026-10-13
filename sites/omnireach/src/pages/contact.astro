@@ -1,0 +1,28 @@
+---
+import ContactForm from '../components/ContactForm.astro';
+import Layout from '../layouts/Layout.astro';
+---
+
+<Layout title="Contact" description="Contact OmniReach about a new business website, a redesign, managed hosting, search foundations, or ongoing website support.">
+  <section class="page-hero contact-page-hero">
+    <div class="shell page-hero-grid">
+      <div><p class="eyebrow"><span></span>Contact</p><h1>Tell us what you’re working on.</h1></div>
+      <p>Share a little about your business, your current website, and what you would like to improve. Your message goes directly to OmniReach’s active owners.</p>
+    </div>
+  </section>
+  <section class="section contact-section">
+    <div class="shell contact-grid">
+      <div class="contact-aside">
+        <p class="eyebrow"><span></span>Start here</p>
+        <h2>A useful first message can be simple.</h2>
+        <ul>
+          <li><span>01</span>What your business does</li>
+          <li><span>02</span>Whether you have a website today</li>
+          <li><span>03</span>What you want the new site to improve</li>
+          <li><span>04</span>Any timing or launch date you have in mind</li>
+        </ul>
+      </div>
+      <div class="form-panel"><ContactForm /></div>
+    </div>
+  </section>
+</Layout>

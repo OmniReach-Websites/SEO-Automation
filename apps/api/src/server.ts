@@ -35,6 +35,10 @@ import {
   registerIntegrationRoutes,
   type IntegrationEndpointService,
 } from './integration-routes.ts';
+import {
+  registerPlatformInquiryRoutes,
+  type PlatformInquiryEndpointService,
+} from './platform-inquiry-routes.ts';
 
 export type {
   CustomerEndpointService,
@@ -48,6 +52,7 @@ export type {
 } from './contact-routes.ts';
 export type { OrapAdministrationEndpointService, ResolvePlatformActor } from './orap-routes.ts';
 export type { IntegrationEndpointService } from './integration-routes.ts';
+export type { PlatformInquiryEndpointService } from './platform-inquiry-routes.ts';
 export { PostgresRequestContextResolver, type ContextQueryPool } from './postgres-context.ts';
 export {
   PostgresContactService,
@@ -56,6 +61,10 @@ export {
 } from './postgres-contact.ts';
 export { PostgresCustomerService, type CustomerPreviewAdapter } from './customer-service.ts';
 export { PostgresOrapService, type InvitationNotifier } from './postgres-orap.ts';
+export {
+  PostgresPlatformInquiryService,
+  type PlatformInquiryDelivery,
+} from './postgres-platform-inquiry.ts';
 
 export interface DependencyCheck {
   check(): Promise<void>;
@@ -70,6 +79,7 @@ export interface ApiServerOptions {
   logLevel?: string;
   integrationService?: IntegrationEndpointService;
   orapService?: OrapAdministrationEndpointService;
+  platformInquiryService?: PlatformInquiryEndpointService;
   resolvePlatformActor?: ResolvePlatformActor;
   resolveCustomerPrincipal?: ResolveCustomerPrincipal;
   resolveContactSite?: ResolveContactSite;
@@ -194,6 +204,9 @@ export function buildApiServer(options: ApiServerOptions = {}) {
   }
   if (options.integrationService && options.resolvePlatformActor) {
     registerIntegrationRoutes(server, options.integrationService, options.resolvePlatformActor);
+  }
+  if (options.platformInquiryService) {
+    registerPlatformInquiryRoutes(server, options.platformInquiryService);
   }
   registerUiRoutes(server, options);
 

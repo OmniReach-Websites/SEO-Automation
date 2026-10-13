@@ -62,6 +62,12 @@
       "allowedWorkspaceDependencies": ["@omnireach/contracts", "@omnireach/site-runtime"]
     },
     {
+      "name": "@omnireach/site-omnireach",
+      "path": "sites/omnireach",
+      "kind": "site",
+      "allowedWorkspaceDependencies": ["@omnireach/contracts", "@omnireach/site-runtime"]
+    },
+    {
       "name": "@omnireach/site-custom-portfolio-example",
       "path": "sites/custom-portfolio-example",
       "kind": "site",

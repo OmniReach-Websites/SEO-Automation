@@ -9,6 +9,7 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/* \
   && npm ci \
   && npm run build --workspace @omnireach/site-coops-mobile-detailing \
+  && npm run build --workspace @omnireach/site-omnireach \
   && npm run db:generate \
   && chmod 0555 \
     infrastructure/compose/scripts/migrate-entrypoint.sh \

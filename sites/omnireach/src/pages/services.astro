@@ -1,0 +1,37 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { services } from '../data/site';
+---
+
+<Layout title="Website Services" description="Website strategy, design, development, launch, search foundations, hosting, and ongoing website care from OmniReach.">
+  <section class="page-hero">
+    <div class="shell page-hero-grid">
+      <div><p class="eyebrow"><span></span>Services</p><h1>Everything your website needs to do its job well.</h1></div>
+      <p>Whether you need a new site or a stronger foundation for the one you have, we focus on the work that makes a business website clear, reliable, and useful.</p>
+    </div>
+  </section>
+  <section class="section service-detail-section">
+    <div class="shell service-detail-list">
+      {services.map((service) => (
+        <article>
+          <span>{service.number}</span>
+          <div><h2>{service.title}</h2><p>{service.description}</p></div>
+        </article>
+      ))}
+    </div>
+  </section>
+  <section class="section section-soft" aria-labelledby="included-heading">
+    <div class="shell included-grid">
+      <div><p class="eyebrow"><span></span>The essentials</p><h2 id="included-heading">Good foundations are part of every build.</h2></div>
+      <ul class="check-list">
+        <li>Responsive layouts for phones, tablets, and desktops</li>
+        <li>Accessible structure and readable content</li>
+        <li>Fast, secure hosting and HTTPS</li>
+        <li>Search-friendly pages and structured metadata</li>
+        <li>Domain launch and production verification</li>
+        <li>Clear ownership of ongoing maintenance</li>
+      </ul>
+    </div>
+  </section>
+  <section class="section cta-section"><div class="shell cta-panel"><div><p class="eyebrow light"><span></span>Have a project in mind?</p><h2>Tell us where your website needs to go next.</h2></div><a class="button button-light" href="/contact/">Contact OmniReach</a></div></section>
+</Layout>

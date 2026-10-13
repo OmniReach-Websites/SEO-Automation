@@ -1,0 +1,111 @@
+{
+  "version": "1.0",
+  "site": { "id": "omnireach", "sourcePath": "sites/omnireach" },
+  "locales": ["en-US"],
+  "components": [
+    { "id": "home", "type": "page" },
+    { "id": "home.services", "type": "section" },
+    { "id": "services", "type": "page" },
+    { "id": "about", "type": "page" },
+    { "id": "contact", "type": "page" },
+    { "id": "privacy", "type": "page" }
+  ],
+  "facts": [
+    { "id": "business.services", "kind": "legal" },
+    { "id": "business.process", "kind": "legal" },
+    { "id": "legal.privacy", "kind": "legal" }
+  ],
+  "fields": [
+    {
+      "id": "home.heading",
+      "componentId": "home",
+      "label": "Homepage heading",
+      "type": "text",
+      "editableBy": ["platform_owner", "platform_admin"],
+      "protected": false,
+      "aiMode": "disabled"
+    },
+    {
+      "id": "home.intro",
+      "componentId": "home",
+      "label": "Homepage introduction",
+      "type": "richText",
+      "editableBy": ["platform_owner", "platform_admin"],
+      "protected": false,
+      "aiMode": "disabled"
+    },
+    {
+      "id": "services.items",
+      "componentId": "home.services",
+      "label": "Service summary",
+      "type": "cards",
+      "editableBy": ["platform_owner", "platform_admin"],
+      "protected": true,
+      "factRef": "business.services",
+      "aiMode": "disabled"
+    },
+    {
+      "id": "about.process",
+      "componentId": "about",
+      "label": "Delivery process",
+      "type": "cards",
+      "editableBy": ["platform_owner", "platform_admin"],
+      "protected": true,
+      "factRef": "business.process",
+      "aiMode": "disabled"
+    },
+    {
+      "id": "privacy.content",
+      "componentId": "privacy",
+      "label": "Privacy notice",
+      "type": "richText",
+      "editableBy": ["platform_owner"],
+      "protected": true,
+      "factRef": "legal.privacy",
+      "aiMode": "disabled"
+    },
+    {
+      "id": "site.metadata",
+      "componentId": "home",
+      "label": "Search metadata",
+      "type": "metadata",
+      "editableBy": ["platform_owner", "platform_admin"],
+      "protected": false,
+      "aiMode": "disabled"
+    },
+    {
+      "id": "site.theme",
+      "componentId": "home",
+      "label": "Theme",
+      "type": "theme",
+      "editableBy": ["platform_owner"],
+      "protected": false,
+      "aiMode": "disabled"
+    }
+  ],
+  "routes": [
+    { "id": "home", "path": "/", "componentId": "home" },
+    { "id": "services", "path": "/services/", "componentId": "services" },
+    { "id": "about", "path": "/about/", "componentId": "about" },
+    { "id": "contact", "path": "/contact/", "componentId": "contact" },
+    { "id": "privacy", "path": "/privacy/", "componentId": "privacy" }
+  ],
+  "preview": { "entryRoute": "home" },
+  "build": { "workspace": "@omnireach/site-omnireach", "outputDirectory": "dist" },
+  "contactForms": [
+    {
+      "id": "platform-inquiry",
+      "consentFieldId": "consent",
+      "destinationRef": "platform.active-owners",
+      "retentionCategory": "contact-operational",
+      "fields": [
+        { "id": "name", "type": "text", "required": true },
+        { "id": "email", "type": "email", "required": true },
+        { "id": "phone", "type": "text", "required": false },
+        { "id": "business-name", "type": "text", "required": false },
+        { "id": "message", "type": "textarea", "required": true },
+        { "id": "consent", "type": "consent", "required": true }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { process } from '../data/site';
+---
+
+<Layout title="About" description="OmniReach is a hands-on website partner focused on clear communication, dependable delivery, and long-term website care.">
+  <section class="page-hero about-hero">
+    <div class="shell page-hero-grid">
+      <div><p class="eyebrow"><span></span>Who we are</p><h1>A hands-on partner for your business online.</h1></div>
+      <p>OmniReach exists to make a professional website feel less complicated. We bring planning, design, development, hosting, and ongoing support together in one working relationship.</p>
+    </div>
+  </section>
+  <section class="section section-ink">
+    <div class="shell values-grid">
+      <div><p class="eyebrow light"><span></span>What matters to us</p><h2>Clear work. Honest communication. Durable results.</h2></div>
+      <div class="value-list">
+        <article><span>01</span><div><h3>Clarity before complexity</h3><p>We choose the structure and tools that serve the business—not technology for its own sake.</p></div></article>
+        <article><span>02</span><div><h3>Details are part of the job</h3><p>Performance, mobile usability, security, metadata, and launch checks are treated as core work.</p></div></article>
+        <article><span>03</span><div><h3>Launch is the beginning</h3><p>A website needs care after it goes live. We plan for ownership, updates, and reliable operation.</p></div></article>
+      </div>
+    </div>
+  </section>
+  <section class="section" aria-labelledby="about-process-heading">
+    <div class="shell">
+      <div class="section-head compact"><div><p class="eyebrow"><span></span>Our process</p><h2 id="about-process-heading">You always know what comes next.</h2></div></div>
+      <ol class="process-list">
+        {process.map(([title, description], index) => <li><span>{String(index + 1).padStart(2, '0')}</span><div><h3>{title}</h3><p>{description}</p></div></li>)}
+      </ol>
+    </div>
+  </section>
+  <section class="section cta-section"><div class="shell cta-panel"><div><p class="eyebrow light"><span></span>Let’s talk</p><h2>Looking for a website partner who stays involved?</h2></div><a class="button button-light" href="/contact/">Start a conversation</a></div></section>
+</Layout>

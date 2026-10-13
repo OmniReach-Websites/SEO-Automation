@@ -1,0 +1,52 @@
+---
+const path = Astro.url.pathname;
+const links = [
+  ['/', 'Home'],
+  ['/services/', 'Services'],
+  ['/about/', 'About'],
+  ['/contact/', 'Contact'],
+] as const;
+const current = (href: string) => (href === '/' ? path === '/' : path.startsWith(href));
+---
+
+<header class="site-header" data-header>
+  <div class="shell header-inner">
+    <a class="brand" href="/" aria-label="OmniReach home">
+      <span class="brand-mark" aria-hidden="true">OR</span>
+      <span class="brand-name">OmniReach<small>Websites, managed well.</small></span>
+    </a>
+    <nav class="desktop-nav" aria-label="Primary navigation">
+      {links.map(([href, label]) => <a href={href} aria-current={current(href) ? 'page' : undefined}>{label}</a>)}
+    </nav>
+    <a class="button button-small desktop-cta" href="/contact/">Start a conversation</a>
+    <button class="menu-button" type="button" aria-expanded="false" aria-controls="mobile-nav" aria-label="Open navigation" data-menu-button>
+      <span></span><span></span><span></span>
+    </button>
+  </div>
+  <nav class="mobile-nav" id="mobile-nav" aria-label="Mobile navigation" hidden data-mobile-nav>
+    <div class="shell">
+      {links.map(([href, label]) => <a href={href} aria-current={current(href) ? 'page' : undefined}>{label}</a>)}
+      <a class="button" href="/contact/">Start a conversation</a>
+    </div>
+  </nav>
+</header>
+
+<script>
+  const button = document.querySelector('[data-menu-button]');
+  const menu = document.querySelector('[data-mobile-nav]');
+  if (button instanceof HTMLButtonElement && menu instanceof HTMLElement) {
+    const close = () => {
+      button.setAttribute('aria-expanded', 'false');
+      button.setAttribute('aria-label', 'Open navigation');
+      menu.hidden = true;
+    };
+    button.addEventListener('click', () => {
+      const opening = button.getAttribute('aria-expanded') !== 'true';
+      button.setAttribute('aria-expanded', String(opening));
+      button.setAttribute('aria-label', opening ? 'Close navigation' : 'Open navigation');
+      menu.hidden = !opening;
+    });
+    menu.querySelectorAll('a').forEach((link) => link.addEventListener('click', close));
+    document.addEventListener('keydown', (event) => event.key === 'Escape' && close());
+  }
+</script>

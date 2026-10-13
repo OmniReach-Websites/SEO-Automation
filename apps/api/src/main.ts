@@ -23,6 +23,7 @@ import {
   MockTurnstileVerifier,
   ResendAuthenticationNotifier,
   ResendContactDelivery,
+  ResendPlatformInquiryDelivery,
   ResendVerificationCodeNotifier,
 } from '@omnireach/integrations';
 import { parseConfig, redactConfig } from '@omnireach/shared';
@@ -46,6 +47,7 @@ import {
   PostgresCustomerService,
   PostgresContactService,
   PostgresOrapService,
+  PostgresPlatformInquiryService,
   PostgresRequestContextResolver,
   decodeContactEncryptionKey,
   type ContextQueryPool,
@@ -179,6 +181,28 @@ const contactService = new PostgresContactService(tenantPool, contactDelivery, {
     : new MockTurnstileVerifier(config.OMNIREACH_ENV === 'local'),
   ...(config.TURNSTILE_SITE_KEY ? { turnstileSiteKey: config.TURNSTILE_SITE_KEY } : {}),
 });
+const platformInquiryDeliveryEnabled = Boolean(config.RESEND_API_KEY);
+const platformInquiryDelivery = platformInquiryDeliveryEnabled
+  ? new ResendPlatformInquiryDelivery({
+      apiKey: config.RESEND_API_KEY ?? '',
+      from: config.RESEND_CONTACT_FROM,
+    })
+  : {
+      async deliver() {
+        return { providerReference: 'local-platform-inquiry' };
+      },
+    };
+const platformInquiryService = new PostgresPlatformInquiryService(
+  tenantPool,
+  platformInquiryDelivery,
+  {
+    deliveryEnabled: platformInquiryDeliveryEnabled,
+    turnstile: config.TURNSTILE_SECRET_KEY
+      ? new CloudflareTurnstileVerifier(config.TURNSTILE_SECRET_KEY)
+      : new MockTurnstileVerifier(config.OMNIREACH_ENV === 'local'),
+    ...(config.TURNSTILE_SITE_KEY ? { turnstileSiteKey: config.TURNSTILE_SITE_KEY } : {}),
+  },
+);
 redis.on('error', (error) => server.log.error({ error }, 'Redis client error'));
 
 const server = buildApiServer({
@@ -191,6 +215,7 @@ const server = buildApiServer({
   ],
   logLevel: config.LOG_LEVEL,
   orapService,
+  platformInquiryService,
   resolveCustomerPrincipal: (request) => requestContext.customer(request),
   resolveContactSite: (request) => requestContext.contact(request),
   resolvePlatformActor: (request) => requestContext.platform(request),

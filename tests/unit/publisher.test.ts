@@ -19,6 +19,7 @@ describe('snapshot, preview, and contact boundaries', () => {
       'sites/_starter',
       'sites/coops-mobile-detailing',
       'sites/custom-portfolio-example',
+      'sites/omnireach',
       'sites/restaurant-example',
     ]);
     expect(definitions.get('sites/_starter')).toMatchObject({

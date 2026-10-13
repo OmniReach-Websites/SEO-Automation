@@ -21,6 +21,7 @@ export function checkProductionCompose() {
     'platform-data-init',
     'api',
     'coops-mobile-detailing',
+    'omnireach-public-site',
   ];
 
   if (compose.name !== 'omnireach-production') errors.push('unexpected production project name');
@@ -118,6 +119,23 @@ export function checkProductionCompose() {
     errors.push('Coop site must not publish a host port');
   }
 
+  const publicSite = compose.services?.['omnireach-public-site'];
+  if (
+    publicSite?.entrypoint?.join(' ') !==
+    'node infrastructure/compose/scripts/static-site-server.mjs'
+  ) {
+    errors.push('OmniReach public site must use the bounded static server entrypoint');
+  }
+  if (publicSite?.networks?.proxy?.aliases?.[0] !== 'omnireach-public-site') {
+    errors.push('OmniReach public site must expose only its fixed proxy alias');
+  }
+  if (publicSite?.read_only !== true || !publicSite?.healthcheck) {
+    errors.push('OmniReach public site must be read-only and health checked');
+  }
+  if ((publicSite?.ports ?? []).length > 0) {
+    errors.push('OmniReach public site must not publish a host port');
+  }
+
   const declaredVolumes = ['platform-data', 'postgres-data', 'redis-data'];
   for (const volume of declaredVolumes) {
     if (!compose.volumes?.[volume]?.name?.includes('OMNIREACH_RESOURCE_PREFIX')) {
@@ -170,6 +188,7 @@ export function checkProductionCompose() {
       'infrastructure/compose/scripts/redis-entrypoint.sh',
       'infrastructure/compose/scripts/runtime-entrypoint.sh',
       'infrastructure/deploy/configure-coops-site-route.sh',
+      'infrastructure/deploy/configure-omnireach-public-route.sh',
     ],
     { cwd: root, encoding: 'utf8' },
   );
@@ -179,6 +198,7 @@ export function checkProductionCompose() {
     'redis-entrypoint.sh',
     'runtime-entrypoint.sh',
     '../../deploy/configure-coops-site-route.sh',
+    '../../deploy/configure-omnireach-public-route.sh',
   ]) {
     const trackedPath = script.startsWith('../../deploy/')
       ? `infrastructure/deploy/${script.slice('../../deploy/'.length)}`
@@ -207,6 +227,24 @@ export function checkProductionCompose() {
       errors.push(`Coop route installer is missing ${expected}`);
   }
 
+  const publicRouteInstaller = readFileSync(
+    resolve(root, 'infrastructure/deploy/configure-omnireach-public-route.sh'),
+    'utf8',
+  );
+  for (const expected of [
+    'omnireach.cloud',
+    'www.omnireach.cloud',
+    'reverse_proxy omnireach-public-site:8080',
+    'reverse_proxy omnireach-api:4100',
+    '/v1/public/platform-inquiry',
+    'caddy validate',
+    'caddy reload',
+  ]) {
+    if (!publicRouteInstaller.includes(expected)) {
+      errors.push(`OmniReach public route installer is missing ${expected}`);
+    }
+  }
+
   const productionDockerfile = readFileSync(
     resolve(root, 'infrastructure/compose/production.Dockerfile'),
     'utf8',
@@ -217,6 +255,9 @@ export function checkProductionCompose() {
     )
   ) {
     errors.push('production runtime image does not build the Coop static site');
+  }
+  if (!productionDockerfile.includes('npm run build --workspace @omnireach/site-omnireach')) {
+    errors.push('production runtime image does not build the OmniReach public site');
   }
 
   if (/POSTGRES_PASSWORD:\s*(?!FILE)/u.test(source)) {

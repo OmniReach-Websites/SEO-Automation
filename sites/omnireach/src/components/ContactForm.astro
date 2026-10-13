@@ -1,0 +1,121 @@
+<form class="contact-form" data-inquiry-form>
+  <div class="form-grid">
+    <div class="field">
+      <label for="name">Your name</label>
+      <input id="name" name="name" type="text" autocomplete="name" maxlength="120" required />
+    </div>
+    <div class="field">
+      <label for="email">Email address</label>
+      <input id="email" name="email" type="email" autocomplete="email" maxlength="320" required />
+    </div>
+    <div class="field">
+      <label for="phone">Phone <span>Optional</span></label>
+      <input id="phone" name="phone" type="tel" autocomplete="tel" maxlength="50" />
+    </div>
+    <div class="field">
+      <label for="businessName">Business name <span>Optional</span></label>
+      <input id="businessName" name="businessName" type="text" autocomplete="organization" maxlength="160" />
+    </div>
+  </div>
+  <div class="field">
+    <label for="message">How can we help?</label>
+    <textarea id="message" name="message" rows="6" minlength="10" maxlength="5000" required></textarea>
+  </div>
+  <div class="honeypot" aria-hidden="true">
+    <label for="website">Leave this field empty</label>
+    <input id="website" name="website" type="text" autocomplete="off" tabindex="-1" />
+  </div>
+  <label class="consent" for="consent">
+    <input id="consent" name="consent" type="checkbox" required />
+    <span>I agree that OmniReach may use these details to respond to my inquiry. See the <a href="/privacy/">privacy notice</a>.</span>
+  </label>
+  <div class="turnstile" data-turnstile></div>
+  <div class="form-actions">
+    <button class="button" type="submit" disabled data-submit>Send inquiry</button>
+    <p class="form-status" role="status" aria-live="polite" data-status>Loading secure form…</p>
+  </div>
+</form>
+
+<script>
+  interface TurnstileApi {
+    render(container: Element, options: { sitekey: string; theme: string }): string;
+    reset(widgetId?: string): void;
+  }
+  const form = document.querySelector('[data-inquiry-form]');
+  const status = document.querySelector('[data-status]');
+  const submit = document.querySelector('[data-submit]');
+  const widget = document.querySelector('[data-turnstile]');
+  let widgetId = '';
+
+  const setStatus = (message: string, state = '') => {
+    if (!(status instanceof HTMLElement)) return;
+    status.textContent = message;
+    status.dataset.state = state;
+  };
+
+  const loadTurnstile = async (sitekey: string) => {
+    await new Promise<void>((resolve, reject) => {
+      const existing = document.querySelector('script[data-turnstile-script]');
+      if (existing) return resolve();
+      const script = document.createElement('script');
+      script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+      script.async = true;
+      script.defer = true;
+      script.dataset.turnstileScript = 'true';
+      script.addEventListener('load', () => resolve(), { once: true });
+      script.addEventListener('error', () => reject(new Error('Turnstile failed to load')), { once: true });
+      document.head.append(script);
+    });
+    const turnstile = (window as Window & { turnstile?: TurnstileApi }).turnstile;
+    if (!turnstile || !widget) throw new Error('Turnstile is unavailable');
+    widgetId = turnstile.render(widget, { sitekey, theme: 'light' });
+  };
+
+  if (form instanceof HTMLFormElement && submit instanceof HTMLButtonElement) {
+    fetch('/v1/public/platform-inquiry/config', { headers: { Accept: 'application/json' } })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('Form configuration unavailable');
+        return response.json() as Promise<{ enabled?: boolean; turnstileSiteKey?: string }>;
+      })
+      .then(async (config) => {
+        if (!config.enabled) throw new Error('Form is unavailable');
+        if (config.turnstileSiteKey) await loadTurnstile(config.turnstileSiteKey);
+        submit.disabled = false;
+        setStatus('Secure form ready.');
+      })
+      .catch(() => setStatus('The form is temporarily unavailable. Please try again later.', 'error'));
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      if (!form.reportValidity()) return;
+      const values = new FormData(form);
+      const turnstileToken = String(values.get('cf-turnstile-response') ?? '');
+      submit.disabled = true;
+      setStatus('Sending…');
+      try {
+        const response = await fetch('/v1/public/platform-inquiry', {
+          body: JSON.stringify({
+            businessName: String(values.get('businessName') ?? ''),
+            consent: values.get('consent') === 'on',
+            email: String(values.get('email') ?? ''),
+            message: String(values.get('message') ?? ''),
+            name: String(values.get('name') ?? ''),
+            phone: String(values.get('phone') ?? ''),
+            turnstileToken,
+            website: String(values.get('website') ?? ''),
+          }),
+          headers: { 'Content-Type': 'application/json' },
+          method: 'POST',
+        });
+        if (!response.ok) throw new Error('Delivery failed');
+        form.reset();
+        (window as Window & { turnstile?: TurnstileApi }).turnstile?.reset(widgetId);
+        setStatus('Thanks—your inquiry has been sent. We’ll be in touch.', 'success');
+      } catch {
+        setStatus('We could not send your inquiry. Please try again in a few minutes.', 'error');
+      } finally {
+        submit.disabled = false;
+      }
+    });
+  }
+</script>

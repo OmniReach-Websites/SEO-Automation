@@ -119,4 +119,10 @@ if [ "$secrets_dir" = /opt/servers/omnireach/shared/secrets ] &&
     exit 69
   }
   "$route_installer"
+  public_route_installer=$script_root/deploy/configure-omnireach-public-route.sh
+  [ -x "$public_route_installer" ] || {
+    printf '%s\n' 'OmniReach public route installer is missing or not executable' >&2
+    exit 69
+  }
+  "$public_route_installer"
 fi
