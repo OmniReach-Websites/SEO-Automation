@@ -577,7 +577,8 @@ describe('authentication route safety', () => {
     });
 
     expect(page.statusCode).toBe(200);
-    expect(page.body).toContain('href="/assets/admin.css?v=orap-2"');
+    expect(page.body).toContain('href="/assets/admin.css?v=orap-3"');
+    expect(page.body).toContain('href="/assets/omnireach-logo.png"');
     expect(page.body).toContain('href="/orap/operations"');
     expect(page.body).toContain('href="/security" aria-current="page"');
     expect(page.body).toContain('Two-step verification is <strong>required</strong>');

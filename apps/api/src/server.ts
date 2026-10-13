@@ -132,7 +132,7 @@ export function buildApiServer(options: ApiServerOptions = {}) {
     if (!reply.hasHeader('Content-Security-Policy')) {
       reply.header(
         'Content-Security-Policy',
-        "default-src 'none'; style-src 'self'; form-action 'self'; frame-ancestors 'none'",
+        "default-src 'none'; img-src 'self'; style-src 'self'; form-action 'self'; frame-ancestors 'none'",
       );
     }
     // Keep cross-site navigation private while allowing same-origin form

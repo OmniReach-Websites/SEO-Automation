@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
 import {
   adminStylesheet,
   renderCustomerDashboard,
@@ -37,6 +40,10 @@ import {
   webAuthnEnrollmentBrowserScript,
 } from './webauthn-browser.ts';
 
+const omnireachLogo = readFileSync(
+  resolve(import.meta.dirname, '../../../sites/omnireach/public/omnireach-logo.png'),
+);
+
 export function registerUiRoutes(
   server: FastifyInstance,
   options: {
@@ -52,6 +59,12 @@ export function registerUiRoutes(
       .type('text/css; charset=utf-8')
       .header('Cache-Control', 'public, max-age=300')
       .send(adminStylesheet),
+  );
+  server.get('/assets/omnireach-logo.png', async (_request, reply) =>
+    reply
+      .type('image/png')
+      .header('Cache-Control', 'public, max-age=86400, immutable')
+      .send(omnireachLogo),
   );
   server.get<{ Querystring: { error?: string; security?: string } }>(
     '/login',
@@ -118,7 +131,7 @@ export function registerUiRoutes(
       if (settings.webauthnEnrollmentAvailable) {
         reply.header(
           'Content-Security-Policy',
-          "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+          "default-src 'none'; img-src 'self'; script-src 'self'; connect-src 'self'; style-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
         );
       }
       return reply
@@ -770,7 +783,7 @@ function renderSecuritySettings(
       title: 'Security settings',
     });
   }
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><link rel="stylesheet" href="/assets/admin.css?v=orap-2"><title>Security settings | OmniReach</title></head><body><a class="skip-link" href="#main">Skip to content</a><main class="content" id="main"><div class="page-head"><div><p class="eyebrow">Account protection</p><h1>Security settings</h1></div></div>${content}<p><a class="button secondary" href="/">Return to dashboard</a></p></main></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><meta name="theme-color" content="#0b1820"><link rel="icon" type="image/png" href="/assets/omnireach-logo.png"><link rel="stylesheet" href="/assets/admin.css?v=orap-3"><title>Security settings | OmniReach</title></head><body><a class="skip-link" href="#main">Skip to content</a><main class="content" id="main"><div class="page-head"><div><p class="eyebrow">Account protection</p><h1>Security settings</h1></div></div>${content}<p><a class="button secondary" href="/">Return to dashboard</a></p></main></body></html>`;
 }
 
 function renderEmailPolicyVerification(challengeId: string, action: 'disable' | 'enable'): string {
@@ -844,7 +857,7 @@ function renderAuthPage(input: {
   heading: string;
   title: string;
 }): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><link rel="stylesheet" href="/assets/admin.css?v=orap-2"><title>${escapeHtml(input.title)} | OmniReach</title></head><body><a class="skip-link" href="#main">Skip to content</a><div class="auth-page"><aside class="auth-brand-panel" aria-label="OmniReach"><a class="auth-brand" href="/login"><span class="brand-mark" aria-hidden="true">OR</span><span class="brand-copy"><strong>OmniReach</strong><small>Administration platform</small></span></a><div class="auth-brand-copy"><p class="eyebrow">Agency-first website operations</p><h2>Run every customer site with confidence.</h2><p>Securely manage content, automation, publishing, access, and operational health from one staff workspace.</p></div><p class="auth-meta">Protected by host-bound sessions and two-step verification.</p></aside><div class="auth-workspace"><main class="auth-card" id="main"><p class="eyebrow">${escapeHtml(input.eyebrow)}</p><h1>${escapeHtml(input.heading)}</h1><p class="lede">${input.description}</p>${input.content}</main></div></div></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><meta name="theme-color" content="#0b1820"><link rel="icon" type="image/png" href="/assets/omnireach-logo.png"><link rel="stylesheet" href="/assets/admin.css?v=orap-3"><title>${escapeHtml(input.title)} | OmniReach</title></head><body><a class="skip-link" href="#main">Skip to content</a><div class="auth-page"><aside class="auth-brand-panel" aria-label="OmniReach"><a class="auth-brand" href="/login"><img class="brand-mark" src="/assets/omnireach-logo.png" alt="" width="48" height="48"><span class="brand-copy"><strong>OmniReach</strong><small>Administration platform</small></span></a><div class="auth-brand-copy"><p class="eyebrow">Agency-first website operations</p><h2>Run every customer site with confidence.</h2><p>Securely manage content, automation, publishing, access, and operational health from one staff workspace.</p></div><p class="auth-meta">Protected by host-bound sessions and two-step verification.</p></aside><div class="auth-workspace"><main class="auth-card" id="main"><p class="eyebrow">${escapeHtml(input.eyebrow)}</p><h1>${escapeHtml(input.heading)}</h1><p class="lede">${input.description}</p>${input.content}</main></div></div></body></html>`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

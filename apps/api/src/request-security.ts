@@ -47,6 +47,6 @@ async function rejectOrigin(request: FastifyRequest, reply: FastifyReply): Promi
     .code(403)
     .type('text/html; charset=utf-8')
     .send(
-      '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><link rel="stylesheet" href="/assets/admin.css?v=orap-2"><title>Request blocked | OmniReach</title></head><body><main class="auth-workspace"><section class="auth-card"><p class="eyebrow">Security check</p><h1>Request blocked</h1><p class="lede">The page origin could not be verified. Return to sign in and try again from the official administration address.</p><a class="button" href="/login">Return to sign in</a></section></main></body></html>',
+      '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><meta name="theme-color" content="#0b1820"><link rel="icon" type="image/png" href="/assets/omnireach-logo.png"><link rel="stylesheet" href="/assets/admin.css?v=orap-3"><title>Request blocked | OmniReach</title></head><body><main class="auth-workspace"><section class="auth-card"><p class="eyebrow">Security check</p><h1>Request blocked</h1><p class="lede">The page origin could not be verified. Return to sign in and try again from the official administration address.</p><a class="button" href="/login">Return to sign in</a></section></main></body></html>',
     );
 }

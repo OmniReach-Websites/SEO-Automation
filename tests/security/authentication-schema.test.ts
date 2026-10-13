@@ -29,7 +29,7 @@ const schema = readFileSync(resolve(root, 'packages/database/prisma/schema.prism
 const repositorySource = readFileSync(
   resolve(root, 'packages/auth/src/postgres-webauthn.ts'),
   'utf8',
-);
+).replaceAll('\r\n', '\n');
 const authenticationRepositorySource = readFileSync(
   resolve(root, 'packages/auth/src/postgres.ts'),
   'utf8',
