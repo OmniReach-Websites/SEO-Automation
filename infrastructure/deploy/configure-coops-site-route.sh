@@ -36,7 +36,7 @@ www.coopsmobiledetailingaledo.com {
 coopsmobiledetailingaledo.com {
     encode zstd gzip
     header {
-        Content-Security-Policy "default-src 'self'; script-src 'self' 'sha256-Auky1RF93bHadMyKgiBJYnh4IZdEeaJBanm3qGYOpyM=' 'sha256-5LQt8nuMFaxybQw44FhRwFCNluBmu0b9/68O/Xg8+hI=' 'sha256-THEVRzZdTFzfhUTrvRL1wzh4o+iNn5tETfLqraij3q4=' 'sha256-HwxHjYdadh60svsZJnUmyNDkEqfM6h5jvM7vx05DuWU=' https://www.googletagmanager.com; connect-src 'self' https://www.google-analytics.com https://*.google-analytics.com https://analytics.google.com https://*.analytics.google.com https://www.googletagmanager.com; img-src 'self' data: https://www.google-analytics.com https://*.google-analytics.com https://www.googletagmanager.com; style-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+        Content-Security-Policy "default-src 'self'; script-src 'self' 'sha256-Auky1RF93bHadMyKgiBJYnh4IZdEeaJBanm3qGYOpyM=' 'sha256-5LQt8nuMFaxybQw44FhRwFCNluBmu0b9/68O/Xg8+hI=' 'sha256-THEVRzZdTFzfhUTrvRL1wzh4o+iNn5tETfLqraij3q4=' 'sha256-HwxHjYdadh60svsZJnUmyNDkEqfM6h5jvM7vx05DuWU=' https://www.googletagmanager.com; connect-src 'self' https://www.google-analytics.com https://*.google-analytics.com https://analytics.google.com https://*.analytics.google.com https://www.googletagmanager.com; img-src 'self' data: https://www.google-analytics.com https://*.google-analytics.com https://www.googletagmanager.com; style-src 'self'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
         Permissions-Policy "camera=(), geolocation=(), microphone=()"
         Referrer-Policy "strict-origin-when-cross-origin"
         Strict-Transport-Security "max-age=31536000; includeSubDomains"
