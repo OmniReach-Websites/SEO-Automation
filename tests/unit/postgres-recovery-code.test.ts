@@ -109,7 +109,7 @@ describe('PostgreSQL recovery-code session issuance', () => {
     const scopeLock = calls.find((sql) => sql.startsWith('SELECT m.role'));
     expect(accountLockIndex).toBeGreaterThan(-1);
     expect(accountLockIndex).toBeLessThan(consumeIndex);
-    expect(scopeLock).toContain('FOR SHARE OF m, t, st, d, policy');
+    expect(scopeLock).toContain('FOR SHARE OF m, policy');
     expect(consumeIndex).toBeGreaterThan(-1);
     expect(siblingIndex).toBeGreaterThan(consumeIndex);
     expect(versionIndex).toBeGreaterThan(siblingIndex);

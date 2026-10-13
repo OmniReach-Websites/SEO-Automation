@@ -657,4 +657,51 @@ describe('PostgreSQL authentication repository', () => {
     ).rejects.toThrow('scope');
     expect(pool.connect).not.toHaveBeenCalled();
   });
+
+  it('creates a customer password session without locking read-only control-plane rows', async () => {
+    const calls: string[] = [];
+    const { pool } = poolFor(async (sql) => {
+      calls.push(sql);
+      if (sql.includes('SELECT c.password_hash')) {
+        return { rows: [{ password_hash: '$argon2id$fixture' }] };
+      }
+      if (sql.includes('SELECT m.role, policy.auth_state_version')) {
+        return {
+          rows: [
+            {
+              auth_state_version: '1',
+              email_code_enabled: false,
+              has_active_platform_membership: false,
+              role: 'customer_owner',
+              second_step_requirement: 'optional',
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    await expect(
+      new PostgresAuthenticationRepository(pool, 'admin.omnireach.test').createSession({
+        assuranceLevel: 'basic',
+        authenticationMethod: 'password',
+        expectedAuthStateVersion: '1',
+        expectedPasswordHash: '$argon2id$fixture',
+        expiresAt: new Date('2026-10-10T20:00:00.000Z'),
+        host: 'admin.alpha.test',
+        recoveryRestricted: false,
+        role: 'customer_owner',
+        siteId: 'site-a',
+        tenantId: 'tenant-a',
+        tokenHash: 'a'.repeat(64),
+        traceId: 'trace-customer-session',
+        userId: 'user-a',
+      }),
+    ).resolves.toBe(true);
+
+    const scopeLock = calls.find((sql) => sql.includes('SELECT m.role'));
+    expect(scopeLock).toContain('FOR SHARE OF m, policy');
+    expect(scopeLock).not.toContain('FOR SHARE OF m, t, st, d, policy');
+    expect(calls.some((sql) => sql.includes('INSERT INTO sessions'))).toBe(true);
+  });
 });
