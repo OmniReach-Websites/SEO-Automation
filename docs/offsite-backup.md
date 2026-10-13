@@ -24,13 +24,19 @@ Target cadence is daily, 7 daily plus 4 weekly recovery points, daily integrity 
 
 ## Cost worksheet
 
-Record compressed encrypted database size, media/artifact size, daily change rate, 7+4 retained bytes, monthly requests/egress and provider price at approval time. Add a safety margin and compare against the proposed $5 monthly ceiling. No R2 bucket, spend, schedule or production deletion is authorized by this document.
+Record compressed encrypted database size, media/artifact size, daily change rate, 7+4 retained bytes, monthly requests/egress and provider price at approval time. Add a safety margin and compare against the proposed $5 monthly ceiling. The owner authorized and created the dedicated R2 bucket and credential on 2026-10-13; this does not authorize paid overages, a production schedule, or manual backup deletion.
 
 ## Production activation — Waiting
 
-- owner provisions a versioned R2 bucket and least-privilege object-list/get/put/delete credential restricted to one prefix;
+- [x] dedicated private R2 bucket and least-privilege object-list/get/put/delete credential scoped to that bucket; application-side key validation restricts operations to `omnireach/`;
+- [x] one non-backup transport probe uploaded, downloaded and checksum-verified, listed, and removed successfully;
 - encryption key and R2 credential have separate custodians/storage;
 - a host-only job and failure notification are reviewed and enabled;
 - first upload verifies from a separate download;
 - a monthly disposable restore verifies migrations, tenant isolation, counts, media links and a known published artifact;
 - measured RPO/RTO and cost are recorded before the capability is called Live.
+
+The bucket uses Standard storage in Cloudflare's provider-selected WNAM location. It has
+no public `r2.dev` exposure, custom domain, or CORS policy. Do not add a blanket
+age-based deletion lifecycle: the application retention selector must preserve seven
+daily and four weekly recovery points before any automated deletion is enabled.
