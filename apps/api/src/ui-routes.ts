@@ -410,6 +410,13 @@ export function registerUiRoutes(
             tenantId: site.tenantId,
           })
         ) {
+          const canManageGoogle = Boolean(
+            options.integrationService &&
+              canOrap(actor, 'integrations.google.manage', {
+                siteId: site.id,
+                tenantId: site.tenantId,
+              }),
+          );
           const management = options.orapService?.siteManagement
             ? parseSiteManagement(
                 await options.orapService.siteManagement(actor, {
@@ -418,6 +425,9 @@ export function registerUiRoutes(
                 }),
               )
             : undefined;
+          if (canManageGoogle) {
+            reply.header('Content-Security-Policy', googleOAuthFormActionPolicy);
+          }
           return reply.type('text/html; charset=utf-8').send(
             renderOrapSiteDetails(site, orapNavigation(actor), management, {
               canEditAutomation: canOrap(actor, 'automation.emergency_controls.manage', {
@@ -432,13 +442,7 @@ export function registerUiRoutes(
                 siteId: site.id,
                 tenantId: site.tenantId,
               }),
-              canManageGoogle: Boolean(
-                options.integrationService &&
-                canOrap(actor, 'integrations.google.manage', {
-                  siteId: site.id,
-                  tenantId: site.tenantId,
-                }),
-              ),
+              canManageGoogle,
             }),
           );
         }
@@ -1248,6 +1252,9 @@ function parseGoogleAuthorizationUrl(value: unknown): string | undefined {
     return undefined;
   }
 }
+
+const googleOAuthFormActionPolicy =
+  "default-src 'none'; img-src 'self'; style-src 'self'; form-action 'self' https://accounts.google.com; frame-ancestors 'none'";
 
 function siteNotice(value: string | undefined): string | undefined {
   if (value === 'created') return 'Site record created. No DNS or deployment changes were made.';
