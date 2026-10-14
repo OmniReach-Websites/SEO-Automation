@@ -7,6 +7,7 @@ import {
   googleOAuthCallbackCookieName,
   googleOAuthCallbackCookieOptions,
 } from './google-oauth-cookie.ts';
+import { GoogleIntegrationCallbackError } from './postgres-google.ts';
 import type { ResolvePlatformActor } from './orap-routes.ts';
 import { assertOrapRoutePolicyRegistry } from './orap-route-policy.ts';
 import { readCookie } from './request-auth.ts';
@@ -102,11 +103,35 @@ export function registerIntegrationRoutes(
       reply,
     );
     if (!query) return;
-    const result = await service.finishGoogle(actor, {
-      code: query.code,
-      state: query.state,
-      ...(query.propertyId ? { propertyId: query.propertyId } : {}),
-    });
+    let result: unknown;
+    try {
+      result = await service.finishGoogle(actor, {
+        code: query.code,
+        state: query.state,
+        ...(query.propertyId ? { propertyId: query.propertyId } : {}),
+      });
+    } catch (error) {
+      if (!(error instanceof GoogleIntegrationCallbackError)) throw error;
+      request.log.error(
+        {
+          error: error.cause,
+          googleError: error.code,
+          googleStage: error.stage,
+          siteId: error.siteId,
+        },
+        'Google authorization callback failed',
+      );
+      reply.clearCookie(googleOAuthCallbackCookieName, googleOAuthCallbackCookieOptions);
+      const safeError = safeGoogleError(error.code);
+      if (!acceptsHtml(request)) {
+        return reply.code(502).send({ error: safeError, traceId: String(request.id) });
+      }
+      return reply
+        .code(303)
+        .redirect(
+          `/orap/sites/${encodeURIComponent(error.siteId)}?notice=${encodeURIComponent(`google-${safeError}`)}`,
+        );
+    }
     reply.clearCookie(googleOAuthCallbackCookieName, googleOAuthCallbackCookieOptions);
     if (!acceptsHtml(request)) return result;
     const completion = googleCompletion.safeParse(result);
@@ -223,6 +248,22 @@ const googleCompletion = z.discriminatedUnion('status', [
 function acceptsHtml(request: FastifyRequest): boolean {
   const accept = request.headers.accept;
   return typeof accept === 'string' && accept.includes('text/html');
+}
+
+function safeGoogleError(code: string): string {
+  return [
+    'insufficient_scope',
+    'insufficient_scope_or_quota',
+    'invalid_token_response',
+    'missing_refresh_token',
+    'provider_rejected',
+    'provider_unavailable',
+    'quota_exhausted',
+    'retry_exhausted',
+    'revoked_or_expired',
+  ].includes(code)
+    ? code
+    : 'connection_failed';
 }
 
 function renderGooglePropertySelection(

@@ -1,6 +1,7 @@
 import { buildApiServer } from '@omnireach/api';
 import type { AdminActor } from '@omnireach/tenant';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { GoogleIntegrationCallbackError } from '../../../apps/api/src/postgres-google.ts';
 
 const actor: AdminActor = {
   authorization: {
@@ -133,5 +134,46 @@ describe('Google integration management routes', () => {
     expect(selection.body).toContain('Select a property');
     expect(selection.body).toContain('properties/1234');
     expect(selection.body).toContain(`/orap/sites/${siteId}/integrations/google/select`);
+  });
+
+  it('returns safe actionable callback failures without exposing provider details', async () => {
+    const sensitiveCause = new Error('provider response contained sensitive diagnostics');
+    const service = {
+      disconnect: vi.fn(),
+      finishGoogle: vi.fn(async () => {
+        throw new GoogleIntegrationCallbackError(
+          'provider_rejected',
+          siteId,
+          'exchange_code',
+          sensitiveCause,
+        );
+      }),
+      list: vi.fn(),
+      startGoogle: vi.fn(),
+    };
+    const server = buildApiServer({
+      integrationService: service,
+      resolvePlatformActor: async () => actor,
+    });
+    servers.push(server);
+    const query = `code=code-value&state=${'s'.repeat(24)}`;
+
+    const browser = await server.inject({
+      headers: { accept: 'text/html', host: 'admin.omnireach.test' },
+      method: 'GET',
+      url: `/v1/orap/integrations/google/callback?${query}`,
+    });
+    expect(browser.statusCode).toBe(303);
+    expect(browser.headers.location).toBe(`/orap/sites/${siteId}?notice=google-provider_rejected`);
+    expect(browser.body).not.toContain(sensitiveCause.message);
+
+    const api = await server.inject({
+      headers: { accept: 'application/json', host: 'admin.omnireach.test' },
+      method: 'GET',
+      url: `/v1/orap/integrations/google/callback?${query}`,
+    });
+    expect(api.statusCode).toBe(502);
+    expect(api.json()).toMatchObject({ error: 'provider_rejected' });
+    expect(api.body).not.toContain(sensitiveCause.message);
   });
 });

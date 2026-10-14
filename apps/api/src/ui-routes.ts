@@ -388,7 +388,7 @@ export function registerUiRoutes(
       },
     );
 
-    server.get<{ Params: { siteIdentifier: string } }>(
+    server.get<{ Params: { siteIdentifier: string }; Querystring: { notice?: string } }>(
       '/orap/sites/:siteIdentifier',
       async (request, reply) => {
         const actor = await options.resolvePlatformActor?.(request);
@@ -428,6 +428,7 @@ export function registerUiRoutes(
           if (canManageGoogle) {
             reply.header('Content-Security-Policy', googleOAuthFormActionPolicy);
           }
+          const notice = siteNotice(request.query.notice);
           return reply.type('text/html; charset=utf-8').send(
             renderOrapSiteDetails(site, orapNavigation(actor), management, {
               canEditAutomation: canOrap(actor, 'automation.emergency_controls.manage', {
@@ -443,6 +444,7 @@ export function registerUiRoutes(
                 tenantId: site.tenantId,
               }),
               canManageGoogle,
+              ...(notice ? { notice } : {}),
             }),
           );
         }
@@ -1261,6 +1263,28 @@ function siteNotice(value: string | undefined): string | undefined {
   if (value === 'google-connected') return 'Google reporting property connected successfully.';
   if (value === 'google-no-match') {
     return 'No authorized Google property exactly matched this website hostname.';
+  }
+  if (value === 'google-insufficient_scope' || value === 'google-insufficient_scope_or_quota') {
+    return 'Google did not grant the required read-only permission, or the required Google API is unavailable. Reconnect and approve the requested permission.';
+  }
+  if (value === 'google-provider_rejected' || value === 'google-invalid_token_response') {
+    return 'Google rejected the authorization exchange. Start the connection again. If it repeats, verify the OAuth client secret and exact redirect URI.';
+  }
+  if (value === 'google-missing_refresh_token') {
+    return 'Google did not return long-lived access. Start the connection again and approve account access.';
+  }
+  if (
+    value === 'google-provider_unavailable' ||
+    value === 'google-quota_exhausted' ||
+    value === 'google-retry_exhausted'
+  ) {
+    return 'Google is temporarily unavailable or has reached an API limit. No connection was activated; try again shortly.';
+  }
+  if (value === 'google-revoked_or_expired') {
+    return 'Google authorization expired or was revoked. Start the connection again.';
+  }
+  if (value === 'google-connection_failed') {
+    return 'The Google connection could not be completed. No connection was activated. Start the connection again after reviewing the server error trace.';
   }
   return undefined;
 }
