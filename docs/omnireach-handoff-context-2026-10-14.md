@@ -6,9 +6,9 @@
 
 **Production branch:** protected `main`
 
-**Active branch:** `feature/offsite-backup-readiness`
+**Documentation branch:** `docs/context-2026-10-14-release`
 
-**Production baseline observed:** `9fea6a0d40a3fc9484895ef179888f07892b0ccb`
+**Production baseline verified:** `e7bdb32d877ed58f5989366b3a19924b412dc8cd`
 
 This snapshot supersedes `docs/omnireach-handoff-context-2026-10-13.md` as the first
 handoff document to read. Architecture decisions, ADRs, runbooks, production inputs,
@@ -172,11 +172,12 @@ complete. PR #63 passed both protected checks and was squash-merged as
 successfully built, tested, packaged, transferred, activated, and verified that exact
 commit before removing its ephemeral SSH identity.
 
-## Priority 3 release candidate: backup operational readiness
+## Deployed Priority 3: backup operational readiness
 
-The active `feature/offsite-backup-readiness` branch contains repository-only backup
-hardening. It does not install production secrets, create a schedule, upload production
-data, delete a real backup, activate email, or perform a live restore. The candidate:
+PR #64 delivered repository-only backup hardening and was deployed as protected-main
+commit `e7bdb32d877ed58f5989366b3a19924b412dc8cd` by production run `38530243019`.
+The release does not install production secrets, create a schedule, upload production
+data, delete a real backup, activate email, or perform a live restore. It:
 
 - creates bounded authenticated AES-256-GCM archives from PostgreSQL custom dumps,
   content/media, and selected configuration inputs;
@@ -247,7 +248,7 @@ persistence, availability, six-worker, and credential-metadata checks successful
 Independent post-deployment checks returned 200 for API readiness, OmniReach home,
 Terms, and the Coop site. An unauthenticated Analytics request returned 403 as required.
 
-The Priority 3 release candidate passes 68 unit files (366 passed, 1 skipped), 12
+The Priority 3 release passes 68 unit files (366 passed, 1 skipped), 12
 integration files (70 passed), 15 security files (72 passed), 2 contract files (10
 passed), and 5 Playwright tests. Typecheck, lint, build, documentation, Compose,
 workflow, 59-migration, Prisma-schema, changed-file formatting, secret scan of 589 files,
@@ -259,6 +260,11 @@ request budgets. The disposable production Compose verifier applied all 59 migra
 and exercised restricted backup status writes, separate local/off-site prune lifecycle,
 and backup alert open/resolve transitions, in addition to the existing isolation,
 authentication, persistence, static availability, analytics, and six-worker checks.
+Both protected PR checks passed. Production run `38530243019` then rebuilt and tested
+the exact merge commit, built and activated its immutable release through the restricted
+ephemeral deployment identity, verified both public sites, and removed that identity.
+Independent post-deployment checks returned 200 for API readiness, OmniReach home,
+Terms, and the Coop site; unauthenticated `/orap/operations` returned 403 as required.
 
 ## Production/provider readiness
 
@@ -304,10 +310,10 @@ access, or modify shared Caddy/Christians Reunite outside an explicitly reviewed
 
 Next steps:
 
-1. Review and release `feature/offsite-backup-readiness` through protected CI; this
-   repository release does not authorize production backup activation.
-2. Continue Priority 4 repository-only Resend/forms and staff UX review after that
-   release; keep real delivery disabled.
+1. Continue Priority 4 repository-only Resend/forms and staff UX review; keep real
+   delivery disabled.
+2. Activate production backups only after the recorded owner-gated secret and scheduling
+   prerequisites are explicitly satisfied; this repository release did not activate them.
 3. Perform the authenticated Analytics smoke only with a normal verified employee
    session or purpose-built non-secret smoke credential; do not weaken MFA.
 4. Keep production metrics unreconciled until stored results are compared with the exact
