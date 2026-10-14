@@ -6,9 +6,9 @@
 
 **Production branch:** protected `main`
 
-**Active branch:** `feature/orap-analytics-dashboard`
+**Active branch:** `feature/google-ingestion-hardening`
 
-**Production baseline observed:** `3fbbb1e9bbf993b4da1b5646e41934b793f1b65e`
+**Production baseline observed:** `3ded900d2320e892026be36f6a7785098989aae8`
 
 This snapshot supersedes `docs/omnireach-handoff-context-2026-10-13.md` as the first
 handoff document to read. Architecture decisions, ADRs, runbooks, production inputs,
@@ -107,10 +107,11 @@ page/country/device and GA4 sessions, active users, and page views by date/sourc
 Engagement and conversion/key-event measurements are not collected and must render as
 unsupported, never as fabricated zeroes.
 
-## Active branch: ORAP Analytics & SEO Performance
+## Deployed Priority 1: ORAP Analytics & SEO Performance
 
-Priority 1 is implemented and locally verified on
-`feature/orap-analytics-dashboard`; it is not yet merged or deployed. The slice adds:
+Priority 1 was reviewed in PR #62, passed both protected CI runs, and was deployed as
+protected-main commit `3ded900d2320e892026be36f6a7785098989aae8` by production run
+`38522156745`. The slice adds:
 
 - Analytics navigation plus an authorized site selector that defaults to the first
   active authorized site;
@@ -151,9 +152,28 @@ deduplicates prior rows, adds the bounded query index, and grants the platform r
 least-privilege reads needed for analytics evidence while preserving tenant/site RLS for
 application and worker roles.
 
+## Priority 2 release candidate: Google ingestion hardening
+
+The active branch is `feature/google-ingestion-hardening`, created from the deployed
+Priority 1 commit. It replaces the single Search Console detailed request with separate
+date-only property totals, date/query detail, and date/page detail. This prevents KPI
+totals from being inferred by summing privacy-filtered query/page/country/device rows.
+The branch adds bounded Search Console `startRow` and GA4 `offset` pagination, stable GA4
+ordering, versioned collection diagnostics, explicit partial/truncated state, actionable
+safe failure codes, and continuation of the other mapped property when one collection
+fails. Legacy observations remain a per-date fallback only when the new grain is absent,
+preventing overlapping old/new rows from being counted twice.
+
+It also records the last collection attempt independently from the last successfully
+stored result, clears old scoped observations atomically when a connection is remapped
+to a different provider property, and exposes bounded sync-window diagnostics without
+provider response bodies. Repository and disposable production-Compose verification are
+complete; the work remains repository-only until its own PR, protected checks, merge,
+and deployment complete.
+
 ## Verification evidence
 
-The current branch has passed:
+The deployed Priority 1 slice passed:
 
 - TypeScript typecheck and ESLint;
 - 66 unit-test files: 350 passed, 1 skipped;
@@ -181,6 +201,20 @@ client because concurrent client queries are deprecated for removal in `pg` 9.
 Repository-wide Prettier is not a clean baseline signal in this Windows checkout because
 many untouched files have CRLF normalization. Changed files still require targeted
 formatting, and protected Linux CI is authoritative.
+
+PR #62 and production run `38522156745` completed successfully. Independent checks after
+deployment returned 200 for API readiness, OmniReach home, Terms, and the Coop site. An
+unauthenticated Analytics request returned 403, proving the page is not public. An
+authenticated employee-session rendering smoke remains pending because no session or
+purpose-built non-secret smoke credential is available; do not weaken MFA to obtain it.
+
+The Priority 2 release candidate passes 66 unit files (356 passed, 1 skipped), 12
+integration files (70 passed), 15 security files (72 passed), 2 contract files (10
+passed), and 5 Playwright tests, plus typecheck, lint, build, documentation, Compose,
+workflow, 58-migration, Prisma-schema, changed-file formatting, full secret-scan, and
+production dependency-audit gates. The disposable production Compose verifier applied
+all 58 migrations and repeated the restricted-role analytics, authentication, isolation,
+persistence, availability, six-worker, and credential-metadata checks successfully.
 
 ## Production/provider readiness
 
@@ -226,15 +260,15 @@ access, or modify shared Caddy/Christians Reunite outside an explicitly reviewed
 
 Next steps:
 
-1. Review the complete Priority 1 diff and migration and confirm changed-file formatting.
-2. Commit and push `feature/orap-analytics-dashboard`; open a pull request and require
-   protected CI.
-3. Merge only after required checks pass and protections permit it.
-4. Allow the protected `main` workflow to deploy, then perform readiness and authenticated
-   Analytics smoke checks without weakening MFA or hostname/session controls.
-5. Keep production metrics unreconciled until compared with the exact Google consoles.
-6. Continue Priority 2 ingestion diagnostics, backoff, mapping, and partial-backfill
-   coverage as tracked in `docs/overnight-goal-progress.md`.
+1. Publish `feature/google-ingestion-hardening` through a separate PR, protected CI, and
+   protected-main deployment.
+2. Perform the authenticated Analytics smoke only with a normal verified employee
+   session or purpose-built non-secret smoke credential; do not weaken MFA.
+3. Keep production metrics unreconciled until stored results are compared with the exact
+   Google source consoles, including date window, property time zone, lag, filters, and
+   metric semantics.
+4. Continue Priority 3 repository-side off-site backup readiness after the Priority 2
+   release gate.
 
 ## Authoritative references
 

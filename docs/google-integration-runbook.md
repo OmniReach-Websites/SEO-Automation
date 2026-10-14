@@ -14,7 +14,40 @@
 
 ## Runtime behavior
 
-State, nonce and PKCE material are short-lived and one-use. Tokens are encrypted with tenant/site-bound authenticated encryption. Refresh and provider calls use bounded retry/backoff. The runner receives only an opaque tenant/site job envelope, rehydrates connected properties under worker RLS, reads the preceding eight days (to absorb delayed Google data), and upserts snapshots idempotently by stable observation identity. That identity contains the connection, source, metric, canonical dimensions and UTC window; it deliberately excludes the value so a Google re-finalization replaces the prior observation instead of double counting it. GA4 and Search Console remain separate sources.
+State, nonce and PKCE material are short-lived and one-use. Tokens are encrypted with
+tenant/site-bound authenticated encryption. Refresh and provider calls use at most four
+attempts with bounded exponential or `Retry-After` backoff. The runner receives only an
+opaque tenant/site job envelope, rehydrates connected properties under worker RLS,
+reads the preceding eight days (to absorb delayed Google data), and upserts snapshots
+idempotently by stable observation identity. That identity contains the connection,
+source, metric, canonical dimensions and UTC window; it deliberately excludes the value
+so a Google re-finalization replaces the prior observation instead of double counting
+it. GA4 and Search Console remain separate sources.
+
+The daily schedule is 04:00 UTC plus deterministic site jitter of up to 30 minutes. The
+deduplicated schedule window, durable job row, BullMQ job ID, job lease, and runner
+concurrency of one prevent overlapping work in the initial deployment. A stale queued
+job after the final disconnect cancels without contacting Google.
+
+Search Console is collected in three separate grains:
+
+- date-only property totals for accurate KPI/time-series aggregation;
+- date + query for the bounded Top Search Queries table;
+- date + page for the bounded landing-page table.
+
+Each grain follows Google's `startRow` pagination contract. GA4 source/medium rows use
+stable dimension ordering plus `offset`, `limit`, and returned `rowCount`. The default
+budget is four pages of 25,000 rows per dataset and is hard-bounded in code. If a dataset
+exceeds that budget, the rows already obtained are stored, the connection is marked
+`partial`, `collection_truncated` is recorded, and the versioned sync cursor records the
+window, dataset, pages, rows, provider total when available, and completion flag. The
+dashboard therefore never presents a bounded result as a complete backfill. Search
+Console can also omit anonymized or low-volume queries even when paging is complete.
+
+The provider contracts are documented by Google's official
+[Search Analytics query](https://developers.google.com/webmaster-tools/v1/searchanalytics/query)
+and [GA4 runReport](https://developers.google.com/analytics/devguides/reporting/data/v1/rest/v1beta/properties/runReport)
+references.
 
 Reports show source, window, last refresh, availability and caveats. Search Console clicks/impressions/CTR/position are not interchangeable with GA4 sessions/users. AI-referral classifications are mapped observations, not proof of ranking or citation.
 
@@ -28,7 +61,10 @@ configured time zone. Custom ranges are inclusive and limited to 90 days. The co
 window is the immediately preceding, equal-length, non-overlapping set of source date
 labels. Cross-source day boundaries may therefore differ and the dashboard says so.
 
-- Search clicks and impressions are additive across stored Search Console rows.
+- Search clicks and impressions use the date-only property-total grain. Query/page
+  detail is never added to those totals. During the forward migration, a source date
+  uses the new grain when present and otherwise falls back to the prior detailed grain,
+  so overlapping old/new observations are not double counted.
 - Search CTR is total clicks divided by total impressions. Row CTR values are never
   summed or averaged.
 - Average position is weighted by impressions across stored observations and is labeled
@@ -54,19 +90,25 @@ not promise traffic or ranking changes. Work events are shown beside outcomes fo
 and are labeled as correlation rather than causation.
 
 The data-quality panel displays the exact connected property ID and verified mapping,
-available persisted period, last successful sync, connection state and safe provider
-failure code. Those identifiers are visible only after ORAP authorization for the site.
-They must never be returned for a site outside the actor's capability scope.
+available persisted period, last successful sync, connection state, safe provider
+failure code, and the validated versioned collection-window diagnostics. Actionable safe
+codes distinguish missing properties, expired/revoked authorization, missing refresh
+permission, insufficient scope, quota throttling, provider outage, generic rejection,
+and a bounded partial result. Provider bodies, tokens, and credentials are never stored
+in these diagnostics. Those identifiers are visible only after ORAP authorization for
+the site. They must never be returned for a site outside the actor's capability scope.
 
 Disconnect immediately stops collection, revokes the provider token when possible and marks retained metrics subject to the approved retention/deletion policy. A failed provider revocation is visible for follow-up; it does not pretend success.
 
 ## Test and activation state
 
 Fixture tests cover redirect allowlisting, callback replay, scopes, token encryption,
-exact property mapping, quota retries, pagination/normalization, stable observation
-identity, schema/RLS, direct-object authorization, bounded aggregation, UTC windows,
-provider calendar semantics, comparison rows, exact authorized property diagnostics,
-empty/unsupported states and accessible responsive rendering. The owner has reported the
-intended properties connected, but production reporting remains **Waiting** on a stored
-first-sync reconciliation with those exact Google source consoles. Never replace that
-state with synthetic measurements or OAuth-success evidence alone.
+exact property mapping, missing properties, expired authorization, quota retries,
+bounded pagination/normalization, partial backfills, continuation across one connection
+failure, stable observation identity, schema/RLS, direct-object authorization, bounded
+aggregation, UTC windows, provider calendar semantics, comparison rows, exact authorized
+property diagnostics, empty/unsupported states and accessible responsive rendering. The
+owner has reported the intended properties connected, but production reporting remains
+**Waiting** on a stored first-sync reconciliation with those exact Google source
+consoles. Never replace that state with synthetic measurements or OAuth-success evidence
+alone.

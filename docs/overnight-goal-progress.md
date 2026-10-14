@@ -2,7 +2,7 @@
 
 **Started:** 2026-10-13 (America/Chicago)
 
-**Working branch:** `feature/orap-analytics-dashboard`
+**Working branch:** `feature/google-ingestion-hardening`
 **Source goal:** `OMNIREACH_AUTONOMOUS_OVERNIGHT_GOAL.md`
 
 This file is the durable resume point for the autonomous overnight goal. Evidence states
@@ -12,13 +12,12 @@ work, `WAITING_FOR_OWNER` needs a human decision/credential, and
 
 ## Current milestone
 
-- `IN_PROGRESS` — Priority 1: ORAP Analytics & SEO Performance dashboard is implemented
-  on the feature branch and has passed the full proportional repository and disposable
-  production-compose gates. Review, protected-main deployment, and production smoke
-  evidence remain.
-- Current focus: publish the reviewed, formatting-clean slice through the protected
-  GitHub workflow. Production Google values remain unverified until an exact
-  source-console reconciliation succeeds.
+- `IN_PROGRESS` — Priority 2 repository work is complete and fully verified on
+  `feature/google-ingestion-hardening`; protected PR/release evidence is next. Priority
+  1 is merged and deployed. An authenticated employee-session dashboard smoke and exact
+  source-console reconciliation remain separate live-proof gaps.
+- Current focus: publish the reviewed Google ingestion hardening through the protected
+  workflow, then continue Priority 3 repository-side off-site backup readiness.
 
 ## Priority checklist
 
@@ -34,14 +33,16 @@ work, `WAITING_FOR_OWNER` needs a human decision/credential, and
 - [x] Work-performed timeline aligned with outcomes and labeled as correlation.
 - [x] Integration/data-quality/freshness panel and honest partial states.
 - [x] API/service authorization, RLS, query-bound, timezone, empty/stale, and UI tests.
-- [ ] PR, protected CI, deployment, and production smoke evidence.
+- [x] PR, protected CI, protected-main deployment, readiness/public smoke, and
+      unauthenticated route-denial evidence.
+- [ ] `WAITING_FOR_PRODUCTION_PROOF` — authenticated employee-session dashboard smoke.
 
 ### P2 — Google ingestion hardening
 
-- [ ] Verify schedule, concurrency, mapping, backoff, and sync status.
+- [x] Verify schedule, concurrency, mapping, backoff, and sync status.
 - [x] Replace value-dependent source hashes with stable observation identity and a
       correction-safe upsert; add migration and focused tests.
-- [ ] Add diagnostics and wrong/missing/expired/throttled/partial-backfill tests.
+- [x] Add diagnostics and wrong/missing/expired/throttled/partial-backfill tests.
 - [ ] `WAITING_FOR_PRODUCTION_PROOF` — compare stored data with the exact Google source
       consoles; OAuth success alone is insufficient.
 
@@ -152,10 +153,65 @@ work, `WAITING_FOR_OWNER` needs a human decision/credential, and
 - Added `docs/omnireach-handoff-context-2026-10-14.md` as the new first-read handoff and
   marked the October 13 snapshot as historical.
 
+### 2026-10-14 UTC — Priority 1 protected release
+
+- Committed the coherent slice as `c6c260e`, pushed only
+  `feature/orap-analytics-dashboard`, opened and attached
+  [PR #62](https://github.com/OmniReach-Websites/SEO-Automation/pull/62), and observed both
+  protected Branch CI runs pass.
+- Squash-merged through GitHub as protected-main commit
+  `3ded900d2320e892026be36f6a7785098989aae8`. Production deployment run
+  [38522156745](https://github.com/OmniReach-Websites/SEO-Automation/actions/runs/38522156745)
+  passed the exact-commit test/build, immutable image/package, ephemeral restricted SSH,
+  activation, Coop/OmniReach/SEO verification, and identity-removal steps.
+- Independent post-deployment checks returned 200 for API readiness, OmniReach home,
+  Terms, and Coop. An unauthenticated `/orap/analytics` request returned 403, confirming
+  the page is not public. An authenticated employee-session rendering smoke remains
+  `WAITING_FOR_PRODUCTION_PROOF`; no MFA or session safeguard was weakened to obtain it.
+
+### 2026-10-14 UTC — Priority 2 ingestion hardening started
+
+- Created `feature/google-ingestion-hardening` from deployed protected-main commit
+  `3ded900d` and verified the official Search Console `startRow`/25,000-row and GA4
+  `offset`/`limit`/`rowCount` pagination contracts.
+- Replaced the single Search Console request grain with independent property-total,
+  query, and landing-page grains so KPI totals are not inferred by summing privacy-
+  filtered detailed rows. Added bounded pagination for every grain and GA4, a stable GA4
+  order, validated versioned collection diagnostics, explicit `partial`/
+  `collection_truncated` state, and legacy-date fallback without old/new double counts.
+- The runner now continues the other mapped property after one connection fails, then
+  surfaces a safe aggregate retryable/permanent job error. A queued job with no connected
+  property cancels without a provider call. Provider classification now distinguishes
+  missing property, expired authorization, insufficient scope, quota exhaustion,
+  provider outage, and generic rejection without storing provider bodies.
+- Typecheck and 17 focused Google/analytics unit tests pass, including bounded Search
+  and GA pagination, expired authorization, throttling/backoff, correction-safe identity,
+  partial diagnostics, cross-property continuation, and the new aggregate grain SQL.
+
+### 2026-10-14 UTC — Priority 2 repository verification complete
+
+- Added a durable `last_attempted_at` marker so ORAP distinguishes a recent failed
+  collection attempt from the last successfully stored result. Remapping a connection
+  to a different provider property now removes the old property's scoped snapshots and
+  clears its sync cursor/status inside the same transaction, preventing old observations
+  from being relabeled under a new property.
+- Full evidence passed: 66 unit-test files (356 passed, 1 skipped), 12 integration-test
+  files (70 passed), 15 security-test files (72 passed), 2 contract-test files (10
+  passed), and 5 Playwright tests. Typecheck, lint, build, documentation, Compose,
+  workflow, 58-migration, Prisma-schema, changed-file formatting, full secret scan (582
+  files, zero findings), and production dependency audit (zero vulnerabilities) passed.
+- The disposable production Compose verifier applied all 58 migrations and then passed
+  the restricted-role analytics query, PostgreSQL/Redis authentication, private network
+  isolation, API readiness, persistence after restart, static-site availability during
+  control-plane restart, all six worker kinds, and rendered configuration/container
+  metadata secret checks. It removed its disposable resources after success.
+- Exact production Google-value reconciliation remains
+  `WAITING_FOR_PRODUCTION_PROOF`; no claim of provider-value correctness has been made
+  from OAuth success alone.
+
 ## Resume point
 
-Continue Priority 1 from `feature/orap-analytics-dashboard`. Commit the reviewed slice
-and use a pull request plus protected `main`. After deployment, perform authorized
-ORAP/API smoke checks without treating unreconciled Google values as
-production-verified. Then continue Priority 2 Google ingestion diagnostics and
-failure-mode coverage.
+Publish `feature/google-ingestion-hardening` through a separate PR and protected `main`,
+observe the deployment, and record smoke evidence. Then begin Priority 3 safe
+repository-only off-site backup readiness. Preserve the two explicit production-proof
+gaps: authenticated Analytics rendering and exact Google-console reconciliation.

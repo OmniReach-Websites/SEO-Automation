@@ -101,12 +101,27 @@ describe('ORAP analytics model', () => {
             {
               availableEndDate: '2026-10-12',
               availableStartDate: '2026-10-01',
-              lastErrorCode: null,
+              lastAttemptedAt: '2026-10-13T04:10:00.000Z',
+              lastErrorCode: 'collection_truncated',
               lastSyncedAt: '2026-10-13T04:10:00.000Z',
               propertyId: 'sc-domain:example.test',
               propertyKind: 'search_console',
               propertyMapping: 'sc-domain:example.test',
-              status: 'connected',
+              status: 'partial',
+              syncWindow: {
+                complete: false,
+                diagnostics: [
+                  {
+                    complete: false,
+                    dataset: 'search_console_query',
+                    pageCount: 4,
+                    rows: 100_000,
+                    totalRows: null,
+                  },
+                ],
+                endDate: '2026-10-12',
+                startDate: '2026-10-05',
+              },
             },
           ],
           generatedAt: '2026-10-13T05:00:00.000Z',
@@ -202,6 +217,9 @@ describe('ORAP analytics model', () => {
     expect(html).toContain('aria-label="Daily analytics measurements"');
     expect(html).toContain('sc-domain:example.test');
     expect(html).toContain('2026-10-01 through 2026-10-12');
+    expect(html).toContain('Last collection window: 2026-10-05 through 2026-10-12 — partial');
+    expect(html).toContain('Search Console queries:');
+    expect(html).toContain('query or page detail may be partial');
     expect(html).toContain('Search impressions time series');
     expect(html).toContain('Search CTR time series');
     expect(html).toContain('Average search position time series');

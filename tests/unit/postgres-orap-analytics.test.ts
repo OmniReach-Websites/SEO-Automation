@@ -31,22 +31,40 @@ describe('PostgreSQL ORAP analytics', () => {
               {
                 available_end_date: '2026-10-12',
                 available_start_date: '2026-09-29',
+                last_attempted_at: '2026-10-13T04:10:00.000Z',
                 last_synced_at: new Date(),
                 property_id: 'sc-domain:example.test',
                 property_kind: 'search_console',
                 property_mapping: 'sc-domain:example.test',
                 refresh_failure_code: null,
                 status: 'connected',
+                sync_cursor: {
+                  complete: true,
+                  diagnostics: [
+                    {
+                      complete: true,
+                      dataset: 'search_console_property',
+                      pageCount: 1,
+                      rows: 7,
+                      totalRows: null,
+                    },
+                  ],
+                  endDate: '2026-10-12',
+                  startDate: '2026-10-05',
+                  version: 2,
+                },
               },
               {
                 available_end_date: '2026-10-12',
                 available_start_date: '2026-09-29',
+                last_attempted_at: '2026-10-13T04:10:00.000Z',
                 last_synced_at: new Date(),
                 property_id: 'properties/123456789',
                 property_kind: 'ga4',
                 property_mapping: 'https://example.test/',
                 refresh_failure_code: null,
                 status: 'connected',
+                sync_cursor: null,
               },
             ],
           };
@@ -191,8 +209,14 @@ describe('PostgreSQL ORAP analytics', () => {
     });
     expect(result.dataQuality.connections[0]).toMatchObject({
       availableEndDate: '2026-10-12',
+      lastAttemptedAt: '2026-10-13T04:10:00.000Z',
       propertyId: 'sc-domain:example.test',
       propertyMapping: 'sc-domain:example.test',
+      syncWindow: {
+        complete: true,
+        endDate: '2026-10-12',
+        startDate: '2026-10-05',
+      },
     });
     expect(result.technical).toMatchObject({
       failingPages: 1,
@@ -221,6 +245,17 @@ describe('PostgreSQL ORAP analytics', () => {
     ).toBe(true);
     expect(calls.find(({ sql }) => sql.includes("dimensions->>'query'"))?.sql).toContain(
       'ORDER BY ctr DESC',
+    );
+    expect(
+      calls.find(
+        ({ sql }) => sql.includes("source = 'search_console'") && sql.includes('GROUP BY day'),
+      )?.sql,
+    ).toContain("dimensions->>'aggregation' = 'property'");
+    expect(calls.find(({ sql }) => sql.includes("dimensions->>'query'"))?.sql).toContain(
+      "dimensions->>'aggregation' = 'query'",
+    );
+    expect(calls.find(({ sql }) => sql.includes("dimensions->>'page'"))?.sql).toContain(
+      "dimensions->>'aggregation' = 'page'",
     );
     expect(calls.find(({ sql }) => sql.includes("dimensions->>'query'"))?.values).toEqual([
       tenantId,

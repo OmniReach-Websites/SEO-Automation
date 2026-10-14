@@ -28,6 +28,7 @@ import {
   type AnalyticsAvailability,
   type AnalyticsKpi,
   type AnalyticsSearchRow,
+  type AnalyticsSyncWindow,
   type OrapAnalyticsDashboard,
   type OrapAnalyticsInput,
 } from './orap-analytics.ts';
@@ -857,17 +858,21 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
       const connectionsResult = await query<{
         available_end_date: Date | string | null;
         available_start_date: Date | string | null;
+        last_attempted_at: Date | string | null;
         last_synced_at: Date | string | null;
         property_id: string;
         property_kind: 'ga4' | 'search_console';
         property_mapping: string;
         refresh_failure_code: string | null;
         status: string;
+        sync_cursor: unknown;
       }>(
         client,
         `SELECT connection.property_kind, connection.property_id,
                   connection.property_mapping, connection.status,
-                  connection.last_synced_at, connection.refresh_failure_code,
+                  connection.last_synced_at, connection.last_attempted_at,
+                  connection.refresh_failure_code,
+                  connection.sync_cursor,
                   (SELECT min(snapshot.window_start)::date::text
                      FROM metric_snapshots snapshot
                     WHERE snapshot.tenant_id = $1 AND snapshot.site_id = $2
@@ -995,12 +1000,14 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
       const connections = connectionsResult.rows.map((connection) => ({
         availableEndDate: dateOnlyNullableString(connection.available_end_date),
         availableStartDate: dateOnlyNullableString(connection.available_start_date),
+        lastAttemptedAt: dateTimeString(connection.last_attempted_at),
         lastErrorCode: connection.refresh_failure_code,
         lastSyncedAt: dateTimeString(connection.last_synced_at),
         propertyId: connection.property_id,
         propertyKind: connection.property_kind,
         propertyMapping: connection.property_mapping,
         status: connection.status,
+        syncWindow: analyticsSyncWindow(connection.sync_cursor),
       }));
       const searchDaily = searchDailyResult.rows.map(toDailyPoint);
       const gaDaily = gaDailyResult.rows.map(toDailyPoint);
@@ -2534,15 +2541,30 @@ interface AnalyticsPeriodValues {
 }
 
 const searchDailySql = `WITH observation AS (
-  SELECT window_start::date AS day, dimensions,
+  SELECT snapshot.window_start::date AS day, snapshot.dimensions,
          max(value) FILTER (WHERE metric = 'clicks') AS clicks,
          max(value) FILTER (WHERE metric = 'impressions') AS impressions,
          max(value) FILTER (WHERE metric = 'position') AS position
-    FROM metric_snapshots
-   WHERE tenant_id = $1 AND site_id = $2 AND source = 'search_console'
-     AND window_start >= $3::date
-     AND window_start < ($4::date + interval '1 day')
-   GROUP BY window_start::date, dimensions
+    FROM metric_snapshots snapshot
+   WHERE snapshot.tenant_id = $1 AND snapshot.site_id = $2
+     AND snapshot.source = 'search_console'
+     AND snapshot.window_start >= $3::date
+     AND snapshot.window_start < ($4::date + interval '1 day')
+     AND (
+       snapshot.dimensions->>'aggregation' = 'property'
+       OR (
+         snapshot.dimensions->>'aggregation' IS NULL
+         AND NOT EXISTS (
+           SELECT 1 FROM metric_snapshots replacement
+            WHERE replacement.tenant_id = snapshot.tenant_id
+              AND replacement.site_id = snapshot.site_id
+              AND replacement.source = snapshot.source
+              AND replacement.window_start::date = snapshot.window_start::date
+              AND replacement.dimensions->>'aggregation' = 'property'
+         )
+       )
+     )
+   GROUP BY snapshot.window_start::date, snapshot.dimensions
 )
 SELECT day::text,
        COALESCE(sum(clicks), 0)::text AS clicks,
@@ -2582,18 +2604,33 @@ function searchDimensionSql(
 ): string {
   const direction = orderBy === 'position' ? 'ASC' : 'DESC';
   return `WITH observation AS (
-    SELECT COALESCE(NULLIF(dimensions->>'${dimension}', ''), 'Unknown ${dimension}') AS label,
-           window_start::date AS day,
-           dimensions,
+    SELECT COALESCE(NULLIF(snapshot.dimensions->>'${dimension}', ''), 'Unknown ${dimension}') AS label,
+           snapshot.window_start::date AS day,
+           snapshot.dimensions,
            max(value) FILTER (WHERE metric = 'clicks') AS clicks,
            max(value) FILTER (WHERE metric = 'impressions') AS impressions,
            max(value) FILTER (WHERE metric = 'position') AS position
-      FROM metric_snapshots
-     WHERE tenant_id = $1 AND site_id = $2 AND source = 'search_console'
-       AND window_start >= $3::date
-       AND window_start < ($6::date + interval '1 day')
-     GROUP BY COALESCE(NULLIF(dimensions->>'${dimension}', ''), 'Unknown ${dimension}'),
-              window_start::date, dimensions
+      FROM metric_snapshots snapshot
+     WHERE snapshot.tenant_id = $1 AND snapshot.site_id = $2
+       AND snapshot.source = 'search_console'
+       AND snapshot.window_start >= $3::date
+       AND snapshot.window_start < ($6::date + interval '1 day')
+       AND (
+         snapshot.dimensions->>'aggregation' = '${dimension}'
+         OR (
+           snapshot.dimensions->>'aggregation' IS NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM metric_snapshots replacement
+              WHERE replacement.tenant_id = snapshot.tenant_id
+                AND replacement.site_id = snapshot.site_id
+                AND replacement.source = snapshot.source
+                AND replacement.window_start::date = snapshot.window_start::date
+                AND replacement.dimensions->>'aggregation' = '${dimension}'
+           )
+         )
+       )
+     GROUP BY COALESCE(NULLIF(snapshot.dimensions->>'${dimension}', ''), 'Unknown ${dimension}'),
+              snapshot.window_start::date, snapshot.dimensions
   ), aggregate AS (
     SELECT label,
            COALESCE(sum(clicks) FILTER (WHERE day >= $5::date AND day <= $6::date), 0)
@@ -2997,6 +3034,70 @@ function findingPage(evidence: unknown): string | null {
   } catch {
     return null;
   }
+}
+
+function analyticsSyncWindow(value: unknown): AnalyticsSyncWindow | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const cursor = value as Record<string, unknown>;
+  if (
+    cursor.version !== 2 ||
+    typeof cursor.complete !== 'boolean' ||
+    !analyticsDate(cursor.startDate) ||
+    !analyticsDate(cursor.endDate) ||
+    !Array.isArray(cursor.diagnostics) ||
+    cursor.diagnostics.length > 4
+  ) {
+    return null;
+  }
+  const allowedDatasets = new Set<AnalyticsSyncWindow['diagnostics'][number]['dataset']>([
+    'ga4_source_medium',
+    'search_console_page',
+    'search_console_property',
+    'search_console_query',
+  ]);
+  const diagnostics: AnalyticsSyncWindow['diagnostics'][number][] = [];
+  for (const value of cursor.diagnostics) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const diagnostic = value as Record<string, unknown>;
+    if (
+      typeof diagnostic.complete !== 'boolean' ||
+      typeof diagnostic.dataset !== 'string' ||
+      !allowedDatasets.has(
+        diagnostic.dataset as AnalyticsSyncWindow['diagnostics'][number]['dataset'],
+      ) ||
+      !boundedDiagnosticInteger(diagnostic.pageCount, 16) ||
+      !boundedDiagnosticInteger(diagnostic.rows, 400_000) ||
+      !(
+        diagnostic.totalRows === null ||
+        boundedDiagnosticInteger(diagnostic.totalRows, 2_147_483_647)
+      )
+    ) {
+      return null;
+    }
+    diagnostics.push({
+      complete: diagnostic.complete,
+      dataset: diagnostic.dataset as AnalyticsSyncWindow['diagnostics'][number]['dataset'],
+      pageCount: diagnostic.pageCount,
+      rows: diagnostic.rows,
+      totalRows: diagnostic.totalRows,
+    });
+  }
+  return {
+    complete: cursor.complete,
+    diagnostics,
+    endDate: cursor.endDate,
+    startDate: cursor.startDate,
+  };
+}
+
+function analyticsDate(value: unknown): value is string {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/u.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function boundedDiagnosticInteger(value: unknown, maximum: number): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= maximum;
 }
 
 function dateTimeString(value: Date | string | null | undefined): string | null {
