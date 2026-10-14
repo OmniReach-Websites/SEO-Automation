@@ -73,7 +73,8 @@ for secret_name in \
   mfa_encryption_key \
   preview_signing_key \
   contact_encryption_key \
-  google_token_encryption_key
+  google_token_encryption_key \
+  backup_encryption_key
 do
   generate_secret "$secret_name"
 done

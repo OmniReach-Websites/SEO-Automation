@@ -69,7 +69,9 @@ manifest/checksum. Automated deletion is permitted only when enforcing the produ
 7-daily/4-weekly policy, so the development profile must alert and pause on capacity
 pressure rather than automatically prune to its 3-daily/2-weekly target.
 
-The repository tooling and disposable verification harness are implemented. No host
-directory, schedule, real bucket, production backup, pruning, transfer or spending is
-created or performed without separate explicit authorization. See
-`docs/offsite-backup.md` for activation and restore evidence.
+The repository includes a hardened Compose operation, a systemd service/timer, and the
+`tooling/configure-r2-backup.ps1` operator provisioner. Installation remains an explicit
+owner-authorized action: it transfers only the four R2 settings from the ignored local
+`.env`, generates the encryption key on the VPS, enables the daily timer, and optionally
+runs the first verified backup. See `docs/offsite-backup.md` for activation and restore
+evidence.

@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the OmniReach encrypted backup daily
+
+[Timer]
+OnCalendar=*-*-* 02:30:00 America/Chicago
+Persistent=true
+RandomizedDelaySec=15m
+Unit=omnireach-backup.service
+
+[Install]
+WantedBy=timers.target

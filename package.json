@@ -60,6 +60,7 @@
     "verify:deploy-harness": "node tooling/verify-deploy-harness.mjs",
     "verify:backup-harness": "node tooling/verify-backup-harness.mjs",
     "verify:offsite-backup": "node tooling/verify-offsite-backup.mjs",
+    "verify:backup-service": "node tooling/verify-backup-service.mjs",
     "verify:queue-runtime": "node --experimental-transform-types tooling/verify-queue-runtime.ts",
     "verify:ai-budget": "node --experimental-transform-types tooling/verify-ai-budget.ts",
     "verify:ai-proposal-benchmark": "node --experimental-transform-types tooling/verify-ai-proposal-benchmark.ts",

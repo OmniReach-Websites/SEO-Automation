@@ -331,6 +331,42 @@ services:
     pids_limit: 96
     stop_grace_period: 45s
 
+  backup:
+    profiles: ['operations']
+    image: omnireach-migrator:${OMNIREACH_RELEASE_SHA:?Set OMNIREACH_RELEASE_SHA to the verified commit SHA}
+    entrypoint: ['/opt/omnireach/infrastructure/backups/run-production-backup.sh']
+    env_file:
+      - path: ${OMNIREACH_ENV_FILE:?Set OMNIREACH_ENV_FILE to the host-only production environment file}
+        required: true
+    environment:
+      SOURCE_COMMIT_SHA: ${OMNIREACH_RELEASE_SHA}
+    init: true
+    networks:
+      - backend
+      - egress
+    restart: 'no'
+    read_only: true
+    secrets:
+      - postgres_admin_password
+      - postgres_app_password
+      - backup_encryption_key
+      - r2_access_key_id
+      - r2_secret_access_key
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cpus: 0.5
+    mem_limit: 1g
+    pids_limit: 128
+    tmpfs:
+      - /run/backup-runtime:size=16m,mode=0700
+      - /tmp:size=256m,mode=1777
+    volumes:
+      - platform-data:/var/lib/omnireach:ro
+      - ${OMNIREACH_BACKUP_ROOT:-/opt/backups/omnireach}:/var/backups/omnireach
+    logging: *production-logging
+
   coops-mobile-detailing:
     image: omnireach-runtime:${OMNIREACH_RELEASE_SHA:?Set OMNIREACH_RELEASE_SHA to the verified commit SHA}
     profiles: ['application']
@@ -448,3 +484,9 @@ secrets:
     file: ${OMNIREACH_SECRETS_DIR}/contact_encryption_key
   google_token_encryption_key:
     file: ${OMNIREACH_SECRETS_DIR}/google_token_encryption_key
+  backup_encryption_key:
+    file: ${OMNIREACH_SECRETS_DIR}/backup_encryption_key
+  r2_access_key_id:
+    file: ${OMNIREACH_SECRETS_DIR}/r2_access_key_id
+  r2_secret_access_key:
+    file: ${OMNIREACH_SECRETS_DIR}/r2_secret_access_key

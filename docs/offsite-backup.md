@@ -62,16 +62,64 @@ have been deleted.
 
 Target cadence is daily, 7 daily plus 4 weekly recovery points, daily integrity verification and monthly full isolated restore. The 24-hour RPO and 8-hour RTO are planning targets until measured by a timed production-data-volume drill. Backup failure, off-site upload/verification failure, stale latest recovery point and restore failure create operational alerts without secret/object contents.
 
+## Production service installation
+
+The production service runs as a hardened, one-shot Compose operation from the current
+immutable release. PostgreSQL and platform data remain on their private networks and
+volumes. The backup container receives the database passwords, R2 access-key pair, and
+backup-encryption key through Docker secret files. It builds temporary database URLs
+inside a private container tmpfs; they are not command arguments, Docker environment
+metadata, Git content, or systemd unit values.
+
+From the repository root on the approved operator workstation, populate only
+`R2_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY_ID`, and `R2_SECRET_ACCESS_KEY` in the ignored
+`.env` file, then run:
+
+```powershell
+pwsh -File tooling/configure-r2-backup.ps1
+```
+
+The provisioner transfers only those four settings over the authenticated SSH session.
+The VPS installer writes the R2 pair into root-owned secret files, generates the
+independent AES-256 backup key directly on the VPS when absent, strips any backup-secret
+keys from `production.env`, installs the systemd service/timer, and requests the first
+backup. It never prints secret values. Use `-SkipFirstBackup` only when installing the
+timer before a separately scheduled first run.
+
+The timer runs daily at 02:30 America/Chicago with up to 15 minutes of jitter and
+catch-up after downtime. Each successful run:
+
+1. produces a custom-format PostgreSQL dump and inventories assets, publications, and a
+   non-secret release/configuration descriptor;
+2. encrypts and verifies the local archive;
+3. uploads archive and manifest to the private R2 prefix;
+4. downloads and authenticates the uploaded archive as a separate-copy check; and
+5. applies only the approved automated 7-daily/4-weekly retention selector locally and
+   off-site, with a protected deletion audit log.
+
+Inspect status without reading any secret file:
+
+```text
+systemctl status omnireach-backup.timer --no-pager
+systemctl status omnireach-backup.service --no-pager
+systemctl list-timers omnireach-backup.timer --no-pager
+journalctl -u omnireach-backup.service --since today --no-pager
+```
+
+The service output is intentionally limited to non-secret completion metadata. Do not
+copy the environment file, Docker secret files, archive contents, or credential values
+into tickets, chat, logs, or Git.
+
 ## Cost worksheet
 
 Record compressed encrypted database size, media/artifact size, daily change rate, 7+4 retained bytes, monthly requests/egress and provider price at approval time. Add a safety margin and compare against the proposed $5 monthly ceiling. The owner authorized and created the dedicated R2 bucket and credential on 2026-10-13; this does not authorize paid overages, a production schedule, or manual backup deletion.
 
-## Production activation — Waiting
+## Production activation evidence
 
 - [x] dedicated private R2 bucket and least-privilege object-list/get/put/delete credential scoped to that bucket; application-side key validation restricts operations to `omnireach/`;
 - [x] one non-backup transport probe uploaded, downloaded and checksum-verified, listed, and removed successfully;
-- encryption key and R2 credential have separate custodians/storage;
-- a host-only job and failure notification are reviewed and enabled;
+- [ ] encryption key and R2 credential are installed as separate host-only secret files;
+- [ ] the host-only systemd timer is enabled and a failure is observable in ORAP;
 - first upload verifies from a separate download;
 - a monthly disposable restore verifies migrations, tenant isolation, counts, media links and a known published artifact;
 - measured RPO/RTO and cost are recorded before the capability is called Live.
