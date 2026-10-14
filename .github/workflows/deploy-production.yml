@@ -49,7 +49,7 @@ jobs:
     environment: production
     steps:
       - name: Check out exact source
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -182,7 +182,7 @@ jobs:
     environment: production
     steps:
       - name: Check out main history for ancestry verification
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
@@ -204,7 +204,7 @@ jobs:
           git -C bridge-verification merge-base --is-ancestor "${ROLLBACK_SHA}" "${CANDIDATE_SHA}"
 
       - name: Check out exact candidate source
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.candidate_sha }}
           fetch-depth: 0
@@ -251,7 +251,7 @@ jobs:
           sha256sum "${RELEASE_SHA}.tgz" > "${RELEASE_SHA}.tgz.sha256"
 
       - name: Check out exact reviewed rollback source
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.rollback_sha }}
           fetch-depth: 0
