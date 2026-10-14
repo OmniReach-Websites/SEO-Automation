@@ -28,6 +28,7 @@ export function checkProductionCompose() {
     'crawler',
     'seo',
     'monitoring',
+    'backup',
   ];
 
   if (compose.name !== 'omnireach-production') errors.push('unexpected production project name');
@@ -178,6 +179,44 @@ export function checkProductionCompose() {
     errors.push('monitoring must consume only the health_check queue');
   }
 
+  const backup = compose.services?.backup;
+  if (!(backup?.profiles ?? []).includes('operations')) {
+    errors.push('backup must be isolated behind the operations profile');
+  }
+  if (!String(backup?.image ?? '').startsWith('omnireach-migrator:')) {
+    errors.push('backup must use the immutable migrator image with PostgreSQL client support');
+  }
+  if (
+    backup?.entrypoint?.[0] !== '/opt/omnireach/infrastructure/backups/run-production-backup.sh'
+  ) {
+    errors.push('backup must use the hardened production backup entrypoint');
+  }
+  for (const network of ['backend', 'egress']) {
+    if (!(backup?.networks ?? []).includes(network)) errors.push(`backup is missing ${network}`);
+  }
+  for (const secret of [
+    'postgres_admin_password',
+    'postgres_app_password',
+    'backup_encryption_key',
+    'r2_access_key_id',
+    'r2_secret_access_key',
+  ]) {
+    if (!(backup?.secrets ?? []).includes(secret))
+      errors.push(`backup is missing secret ${secret}`);
+  }
+  if (backup?.read_only !== true || !(backup?.cap_drop ?? []).includes('ALL')) {
+    errors.push('backup must use a read-only, capability-dropped container');
+  }
+  if (!backup?.cpus || !backup?.mem_limit || !backup?.pids_limit) {
+    errors.push('backup is missing resource limits');
+  }
+  if (!(backup?.volumes ?? []).includes('platform-data:/var/lib/omnireach:ro')) {
+    errors.push('backup must mount platform data read-only');
+  }
+  if (!(backup?.volumes ?? []).some((value) => String(value).endsWith(':/var/backups/omnireach'))) {
+    errors.push('backup must mount the dedicated host backup directory');
+  }
+
   const declaredVolumes = ['platform-data', 'postgres-data', 'redis-data'];
   for (const volume of declaredVolumes) {
     if (!compose.volumes?.[volume]?.name?.includes('OMNIREACH_RESOURCE_PREFIX')) {
@@ -218,6 +257,9 @@ export function checkProductionCompose() {
   const bootstrap = readFileSync(resolve(scriptsDirectory, 'bootstrap-secrets.sh'), 'utf8');
   if (!bootstrap.includes('openssl rand -hex 32')) errors.push('bootstrap lacks strong generation');
   if (!bootstrap.includes('if [ -e "$target" ]')) errors.push('bootstrap is not idempotent');
+  if (!bootstrap.includes('backup_encryption_key')) {
+    errors.push('bootstrap does not generate the host-only backup encryption key');
+  }
   if (/set\s+-x/u.test(bootstrap)) errors.push('bootstrap may echo secret-bearing commands');
 
   const indexedModes = execFileSync(
@@ -232,6 +274,9 @@ export function checkProductionCompose() {
       'infrastructure/deploy/configure-coops-site-route.sh',
       'infrastructure/deploy/configure-coops-admin-route.sh',
       'infrastructure/deploy/configure-omnireach-public-route.sh',
+      'infrastructure/backups/run-production-backup.sh',
+      'infrastructure/backups/run-host-backup.sh',
+      'infrastructure/backups/install-backup-service.sh',
     ],
     { cwd: root, encoding: 'utf8' },
   );
@@ -243,10 +288,15 @@ export function checkProductionCompose() {
     '../../deploy/configure-coops-site-route.sh',
     '../../deploy/configure-coops-admin-route.sh',
     '../../deploy/configure-omnireach-public-route.sh',
+    '../../backups/run-production-backup.sh',
+    '../../backups/run-host-backup.sh',
+    '../../backups/install-backup-service.sh',
   ]) {
     const trackedPath = script.startsWith('../../deploy/')
       ? `infrastructure/deploy/${script.slice('../../deploy/'.length)}`
-      : `infrastructure/compose/scripts/${script}`;
+      : script.startsWith('../../backups/')
+        ? `infrastructure/backups/${script.slice('../../backups/'.length)}`
+        : `infrastructure/compose/scripts/${script}`;
     const line = indexedModes.split(/\r?\n/u).find((entry) => entry.endsWith(`\t${trackedPath}`));
     if (!line?.startsWith('100755 ')) errors.push(`${script} must be executable in Git`);
   }
@@ -332,6 +382,7 @@ export function checkProductionCompose() {
     '--target migrator',
     'omnireach-images.tar.gz',
     'omnireach-images.tar.gz.sha256',
+    'infrastructure/backups',
   ]) {
     if (!deployWorkflow.includes(expected)) {
       errors.push(`deployment artifact is missing ${expected}`);

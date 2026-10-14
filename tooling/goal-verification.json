@@ -231,6 +231,7 @@
   "G29": [
     ["npm", "run", "verify:backup-harness"],
     ["npm", "run", "verify:offsite-backup"],
+    ["npm", "run", "verify:backup-service"],
     ["npm", "run", "check:migrations"],
     ["npm", "run", "scan:secrets"]
   ],
@@ -260,6 +261,7 @@
     ["npm", "run", "verify:production-compose"],
     ["npm", "run", "verify:deploy-harness"],
     ["npm", "run", "verify:backup-harness"],
+    ["npm", "run", "verify:backup-service"],
     ["npm", "run", "verify:caddy"],
     [
       "npm",
