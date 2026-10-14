@@ -1383,6 +1383,8 @@ model BackupRecord {
   createdAt         DateTime  @map("created_at") @db.Timestamptz(3)
   verifiedAt        DateTime? @map("verified_at") @db.Timestamptz(3)
   offServerCopiedAt DateTime? @map("off_server_copied_at") @db.Timestamptz(3)
+  localPrunedAt      DateTime? @map("local_pruned_at") @db.Timestamptz(3)
+  offServerPrunedAt  DateTime? @map("off_server_pruned_at") @db.Timestamptz(3)
   restoreTestedAt   DateTime? @map("restore_tested_at") @db.Timestamptz(3)
   errorCode         String?   @map("error_code") @db.VarChar(100)
 

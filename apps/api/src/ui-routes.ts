@@ -18,6 +18,7 @@ import {
   renderOrapStaffDetails,
   renderOrapStaffInviteForm,
   type AlertRow,
+  type BackupStatusView,
   type BudgetView,
   type JobRow,
   type OrapNavigationItem,
@@ -1171,6 +1172,7 @@ function orapLandingPage(actor: AdminActor): string {
 
 function parseOperationsModel(value: unknown): {
   alerts: AlertRow[];
+  backup?: BackupStatusView | null;
   budget: BudgetView | null;
   jobs: JobRow[];
 } {
@@ -1238,10 +1240,50 @@ function parseOperationsModel(value: unknown): {
           }
         : undefined;
   if (parsedBudget === undefined) throw new Error('Operations budget model is unavailable');
+  const backup = parseBackupStatus(value.backup);
   return {
     alerts,
+    ...(backup !== undefined ? { backup } : {}),
     budget: parsedBudget,
     jobs,
+  };
+}
+
+function parseBackupStatus(value: unknown): BackupStatusView | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (!isRecord(value)) throw new Error('Operations backup model is unavailable');
+  const id = stringValue(value.id);
+  const kind = stringValue(value.kind);
+  const createdAt = stringValue(value.createdAt);
+  const state = stringValue(value.state);
+  const states = new Set<BackupStatusView['state']>(['failed', 'healthy', 'local_only', 'stale']);
+  if (
+    !id ||
+    !kind ||
+    !createdAt ||
+    !state ||
+    !states.has(state as BackupStatusView['state']) ||
+    typeof value.byteSize !== 'number' ||
+    !Number.isSafeInteger(value.byteSize) ||
+    value.byteSize < 0
+  ) {
+    throw new Error('Operations backup model is unavailable');
+  }
+  const errorCode = stringValue(value.errorCode);
+  const lastRestoreTestedAt = stringValue(value.lastRestoreTestedAt);
+  const offServerCopiedAt = stringValue(value.offServerCopiedAt);
+  const verifiedAt = stringValue(value.verifiedAt);
+  return {
+    byteSize: value.byteSize,
+    createdAt,
+    ...(errorCode ? { errorCode } : {}),
+    id,
+    kind,
+    ...(lastRestoreTestedAt ? { lastRestoreTestedAt } : {}),
+    ...(offServerCopiedAt ? { offServerCopiedAt } : {}),
+    state: state as BackupStatusView['state'],
+    ...(verifiedAt ? { verifiedAt } : {}),
   };
 }
 

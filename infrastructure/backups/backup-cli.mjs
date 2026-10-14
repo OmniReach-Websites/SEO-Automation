@@ -1,19 +1,22 @@
 #!/usr/bin/env node
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { appendFile, lstat, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import {
   createEncryptedBackup,
+  envelopeHashForFile,
   listBackupManifests,
   readBackupManifest,
   removeBackup,
   restoreEncryptedBackup,
   runLogicalDump,
+  runLogicalRestore,
   selectRetention,
   verifyEncryptedBackup,
 } from './backup.mjs';
+import { PostgresBackupRecords } from './postgres-records.mjs';
 import { S3CompatibleBackupStore } from './s3-compatible.mjs';
 
 export async function runBackupCli(argv, environment = process.env) {
@@ -34,6 +37,7 @@ async function createBackup(options, environment) {
   const kind = options.kind ?? 'daily';
   if (!['daily', 'weekly'].includes(kind)) throw new Error('Backup kind must be daily or weekly');
   const inputs = arrayOption(options, 'input').map(resolve);
+  const recorder = await recorderFromOptions(options);
   let temporary;
   try {
     if (options['database-url-file']) {
@@ -50,10 +54,16 @@ async function createBackup(options, environment) {
       encryptionKeyHex: key,
       inputPaths: inputs,
       kind,
+      maximumFiles: optionalIntegerEnvironment(environment.BACKUP_MAX_FILES, 100_000),
+      maximumSourceBytes: optionalIntegerEnvironment(
+        environment.BACKUP_MAX_SOURCE_BYTES,
+        512 * 1024 * 1024,
+      ),
     });
     const verified = await verifyEncryptedBackup({
       backupPath: backup.backupPath,
       encryptionKeyHex: key,
+      ...verificationLimits(environment),
     });
     let offsite;
     if (options.offsite) {
@@ -62,6 +72,25 @@ async function createBackup(options, environment) {
       const manifest = await store.upload(`${backup.backupPath}.manifest.json`);
       offsite = { archive, manifest };
     }
+    const verifiedAt = new Date();
+    if (recorder) {
+      await recorder.recordComplete({
+        byteSize: backup.byteSize,
+        createdAt: new Date(verified.createdAt),
+        envelopeHash: backup.envelopeHash,
+        keyVersion: optionalIntegerEnvironment(environment.BACKUP_KEY_VERSION, 1),
+        kind,
+        manifest: {
+          fileCount: verified.files.length,
+          formatVersion: verified.formatVersion,
+          sourceBytes: verified.sourceBytes,
+        },
+        ...(offsite ? { offServerCopiedAt: verifiedAt, offServerRef: offsite.archive.key } : {}),
+        storageRef: backup.backupPath,
+        verifiedAt,
+      });
+      await recorder.resolveFailureAlert();
+    }
     return safeResult({
       command: 'backup',
       createdAt: verified.createdAt,
@@ -69,10 +98,16 @@ async function createBackup(options, environment) {
       id: backup.id,
       localPath: backup.backupPath,
       offsite,
+      sourceBytes: backup.manifest.sourceBytes,
+      byteSize: backup.byteSize,
       verified: true,
     });
+  } catch (error) {
+    await reportBackupFailure(recorder, error, 'backup');
+    throw error;
   } finally {
     if (temporary) await rm(temporary, { force: true, recursive: true });
+    await recorder?.close();
   }
 }
 
@@ -93,6 +128,7 @@ async function listBackups(options, environment) {
 
 async function verifyBackup(options, environment) {
   const key = await readSecretFile(requiredOption(options, 'key-file'));
+  const recorder = await recorderFromOptions(options);
   let temporary;
   try {
     let backupPath = options.path;
@@ -102,7 +138,15 @@ async function verifyBackup(options, environment) {
       await storeFromEnvironment(environment).download(options['offsite-key'], backupPath);
     }
     if (!backupPath) throw new Error('--path or --offsite-key is required');
-    const manifest = await verifyEncryptedBackup({ backupPath, encryptionKeyHex: key });
+    const manifest = await verifyEncryptedBackup({
+      backupPath,
+      encryptionKeyHex: key,
+      ...verificationLimits(environment),
+    });
+    if (recorder) {
+      await recorder.recordVerification(await envelopeHashForFile(backupPath), new Date());
+      await recorder.resolveFailureAlert();
+    }
     return safeResult({
       command: 'verify',
       createdAt: manifest.createdAt,
@@ -110,8 +154,12 @@ async function verifyBackup(options, environment) {
       kind: manifest.kind,
       verified: true,
     });
+  } catch (error) {
+    await reportBackupFailure(recorder, error, 'verify');
+    throw error;
   } finally {
     if (temporary) await rm(temporary, { force: true, recursive: true });
+    await recorder?.close();
   }
 }
 
@@ -122,6 +170,12 @@ async function restoreBackup(options, environment) {
   const destinationRoot = resolve(requiredOption(options, 'destination'));
   rejectProductionRestoreTarget(destinationRoot, environment);
   const key = await readSecretFile(requiredOption(options, 'key-file'));
+  let databaseUrl;
+  if (options['database-url-file']) {
+    databaseUrl = await readSecretFile(options['database-url-file']);
+    rejectProductionDatabaseTarget(databaseUrl, environment);
+  }
+  const recorder = await recorderFromOptions(options);
   let temporary;
   try {
     let backupPath = options.path;
@@ -135,15 +189,34 @@ async function restoreBackup(options, environment) {
       backupPath,
       destinationRoot,
       encryptionKeyHex: key,
+      ...verificationLimits(environment),
     });
+    let databaseRestored = false;
+    if (databaseUrl) {
+      const dumpPath = resolve(destinationRoot, 'postgres.dump');
+      await runLogicalRestore(databaseUrl, dumpPath);
+      databaseRestored = true;
+    }
+    if (databaseRestored && recorder) {
+      await recorder.recordRestoreTest(await envelopeHashForFile(backupPath), new Date());
+    }
+    if (recorder) {
+      await recorder.recordVerification(await envelopeHashForFile(backupPath), new Date());
+      await recorder.resolveFailureAlert();
+    }
     return safeResult({
       command: 'restore-to-disposable',
+      databaseRestored,
       destinationRoot,
       files: manifest.files.length,
       restored: true,
     });
+  } catch (error) {
+    await reportBackupFailure(recorder, error, 'restore');
+    throw error;
   } finally {
     if (temporary) await rm(temporary, { force: true, recursive: true });
+    await recorder?.close();
   }
 }
 
@@ -151,44 +224,60 @@ async function pruneBackups(options, environment) {
   const daily = integerOption(options.daily ?? '7', 'daily');
   const weekly = integerOption(options.weekly ?? '4', 'weekly');
   const apply = options.apply === true;
-  if (apply && !options['authorization-ref']) {
-    throw new Error('Applied pruning requires --authorization-ref');
+  const automated = options['automated-retention'] === true;
+  if (automated && (daily !== 7 || weekly !== 4)) {
+    throw new Error('Automated retention must use the approved 7-daily/4-weekly policy');
+  }
+  if (apply && !automated && !options['authorization-ref']) {
+    throw new Error('Manual pruning requires --authorization-ref');
+  }
+  if (apply && !options['audit-log']) {
+    throw new Error('Applied pruning requires --audit-log');
   }
   if (environment.OMNIREACH_ENV === 'production' && (daily < 7 || weekly < 4)) {
     throw new Error('Production pruning cannot reduce the approved 7-daily/4-weekly floor');
   }
-  if (options.offsite) {
-    return pruneOffsite(options, environment, { apply, daily, weekly });
-  }
-  const root = resolve(requiredOption(options, 'root'));
-  const paths = await listBackupManifests(root);
-  const records = await Promise.all(
-    paths.map(async (path) => ({
-      ...(await readBackupManifest(path)),
-      active: false,
-      complete: true,
-      hold: false,
-      path,
-    })),
-  );
-  const retention = selectRetention(records, new Date(), { daily, weekly });
-  if (apply) {
-    for (const id of retention.prune) {
-      const record = records.find((item) => item.id === id);
-      if (!record) continue;
-      await removeBackup(root, record.path);
-      await removeBackup(root, record.path.replace(/\.manifest\.json$/u, '.orbk'));
+  const recorder = apply ? await recorderFromOptions(options) : undefined;
+  try {
+    if (options.offsite) {
+      return await pruneOffsite(options, environment, { apply, daily, weekly }, recorder);
     }
+    const root = resolve(requiredOption(options, 'root'));
+    const paths = await listBackupManifests(root);
+    const records = await Promise.all(
+      paths.map(async (path) => ({
+        ...(await readBackupManifest(path)),
+        active: false,
+        complete: true,
+        hold: false,
+        path,
+      })),
+    );
+    const retention = selectRetention(records, new Date(), { daily, weekly });
+    if (apply) {
+      for (const id of retention.prune) {
+        const record = records.find((item) => item.id === id);
+        if (!record) continue;
+        await recordDeletion(options, record, 'local', automated, 'requested');
+        await removeBackup(root, record.path.replace(/\.manifest\.json$/u, ''));
+        await removeBackup(root, record.path);
+        await recorder?.recordPruned(record.envelopeHash, 'local');
+        await recordDeletion(options, record, 'local', automated, 'completed');
+      }
+    }
+    return safeResult({
+      applied: apply,
+      authorizationRef: options['authorization-ref'],
+      mode: automated ? 'automatic' : 'manual',
+      command: 'prune',
+      ...retention,
+    });
+  } finally {
+    await recorder?.close();
   }
-  return safeResult({
-    applied: apply,
-    authorizationRef: options['authorization-ref'],
-    command: 'prune',
-    ...retention,
-  });
 }
 
-async function pruneOffsite(options, environment, policy) {
+async function pruneOffsite(options, environment, policy, recorder) {
   const store = storeFromEnvironment(environment);
   const objects = await store.list();
   const manifestObjects = objects.filter((item) => item.key.endsWith('.manifest.json'));
@@ -211,14 +300,30 @@ async function pruneOffsite(options, environment, policy) {
       for (const id of retention.prune) {
         const record = records.find((item) => item.id === id);
         if (!record) continue;
+        await recordDeletion(
+          options,
+          record,
+          'offsite',
+          options['automated-retention'] === true,
+          'requested',
+        );
+        await store.remove(record.key.replace(/\.manifest\.json$/u, ''));
         await store.remove(record.key);
-        await store.remove(record.key.replace(/\.manifest\.json$/u, '.orbk'));
+        await recorder?.recordPruned(record.envelopeHash, 'offsite');
+        await recordDeletion(
+          options,
+          record,
+          'offsite',
+          options['automated-retention'] === true,
+          'completed',
+        );
       }
     }
     return safeResult({
       applied: policy.apply,
       authorizationRef: options['authorization-ref'],
       command: 'prune',
+      mode: options['automated-retention'] === true ? 'automatic' : 'manual',
       source: 'offsite',
       ...retention,
     });
@@ -227,11 +332,57 @@ async function pruneOffsite(options, environment, policy) {
   }
 }
 
+async function recorderFromOptions(options) {
+  if (!options['record-database-url-file']) return undefined;
+  return new PostgresBackupRecords({
+    databaseUrl: await readSecretFile(options['record-database-url-file']),
+  });
+}
+
+async function reportBackupFailure(recorder, error, phase) {
+  if (!recorder) return;
+  const errorCode = backupErrorCode(error, phase);
+  try {
+    await recorder.reportFailure(errorCode);
+  } catch (alertError) {
+    throw new AggregateError(
+      [error, alertError],
+      'Backup operation failed and its ORAP alert could not be recorded',
+      { cause: alertError },
+    );
+  }
+}
+
+export function backupErrorCode(error, phase) {
+  const message = error instanceof Error ? error.message : '';
+  if (/limit|budget|exceeds/iu.test(message)) return 'backup_resource_limit';
+  if (/off-site|\bR2\b/iu.test(message)) return 'offsite_transfer_failed';
+  if (phase === 'backup' && /pg_dump/iu.test(message)) return 'database_dump_failed';
+  if (
+    phase !== 'backup' &&
+    /authentication|checksum|archive|encrypted backup|source-byte/iu.test(message)
+  ) {
+    return 'integrity_verification_failed';
+  }
+  return 'backup_failed';
+}
+
 function storeFromEnvironment(environment) {
   return new S3CompatibleBackupStore({
     accessKeyId: environment.R2_ACCESS_KEY_ID,
     bucket: environment.R2_BUCKET,
     endpoint: environment.R2_ENDPOINT,
+    maximumListObjects: optionalIntegerEnvironment(environment.BACKUP_R2_MAX_LIST_OBJECTS, 1_000),
+    maximumListPages: optionalIntegerEnvironment(environment.BACKUP_R2_MAX_LIST_PAGES, 20),
+    maximumListResponseBytes: optionalIntegerEnvironment(
+      environment.BACKUP_R2_MAX_LIST_RESPONSE_BYTES,
+      4 * 1024 * 1024,
+    ),
+    maximumObjectBytes: optionalIntegerEnvironment(
+      environment.BACKUP_MAX_ENCRYPTED_BYTES,
+      768 * 1024 * 1024,
+    ),
+    maximumRequests: optionalIntegerEnvironment(environment.BACKUP_R2_MAX_REQUESTS, 100),
     prefix: environment.R2_BACKUP_PREFIX ?? 'omnireach',
     region: environment.R2_REGION ?? 'auto',
     secretAccessKey: environment.R2_SECRET_ACCESS_KEY,
@@ -240,20 +391,42 @@ function storeFromEnvironment(environment) {
 
 function rejectProductionRestoreTarget(target, environment) {
   const forbidden = (environment.OMNIREACH_PRODUCTION_ROOTS ?? '')
-    .split(environment.OS === 'Windows_NT' ? ';' : ':')
+    .split(environment.OS === 'Windows_NT' || process.platform === 'win32' ? ';' : ':')
     .filter(Boolean)
-    .map(resolve);
-  if (
-    forbidden.some(
-      (root) => target === root || target.startsWith(`${root}/`) || target.startsWith(`${root}\\`),
-    )
-  ) {
+    .map((value) => resolve(value));
+  if (environment.OMNIREACH_ENV === 'production' && forbidden.length === 0) {
+    throw new Error('Production restore roots must be configured before a restore');
+  }
+  if (forbidden.some((root) => pathsOverlap(target, root))) {
     throw new Error('Restore target overlaps a configured production root');
   }
 }
 
+function rejectProductionDatabaseTarget(databaseUrl, environment) {
+  const target = postgresTarget(databaseUrl);
+  const forbidden = (environment.OMNIREACH_PRODUCTION_DATABASE_TARGETS ?? '')
+    .split(',')
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+  if (environment.OMNIREACH_ENV === 'production' && forbidden.length === 0) {
+    throw new Error('Production database targets must be configured before a restore');
+  }
+  if (forbidden.includes(target)) {
+    throw new Error('Restore database overlaps a configured production database');
+  }
+}
+
 async function readSecretFile(path) {
-  const value = (await readFile(resolve(path), 'utf8')).trim();
+  const absolute = resolve(path);
+  const metadata = await lstat(absolute);
+  if (!metadata.isFile() || metadata.isSymbolicLink()) {
+    throw new Error('Secret path must be a regular non-symbolic file');
+  }
+  if (process.platform !== 'win32' && (metadata.mode & 0o077) !== 0) {
+    throw new Error('Secret file permissions are too broad');
+  }
+  if (metadata.size > 16 * 1024) throw new Error('Secret file is unexpectedly large');
+  const value = (await readFile(absolute, 'utf8')).trim();
   if (!value) throw new Error('Secret file is empty');
   return value;
 }
@@ -264,7 +437,7 @@ function parseArguments(values) {
     const token = values[index];
     if (!token?.startsWith('--')) throw new Error(`Unexpected argument: ${token ?? ''}`);
     const name = token.slice(2);
-    if (['apply', 'help', 'offsite'].includes(name)) {
+    if (['apply', 'automated-retention', 'help', 'offsite'].includes(name)) {
       parsed[name] = true;
       continue;
     }
@@ -274,6 +447,85 @@ function parseArguments(values) {
     parsed[name] = name === 'input' ? [...(parsed[name] ?? []), value] : value;
   }
   return parsed;
+}
+
+async function recordDeletion(options, record, source, automated, phase) {
+  const auditPath = resolve(requiredOption(options, 'audit-log'));
+  await mkdir(dirname(auditPath), { recursive: true });
+  const entry = {
+    authorizationRef: automated
+      ? 'approved-automatic-7-daily-4-weekly'
+      : options['authorization-ref'],
+    backupId: record.id,
+    envelopeHash: record.envelopeHash,
+    event: 'backup.deletion',
+    mode: automated ? 'automatic' : 'manual',
+    phase,
+    source,
+    storageRef: record.path ?? record.key,
+    timestamp: new Date().toISOString(),
+  };
+  await appendFile(auditPath, `${JSON.stringify(entry)}\n`, { encoding: 'utf8', mode: 0o600 });
+}
+
+function pathsOverlap(left, right) {
+  const normalize = (value) =>
+    (process.platform === 'win32' ? value.toLowerCase() : value).replace(/[\\/]+$/u, '');
+  const a = normalize(resolve(left));
+  const b = normalize(resolve(right));
+  return (
+    a === b ||
+    a.startsWith(`${b}/`) ||
+    a.startsWith(`${b}\\`) ||
+    b.startsWith(`${a}/`) ||
+    b.startsWith(`${a}\\`)
+  );
+}
+
+function postgresTarget(databaseUrl) {
+  let parsed;
+  try {
+    parsed = new URL(databaseUrl);
+  } catch {
+    throw new Error('Invalid PostgreSQL restore connection URL');
+  }
+  const database = decodeURIComponent(parsed.pathname.replace(/^\//u, ''));
+  if (
+    !['postgres:', 'postgresql:'].includes(parsed.protocol) ||
+    !parsed.hostname ||
+    !parsed.username ||
+    !database
+  ) {
+    throw new Error('Invalid PostgreSQL restore connection URL');
+  }
+  return `${parsed.hostname.toLowerCase()}:${parsed.port || '5432'}/${database.toLowerCase()}`;
+}
+
+function optionalIntegerEnvironment(value, fallback) {
+  if (value === undefined || value === '') return fallback;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    throw new Error('Backup resource limit must be a positive integer');
+  }
+  return parsed;
+}
+
+function verificationLimits(environment) {
+  return {
+    maximumArchiveBytes: optionalIntegerEnvironment(
+      environment.BACKUP_MAX_ARCHIVE_BYTES,
+      768 * 1024 * 1024,
+    ),
+    maximumEncryptedBytes: optionalIntegerEnvironment(
+      environment.BACKUP_MAX_ENCRYPTED_BYTES,
+      768 * 1024 * 1024,
+    ),
+    maximumFiles: optionalIntegerEnvironment(environment.BACKUP_MAX_FILES, 100_000),
+    maximumSourceBytes: optionalIntegerEnvironment(
+      environment.BACKUP_MAX_SOURCE_BYTES,
+      512 * 1024 * 1024,
+    ),
+  };
 }
 
 function arrayOption(options, name) {
