@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 
 import {
   GoogleHttpProvider,
@@ -130,13 +130,32 @@ async function persistMetrics(
   return workerTransaction(pool, envelope, jobId, async (client) => {
     let inserted = 0;
     for (const point of points) {
-      const result = await query<{ id: string }>(
+      const result = await query<{ id: string; inserted: boolean }>(
         client,
         `INSERT INTO metric_snapshots
            (tenant_id, site_id, connection_id, source, metric, dimensions,
             window_start, window_end, value, source_hash, ingested_at, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12)
-         ON CONFLICT (connection_id, source_hash) DO NOTHING RETURNING id`,
+         VALUES (
+           $1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9,
+           encode(
+             digest(
+               concat_ws(
+                 chr(31), $3::text, $4, $5, ($6::jsonb)::text,
+                 extract(epoch FROM $7::timestamptz)::text,
+                 extract(epoch FROM $8::timestamptz)::text
+               ),
+               'sha256'
+             ),
+             'hex'
+           ),
+           $10, $11
+         )
+         ON CONFLICT (connection_id, source_hash) DO UPDATE
+           SET value = EXCLUDED.value,
+               ingested_at = EXCLUDED.ingested_at,
+               expires_at = EXCLUDED.expires_at
+           WHERE metric_snapshots.value IS DISTINCT FROM EXCLUDED.value
+         RETURNING id, (xmax = 0) AS inserted`,
         [
           envelope.tenantId,
           envelope.siteId,
@@ -147,12 +166,11 @@ async function persistMetrics(
           `${point.startDate}T00:00:00Z`,
           `${point.endDate}T23:59:59.999Z`,
           point.value,
-          pointHash(point),
           input.now,
           new Date(input.now.getTime() + 18 * 30 * 24 * 60 * 60_000),
         ],
       );
-      inserted += result.rows.length;
+      inserted += result.rows.filter((row) => row.inserted).length;
     }
     await client.query(
       `UPDATE integration_credentials credential
@@ -223,24 +241,6 @@ function decryptTokens(
   return JSON.parse(
     Buffer.concat([decipher.update(payload.subarray(33)), decipher.final()]).toString('utf8'),
   ) as GoogleTokenSet;
-}
-
-function pointHash(point: GoogleMetricPoint): string {
-  return createHash('sha256')
-    .update(
-      JSON.stringify({
-        dimensions: Object.fromEntries(
-          Object.entries(point.dimensions).sort(([left], [right]) => left.localeCompare(right)),
-        ),
-        endDate: point.endDate,
-        metric: point.metric,
-        propertyId: point.propertyId,
-        source: point.source,
-        startDate: point.startDate,
-        value: point.value,
-      }),
-    )
-    .digest('hex');
 }
 
 function isoDate(value: Date): string {

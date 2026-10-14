@@ -3,8 +3,11 @@ import { resolve } from 'node:path';
 
 import {
   adminStylesheet,
+  analyticsStylesheet,
   renderCustomerDashboard,
   renderOperationsCenter,
+  renderOrapAnalyticsDashboard,
+  renderOrapAnalyticsEmpty,
   renderOrapDashboard,
   renderOrapNotFound,
   renderOrapOverview,
@@ -37,6 +40,7 @@ import {
 } from './google-oauth-cookie.ts';
 import type { IntegrationEndpointService } from './integration-routes.ts';
 import type { OrapAdministrationEndpointService, ResolvePlatformActor } from './orap-routes.ts';
+import { AnalyticsRangeError, resolveAnalyticsDateRange } from './orap-analytics.ts';
 import { registerCustomerUiRoutes } from './customer-ui-routes.ts';
 import { readCookie } from './request-auth.ts';
 import { requireSameOrigin } from './request-security.ts';
@@ -64,7 +68,7 @@ export function registerUiRoutes(
     reply
       .type('text/css; charset=utf-8')
       .header('Cache-Control', 'public, max-age=300')
-      .send(adminStylesheet),
+      .send(`${adminStylesheet}${analyticsStylesheet}`),
   );
   server.get('/assets/omnireach-logo.png', async (_request, reply) =>
     reply
@@ -217,6 +221,124 @@ export function registerUiRoutes(
             orapNavigation(actor),
           ),
         );
+    });
+
+    server.get<{
+      Querystring: {
+        endDate?: string;
+        limit?: string;
+        pageSort?: string;
+        querySort?: string;
+        range?: string;
+        siteId?: string;
+        startDate?: string;
+      };
+    }>('/orap/analytics', async (request, reply) => {
+      const actor = await options.resolvePlatformActor?.(request);
+      if (!actor || !canOrap(actor, 'analytics.view')) {
+        return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
+      }
+      if (!options.orapService?.listAnalyticsSites || !options.orapService.siteAnalytics) {
+        return reply.code(404).type('text/html; charset=utf-8').send(renderOrapNotFound());
+      }
+      const sites = parseSiteSummaries(await options.orapService.listAnalyticsSites(actor));
+      const selectedSiteId = request.query.siteId ?? sites[0]?.id;
+      if (!selectedSiteId) {
+        return reply
+          .type('text/html; charset=utf-8')
+          .send(renderOrapAnalyticsEmpty(sites, orapNavigation(actor)));
+      }
+      const site = sites.find(({ id }) => id === selectedSiteId);
+      if (
+        !site?.id ||
+        !site.tenantId ||
+        !canOrap(actor, 'analytics.view', { siteId: site.id, tenantId: site.tenantId })
+      ) {
+        return reply
+          .code(404)
+          .type('text/html; charset=utf-8')
+          .send(renderOrapNotFound(orapNavigation(actor)));
+      }
+      const selection = z
+        .object({
+          endDate: z.string().optional(),
+          limit: z.coerce.number().int().min(1).max(50).default(25),
+          pageSort: z.enum(['clicks', 'impressions', 'position', 'ctr']).default('clicks'),
+          querySort: z.enum(['clicks', 'impressions', 'position', 'ctr']).default('clicks'),
+          range: z.enum(['7', '28', '90', 'custom']).default('28'),
+          startDate: z.string().optional(),
+        })
+        .safeParse(request.query);
+      if (!selection.success) {
+        return reply
+          .code(400)
+          .type('text/html; charset=utf-8')
+          .send(
+            renderOrapAnalyticsEmpty(
+              sites,
+              orapNavigation(actor),
+              'The analytics filters are invalid. Choose a range of no more than 90 days.',
+            ),
+          );
+      }
+      try {
+        const range = resolveAnalyticsDateRange(
+          {
+            ...(selection.data.endDate ? { endDate: selection.data.endDate } : {}),
+            preset: selection.data.range,
+            ...(selection.data.startDate ? { startDate: selection.data.startDate } : {}),
+          },
+          new Date(),
+        );
+        const model = await options.orapService.siteAnalytics(actor, {
+          endDate: range.endDate,
+          limit: selection.data.limit,
+          pageSort: selection.data.pageSort,
+          previousEndDate: range.previousEndDate,
+          previousStartDate: range.previousStartDate,
+          preset: range.preset,
+          querySort: selection.data.querySort,
+          siteId: site.id,
+          startDate: range.startDate,
+          tenantId: site.tenantId,
+        });
+        return reply.type('text/html; charset=utf-8').send(
+          renderOrapAnalyticsDashboard(
+            model,
+            sites,
+            {
+              limit: selection.data.limit,
+              pageSort: selection.data.pageSort,
+              querySort: selection.data.querySort,
+            },
+            orapNavigation(actor),
+          ),
+        );
+      } catch (error) {
+        if (error instanceof AnalyticsRangeError) {
+          return reply
+            .code(400)
+            .type('text/html; charset=utf-8')
+            .send(renderOrapAnalyticsEmpty(sites, orapNavigation(actor), error.message));
+        }
+        request.log.error(
+          {
+            errorName: error instanceof Error ? error.name : 'UnknownError',
+            traceId: request.id,
+          },
+          'ORAP analytics page failed',
+        );
+        return reply
+          .code(503)
+          .type('text/html; charset=utf-8')
+          .send(
+            renderOrapAnalyticsEmpty(
+              sites,
+              orapNavigation(actor),
+              'Analytics is temporarily unavailable. No provider request or website change was made.',
+            ),
+          );
+      }
     });
 
     server.get<{ Querystring: { notice?: string } }>(
@@ -970,6 +1092,7 @@ function orapNavigation(actor: AdminActor): OrapNavigationItem[] {
   return [
     ...(canOrap(actor, 'dashboard.view') ? (['overview'] as const) : []),
     ...(canOrap(actor, 'websites.list') ? (['sites'] as const) : []),
+    ...(canOrap(actor, 'analytics.view') ? (['analytics'] as const) : []),
     ...(canOrap(actor, 'dashboard.view') ? (['operations'] as const) : []),
     ...(isPlatformOwnerIdentity(actor) ? (['staff'] as const) : []),
     'security' as const,
@@ -1042,6 +1165,7 @@ function parseStaffRoles(value: unknown): OrapStaffRoleOption[] {
 function orapLandingPage(actor: AdminActor): string {
   if (canOrap(actor, 'dashboard.view')) return '/orap';
   if (canOrap(actor, 'websites.list')) return '/orap/sites';
+  if (canOrap(actor, 'analytics.view')) return '/orap/analytics';
   return '/security';
 }
 

@@ -19,6 +19,15 @@ export {
   type OrapStaffRoleOption,
 } from './admin.ts';
 export {
+  analyticsStylesheet,
+  renderOrapAnalyticsDashboard,
+  renderOrapAnalyticsEmpty,
+  type AnalyticsAvailability,
+  type AnalyticsTableRow,
+  type OrapAnalyticsModel,
+  type OrapAnalyticsSelection,
+} from './analytics.ts';
+export {
   renderReportingDashboard,
   visibleMeasurementKinds,
   type MeasurementKind,

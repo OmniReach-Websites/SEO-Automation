@@ -9,6 +9,12 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 
 import { clientNetworkIdentifier } from './client-network.ts';
+import {
+  AnalyticsRangeError,
+  resolveAnalyticsDateRange,
+  type OrapAnalyticsDashboard,
+  type OrapAnalyticsInput,
+} from './orap-analytics.ts';
 import { OrapResourceNotFoundError } from './orap-errors.ts';
 import { assertOrapRoutePolicyRegistry } from './orap-route-policy.ts';
 import { requireSameOrigin } from './request-security.ts';
@@ -91,7 +97,9 @@ export interface OrapAdministrationEndpointService {
     actor: AdminActor,
     input: { siteId: string; tenantId: string; userId: string },
   ): Promise<unknown>;
+  listAnalyticsSites?(actor: AdminActor): Promise<unknown>;
   listSites(actor: AdminActor): Promise<unknown>;
+  siteAnalytics?(actor: AdminActor, input: OrapAnalyticsInput): Promise<OrapAnalyticsDashboard>;
   siteManagement?(actor: AdminActor, input: { siteId: string; tenantId: string }): Promise<unknown>;
   listOperations?(actor: AdminActor): Promise<unknown>;
   listStaff?(actor: AdminActor): Promise<unknown>;
@@ -230,6 +238,63 @@ export function registerOrapRoutes(
   resolveActor: ResolvePlatformActor,
 ): void {
   assertOrapRoutePolicyRegistry();
+  server.get('/v1/orap/analytics/sites', async (request, reply) => {
+    const actor = await authorizedActor(request, reply, resolveActor);
+    if (!actor) return;
+    if (!authorizedCapability(actor, 'analytics.view', {}, reply)) return;
+    if (!service.listAnalyticsSites) return reply.code(501).send({ error: 'not_available' });
+    return service.listAnalyticsSites(actor);
+  });
+
+  server.get('/v1/orap/sites/:siteId/analytics', async (request, reply) => {
+    const actor = await authorizedActor(request, reply, resolveActor);
+    if (!actor) return;
+    const params = parse(z.object({ siteId: z.string().uuid() }), request.params, reply);
+    const query = parse(
+      z.object({
+        endDate: z.string().optional(),
+        limit: z.coerce.number().int().min(1).max(50).default(25),
+        pageSort: z.enum(['clicks', 'impressions', 'position', 'ctr']).default('clicks'),
+        querySort: z.enum(['clicks', 'impressions', 'position', 'ctr']).default('clicks'),
+        range: z.enum(['7', '28', '90', 'custom']).default('28'),
+        startDate: z.string().optional(),
+        tenantId: z.string().uuid(),
+      }),
+      request.query,
+      reply,
+    );
+    if (!params || !query) return;
+    if (!authorizedCapability(actor, 'analytics.view', { ...params, ...query }, reply)) return;
+    if (!service.siteAnalytics) return reply.code(501).send({ error: 'not_available' });
+    try {
+      const range = resolveAnalyticsDateRange(
+        {
+          ...(query.endDate ? { endDate: query.endDate } : {}),
+          preset: query.range,
+          ...(query.startDate ? { startDate: query.startDate } : {}),
+        },
+        new Date(),
+      );
+      return service.siteAnalytics(actor, {
+        ...params,
+        endDate: range.endDate,
+        limit: query.limit,
+        pageSort: query.pageSort,
+        previousEndDate: range.previousEndDate,
+        previousStartDate: range.previousStartDate,
+        preset: range.preset,
+        querySort: query.querySort,
+        startDate: range.startDate,
+        tenantId: query.tenantId,
+      });
+    } catch (error) {
+      if (error instanceof AnalyticsRangeError) {
+        return reply.code(400).send({ error: 'invalid_analytics_range' });
+      }
+      throw error;
+    }
+  });
+
   server.get('/v1/orap/operations', async (request, reply) => {
     const actor = await authorizedActor(request, reply, resolveActor);
     if (!actor) return;

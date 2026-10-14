@@ -22,6 +22,15 @@ import {
 } from '@omnireach/tenant';
 
 import { OrapResourceNotFoundError } from './orap-errors.ts';
+import {
+  analyticsDelta,
+  deriveVisibilityOpportunities,
+  type AnalyticsAvailability,
+  type AnalyticsKpi,
+  type AnalyticsSearchRow,
+  type OrapAnalyticsDashboard,
+  type OrapAnalyticsInput,
+} from './orap-analytics.ts';
 import type { OrapAdministrationEndpointService, PlanEntitlementsInput } from './orap-routes.ts';
 
 export interface InvitationNotifier {
@@ -792,6 +801,333 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
         tenantId: site.tenant_id,
         tenantName: site.tenant_name,
       }));
+    });
+  }
+
+  listAnalyticsSites(actor: AdminActor): Promise<unknown> {
+    assertOrapCapability(actor, 'analytics.view');
+    const scope = orapVisibleScope(actor, 'analytics.view');
+    return this.transaction(actor, async (client) => {
+      const result = await query<{
+        id: string;
+        name: string;
+        status: string;
+        tenant_id: string;
+        tenant_name: string;
+      }>(
+        client,
+        `SELECT s.id, s.tenant_id, s.name, s.status, t.name AS tenant_name
+           FROM sites s
+           JOIN tenants t ON t.id = s.tenant_id
+          WHERE s.status = 'active'
+            AND ($1::boolean OR s.tenant_id = ANY($2::uuid[]) OR s.id = ANY($3::uuid[]))
+          ORDER BY t.name, s.name`,
+        [scope.portfolio, [...scope.tenantIds], [...scope.siteIds]],
+      );
+      return result.rows.map((site) => ({
+        id: site.id,
+        name: site.name,
+        status: site.status,
+        tenantId: site.tenant_id,
+        tenantName: site.tenant_name,
+      }));
+    });
+  }
+
+  siteAnalytics(actor: AdminActor, input: OrapAnalyticsInput): Promise<OrapAnalyticsDashboard> {
+    assertOrapCapability(actor, 'analytics.view', input);
+    return this.transaction(actor, async (client) => {
+      await assertSite(client, input.tenantId, input.siteId);
+      const queryOrder = analyticsOrderBy(input.querySort);
+      const pageOrder = analyticsOrderBy(input.pageSort);
+      const scopeValues = [input.tenantId, input.siteId, input.previousStartDate, input.endDate];
+      const siteResult = await query<{
+        id: string;
+        name: string;
+        tenant_id: string;
+        tenant_name: string;
+      }>(
+        client,
+        `SELECT s.id, s.tenant_id, s.name, t.name AS tenant_name
+             FROM sites s
+             JOIN tenants t ON t.id = s.tenant_id
+            WHERE s.tenant_id = $1 AND s.id = $2 AND s.status = 'active'`,
+        [input.tenantId, input.siteId],
+      );
+      const connectionsResult = await query<{
+        available_end_date: Date | string | null;
+        available_start_date: Date | string | null;
+        last_synced_at: Date | string | null;
+        property_id: string;
+        property_kind: 'ga4' | 'search_console';
+        property_mapping: string;
+        refresh_failure_code: string | null;
+        status: string;
+      }>(
+        client,
+        `SELECT connection.property_kind, connection.property_id,
+                  connection.property_mapping, connection.status,
+                  connection.last_synced_at, connection.refresh_failure_code,
+                  (SELECT min(snapshot.window_start)::date::text
+                     FROM metric_snapshots snapshot
+                    WHERE snapshot.tenant_id = $1 AND snapshot.site_id = $2
+                      AND snapshot.connection_id = connection.id) AS available_start_date,
+                  (SELECT max(snapshot.window_start)::date::text
+                     FROM metric_snapshots snapshot
+                    WHERE snapshot.tenant_id = $1 AND snapshot.site_id = $2
+                      AND snapshot.connection_id = connection.id) AS available_end_date
+             FROM integration_connections connection
+            WHERE connection.tenant_id = $1 AND connection.site_id = $2
+              AND connection.provider = 'google'
+            ORDER BY connection.property_kind`,
+        [input.tenantId, input.siteId],
+      );
+      const searchDailyResult = await query<AnalyticsDailyRow>(client, searchDailySql, scopeValues);
+      const gaDailyResult = await query<AnalyticsDailyRow>(client, gaDailySql, scopeValues);
+      const queryResult = await query<AnalyticsSearchResultRow>(
+        client,
+        searchDimensionSql('query', queryOrder),
+        [
+          input.tenantId,
+          input.siteId,
+          input.previousStartDate,
+          input.previousEndDate,
+          input.startDate,
+          input.endDate,
+          input.limit,
+        ],
+      );
+      const pageResult = await query<AnalyticsSearchResultRow>(
+        client,
+        searchDimensionSql('page', pageOrder),
+        [
+          input.tenantId,
+          input.siteId,
+          input.previousStartDate,
+          input.previousEndDate,
+          input.startDate,
+          input.endDate,
+          input.limit,
+        ],
+      );
+      const technicalResult = await query<AnalyticsTechnicalRow>(
+        client,
+        `WITH latest_crawl AS (
+             SELECT id, state, completed_at
+               FROM crawl_runs
+              WHERE tenant_id = $1 AND site_id = $2
+              ORDER BY started_at DESC
+              LIMIT 1
+           )
+           SELECT
+             (SELECT state FROM latest_crawl) AS crawl_state,
+             (SELECT completed_at FROM latest_crawl) AS crawl_completed_at,
+             CASE WHEN EXISTS (SELECT 1 FROM latest_crawl)
+                  THEN (SELECT count(*)::integer FROM crawl_pages page
+                         WHERE page.tenant_id = $1 AND page.site_id = $2
+                           AND page.crawl_run_id = (SELECT id FROM latest_crawl))
+             END AS pages_crawled,
+             CASE WHEN EXISTS (SELECT 1 FROM latest_crawl)
+                  THEN (SELECT count(*)::integer FROM crawl_pages page
+                         WHERE page.tenant_id = $1 AND page.site_id = $2
+                           AND page.crawl_run_id = (SELECT id FROM latest_crawl)
+                           AND (page.status < 200 OR page.status >= 400))
+             END AS failing_pages,
+             count(*) FILTER (WHERE finding.state IN ('open','acknowledged'))::integer
+               AS open_findings,
+             count(*) FILTER (WHERE finding.state IN ('open','acknowledged')
+                               AND finding.severity = 'critical')::integer AS critical,
+             count(*) FILTER (WHERE finding.state IN ('open','acknowledged')
+                               AND finding.severity = 'high')::integer AS high,
+             count(*) FILTER (WHERE finding.state IN ('open','acknowledged')
+                               AND finding.severity = 'medium')::integer AS medium,
+             count(*) FILTER (WHERE finding.state IN ('open','acknowledged')
+                               AND finding.severity = 'low')::integer AS low,
+             count(*) FILTER (WHERE finding.state IN ('open','acknowledged')
+                               AND finding.severity = 'info')::integer AS info,
+             count(*) FILTER (WHERE finding.state = 'resolved'
+                                AND finding.resolved_at >= $3::date
+                                AND finding.resolved_at < ($4::date + interval '1 day'))::integer
+                AS resolved_findings
+             FROM findings finding
+            WHERE finding.tenant_id = $1 AND finding.site_id = $2`,
+        [input.tenantId, input.siteId, input.startDate, input.endDate],
+      );
+      const findingResult = await query<AnalyticsFindingRow>(
+        client,
+        `SELECT rule_id, severity, state, evidence, limitation, remediation
+             FROM findings
+            WHERE tenant_id = $1 AND site_id = $2
+              AND state IN ('open','acknowledged')
+            ORDER BY CASE severity
+                       WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3
+                       WHEN 'low' THEN 4 ELSE 5 END,
+                     last_seen_at DESC, rule_id
+            LIMIT 10`,
+        [input.tenantId, input.siteId],
+      );
+      const timelineResult = await query<AnalyticsTimelineRow>(
+        client,
+        `SELECT category, occurred_at, state
+             FROM (
+               SELECT job.category, COALESCE(job.completed_at, job.updated_at) AS occurred_at,
+                      job.state
+                 FROM jobs job
+                WHERE job.tenant_id = $1 AND job.site_id = $2
+                  AND COALESCE(job.completed_at, job.updated_at) >= $3::date
+                  AND COALESCE(job.completed_at, job.updated_at) < ($4::date + interval '1 day')
+               UNION ALL
+               SELECT 'publication' AS category,
+                      COALESCE(publication.completed_at, publication.created_at) AS occurred_at,
+                      publication.status AS state
+                 FROM publication_requests publication
+                WHERE publication.tenant_id = $1 AND publication.site_id = $2
+                  AND COALESCE(publication.completed_at, publication.created_at) >= $3::date
+                  AND COALESCE(publication.completed_at, publication.created_at)
+                        < ($4::date + interval '1 day')
+             ) event
+            ORDER BY occurred_at DESC, category
+            LIMIT 30`,
+        [input.tenantId, input.siteId, input.startDate, input.endDate],
+      );
+
+      const site = required(siteResult.rows[0], 'Site was not found');
+      const connections = connectionsResult.rows.map((connection) => ({
+        availableEndDate: dateOnlyNullableString(connection.available_end_date),
+        availableStartDate: dateOnlyNullableString(connection.available_start_date),
+        lastErrorCode: connection.refresh_failure_code,
+        lastSyncedAt: dateTimeString(connection.last_synced_at),
+        propertyId: connection.property_id,
+        propertyKind: connection.property_kind,
+        propertyMapping: connection.property_mapping,
+        status: connection.status,
+      }));
+      const searchDaily = searchDailyResult.rows.map(toDailyPoint);
+      const gaDaily = gaDailyResult.rows.map(toDailyPoint);
+      const topQueries = queryResult.rows.map(toSearchRow);
+      const topPages = pageResult.rows.map(toSearchRow);
+      const searchConnection = connections.find(
+        ({ propertyKind }) => propertyKind === 'search_console',
+      );
+      const gaConnection = connections.find(({ propertyKind }) => propertyKind === 'ga4');
+      const searchState = analyticsSourceState(
+        searchConnection,
+        hasAnalyticsRows(searchDaily, input.startDate, input.endDate),
+        new Date(),
+      );
+      const gaState = analyticsSourceState(
+        gaConnection,
+        hasAnalyticsRows(gaDaily, input.startDate, input.endDate),
+        new Date(),
+      );
+      const searchCurrent = analyticsPeriod(searchDaily, input.startDate, input.endDate);
+      const searchPrevious = analyticsPeriod(
+        searchDaily,
+        input.previousStartDate,
+        input.previousEndDate,
+      );
+      const gaCurrent = analyticsPeriod(gaDaily, input.startDate, input.endDate);
+      const gaPrevious = analyticsPeriod(gaDaily, input.previousStartDate, input.previousEndDate);
+      const technical = technicalResult.rows[0];
+      const seriesByDate = new Map(
+        analyticsDates(input.startDate, input.endDate).map((date) => [date, emptyDailyPoint(date)]),
+      );
+      for (const point of searchDaily.filter(({ date }) => date >= input.startDate)) {
+        const existing = seriesByDate.get(point.date) ?? emptyDailyPoint(point.date);
+        seriesByDate.set(point.date, {
+          ...existing,
+          clicks: point.clicks,
+          ctr:
+            point.clicks !== null && point.impressions !== null && point.impressions > 0
+              ? point.clicks / point.impressions
+              : null,
+          impressions: point.impressions,
+          position: point.position,
+        });
+      }
+      for (const point of gaDaily.filter(({ date }) => date >= input.startDate)) {
+        const existing = seriesByDate.get(point.date) ?? emptyDailyPoint(point.date);
+        seriesByDate.set(point.date, {
+          ...existing,
+          activeUsers: point.activeUsers,
+          pageViews: point.pageViews,
+          sessions: point.sessions,
+          totalSessions: point.totalSessions,
+        });
+      }
+      const notes = analyticsQualityNotes(connections, searchState, gaState);
+      return {
+        dataQuality: {
+          connections,
+          generatedAt: new Date().toISOString(),
+          notes,
+          state: combinedAnalyticsState(searchState, gaState),
+        },
+        kpis: analyticsKpis(
+          { current: searchCurrent, previous: searchPrevious, state: searchState },
+          { current: gaCurrent, previous: gaPrevious, state: gaState },
+        ),
+        opportunities: deriveVisibilityOpportunities(topQueries),
+        range: {
+          days: inclusiveDays(input.startDate, input.endDate),
+          endDate: input.endDate,
+          label:
+            input.preset === 'custom'
+              ? `${input.startDate} to ${input.endDate}`
+              : `Last ${inclusiveDays(input.startDate, input.endDate)} days`,
+          previousEndDate: input.previousEndDate,
+          previousStartDate: input.previousStartDate,
+          preset: input.preset,
+          startDate: input.startDate,
+        },
+        series: [...seriesByDate.values()].sort((left, right) =>
+          left.date.localeCompare(right.date),
+        ),
+        site: {
+          id: site.id,
+          name: site.name,
+          tenantId: site.tenant_id,
+          tenantName: site.tenant_name,
+        },
+        technical: {
+          crawlCompletedAt: technical ? dateTimeString(technical.crawl_completed_at) : null,
+          crawlState: technical?.crawl_state ?? null,
+          failingPages: technical ? nullableIntegerValue(technical.failing_pages) : null,
+          findings: {
+            critical: integerValue(technical?.critical),
+            high: integerValue(technical?.high),
+            info: integerValue(technical?.info),
+            low: integerValue(technical?.low),
+            medium: integerValue(technical?.medium),
+          },
+          openFindings: integerValue(technical?.open_findings),
+          pagesCrawled: technical ? nullableIntegerValue(technical.pages_crawled) : null,
+          resolvedFindings: integerValue(technical?.resolved_findings),
+          topFindings: findingResult.rows.map((finding) => ({
+            affectedPage: findingPage(finding.evidence),
+            limitation: finding.limitation,
+            remediation: finding.remediation,
+            ruleId: finding.rule_id,
+            severity: finding.severity,
+            state: finding.state,
+          })),
+        },
+        timeline: timelineResult.rows.flatMap((event) => {
+          const occurredAt = dateTimeString(event.occurred_at);
+          return occurredAt
+            ? [
+                {
+                  category: event.category,
+                  occurredAt,
+                  state: event.state,
+                  summary: analyticsEventSummary(event.category, event.state),
+                },
+              ]
+            : [];
+        }),
+        topPages,
+        topQueries,
+      };
     });
   }
 
@@ -2134,6 +2470,539 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
       return operation(client);
     });
   }
+}
+
+interface AnalyticsDailyRow extends Record<string, unknown> {
+  active_users?: number | string | null;
+  clicks?: number | string | null;
+  day: Date | string;
+  impressions?: number | string | null;
+  page_views?: number | string | null;
+  position?: number | string | null;
+  sessions?: number | string | null;
+  total_sessions?: number | string | null;
+}
+
+interface AnalyticsSearchResultRow extends Record<string, unknown> {
+  clicks: number | string;
+  ctr: number | string | null;
+  impressions: number | string;
+  label: string;
+  position: number | string | null;
+  previous_clicks: number | string | null;
+  previous_impressions: number | string | null;
+}
+
+interface AnalyticsTechnicalRow extends Record<string, unknown> {
+  crawl_completed_at: Date | string | null;
+  crawl_state: string | null;
+  critical: number | string | null;
+  failing_pages: number | string | null;
+  high: number | string | null;
+  info: number | string | null;
+  low: number | string | null;
+  medium: number | string | null;
+  open_findings: number | string | null;
+  pages_crawled: number | string | null;
+  resolved_findings: number | string | null;
+}
+
+interface AnalyticsFindingRow extends Record<string, unknown> {
+  evidence: unknown;
+  limitation: string;
+  remediation: string;
+  rule_id: string;
+  severity: string;
+  state: string;
+}
+
+interface AnalyticsTimelineRow extends Record<string, unknown> {
+  category: string;
+  occurred_at: Date | string;
+  state: string;
+}
+
+interface AnalyticsPeriodValues {
+  activeUsers: number | null;
+  clicks: number | null;
+  ctr: number | null;
+  impressions: number | null;
+  pageViews: number | null;
+  position: number | null;
+  sessions: number | null;
+  totalSessions: number | null;
+}
+
+const searchDailySql = `WITH observation AS (
+  SELECT window_start::date AS day, dimensions,
+         max(value) FILTER (WHERE metric = 'clicks') AS clicks,
+         max(value) FILTER (WHERE metric = 'impressions') AS impressions,
+         max(value) FILTER (WHERE metric = 'position') AS position
+    FROM metric_snapshots
+   WHERE tenant_id = $1 AND site_id = $2 AND source = 'search_console'
+     AND window_start >= $3::date
+     AND window_start < ($4::date + interval '1 day')
+   GROUP BY window_start::date, dimensions
+)
+SELECT day::text,
+       COALESCE(sum(clicks), 0)::text AS clicks,
+       COALESCE(sum(impressions), 0)::text AS impressions,
+       CASE WHEN sum(impressions) > 0
+            THEN (sum(position * impressions) / sum(impressions))::text END AS position
+  FROM observation
+ GROUP BY day
+ ORDER BY day`;
+
+const gaDailySql = `WITH observation AS (
+  SELECT window_start::date AS day, dimensions,
+         max(value) FILTER (WHERE metric = 'sessions') AS sessions,
+         max(value) FILTER (WHERE metric = 'activeUsers') AS active_users,
+         max(value) FILTER (WHERE metric = 'screenPageViews') AS page_views
+    FROM metric_snapshots
+   WHERE tenant_id = $1 AND site_id = $2 AND source = 'ga4'
+     AND window_start >= $3::date
+     AND window_start < ($4::date + interval '1 day')
+   GROUP BY window_start::date, dimensions
+)
+SELECT day::text,
+       COALESCE(sum(sessions), 0)::text AS total_sessions,
+       COALESCE(sum(sessions) FILTER (WHERE lower(COALESCE(dimensions->>'sessionMedium', ''))
+           IN ('organic', 'organic search', 'organic_search')), 0)::text AS sessions,
+       COALESCE(sum(active_users) FILTER (WHERE lower(COALESCE(dimensions->>'sessionMedium', ''))
+           IN ('organic', 'organic search', 'organic_search')), 0)::text AS active_users,
+       COALESCE(sum(page_views) FILTER (WHERE lower(COALESCE(dimensions->>'sessionMedium', ''))
+           IN ('organic', 'organic search', 'organic_search')), 0)::text AS page_views
+  FROM observation
+ GROUP BY day
+ ORDER BY day`;
+
+function searchDimensionSql(
+  dimension: 'page' | 'query',
+  orderBy: 'clicks' | 'ctr' | 'impressions' | 'position',
+): string {
+  const direction = orderBy === 'position' ? 'ASC' : 'DESC';
+  return `WITH observation AS (
+    SELECT COALESCE(NULLIF(dimensions->>'${dimension}', ''), 'Unknown ${dimension}') AS label,
+           window_start::date AS day,
+           dimensions,
+           max(value) FILTER (WHERE metric = 'clicks') AS clicks,
+           max(value) FILTER (WHERE metric = 'impressions') AS impressions,
+           max(value) FILTER (WHERE metric = 'position') AS position
+      FROM metric_snapshots
+     WHERE tenant_id = $1 AND site_id = $2 AND source = 'search_console'
+       AND window_start >= $3::date
+       AND window_start < ($6::date + interval '1 day')
+     GROUP BY COALESCE(NULLIF(dimensions->>'${dimension}', ''), 'Unknown ${dimension}'),
+              window_start::date, dimensions
+  ), aggregate AS (
+    SELECT label,
+           COALESCE(sum(clicks) FILTER (WHERE day >= $5::date AND day <= $6::date), 0)
+             AS clicks,
+           COALESCE(sum(impressions) FILTER (WHERE day >= $5::date AND day <= $6::date), 0)
+             AS impressions,
+           sum(clicks) FILTER (WHERE day >= $3::date AND day <= $4::date)
+             AS previous_clicks,
+           sum(impressions) FILTER (WHERE day >= $3::date AND day <= $4::date)
+             AS previous_impressions,
+           CASE WHEN sum(impressions) FILTER (WHERE day >= $5::date AND day <= $6::date) > 0
+                THEN sum(clicks) FILTER (WHERE day >= $5::date AND day <= $6::date)
+                   / sum(impressions) FILTER (WHERE day >= $5::date AND day <= $6::date)
+           END AS ctr,
+           CASE WHEN sum(impressions) FILTER (WHERE day >= $5::date AND day <= $6::date) > 0
+                THEN sum(position * impressions)
+                       FILTER (WHERE day >= $5::date AND day <= $6::date)
+                   / sum(impressions) FILTER (WHERE day >= $5::date AND day <= $6::date)
+           END AS position
+      FROM observation
+     GROUP BY label
+  )
+  SELECT label, clicks::text, impressions::text, ctr::text, position::text,
+         previous_clicks::text, previous_impressions::text
+    FROM aggregate
+   WHERE clicks > 0 OR impressions > 0
+   ORDER BY ${orderBy} ${direction} NULLS LAST, impressions DESC, label
+   LIMIT $7`;
+}
+
+function analyticsOrderBy(
+  value: OrapAnalyticsInput['querySort'] | OrapAnalyticsInput['pageSort'],
+): 'clicks' | 'ctr' | 'impressions' | 'position' {
+  switch (value) {
+    case 'clicks':
+    case 'ctr':
+    case 'impressions':
+    case 'position':
+      return value;
+  }
+}
+
+function toDailyPoint(row: AnalyticsDailyRow): {
+  activeUsers: number | null;
+  clicks: number | null;
+  ctr: number | null;
+  date: string;
+  impressions: number | null;
+  pageViews: number | null;
+  position: number | null;
+  sessions: number | null;
+  totalSessions: number | null;
+} {
+  const clicks = decimalValue(row.clicks);
+  const impressions = decimalValue(row.impressions);
+  return {
+    activeUsers: decimalValue(row.active_users),
+    clicks,
+    ctr: clicks !== null && impressions !== null && impressions > 0 ? clicks / impressions : null,
+    date: dateOnlyString(row.day),
+    impressions,
+    pageViews: decimalValue(row.page_views),
+    position: decimalValue(row.position),
+    sessions: decimalValue(row.sessions),
+    totalSessions: decimalValue(row.total_sessions),
+  };
+}
+
+function emptyDailyPoint(date: string): ReturnType<typeof toDailyPoint> {
+  return {
+    activeUsers: null,
+    clicks: null,
+    ctr: null,
+    date,
+    impressions: null,
+    pageViews: null,
+    position: null,
+    sessions: null,
+    totalSessions: null,
+  };
+}
+
+function toSearchRow(row: AnalyticsSearchResultRow): AnalyticsSearchRow {
+  const clicks = decimalValue(row.clicks) ?? 0;
+  const previousClicks = decimalValue(row.previous_clicks);
+  return {
+    clicks,
+    ctr: decimalValue(row.ctr),
+    impressions: decimalValue(row.impressions) ?? 0,
+    label: row.label,
+    position: decimalValue(row.position),
+    previousClicks,
+    previousImpressions: decimalValue(row.previous_impressions),
+    trafficDeltaPercent: analyticsDelta(clicks, previousClicks),
+  };
+}
+
+function analyticsPeriod(
+  rows: readonly ReturnType<typeof toDailyPoint>[],
+  startDate: string,
+  endDate: string,
+): AnalyticsPeriodValues {
+  const selected = rows.filter(({ date }) => date >= startDate && date <= endDate);
+  const clicks = sumPresent(selected.map(({ clicks: value }) => value));
+  const impressions = sumPresent(selected.map(({ impressions: value }) => value));
+  const weightedPosition = selected.reduce(
+    (total, row) =>
+      total +
+      (row.position !== null && row.impressions !== null ? row.position * row.impressions : 0),
+    0,
+  );
+  return {
+    activeUsers: sumPresent(selected.map(({ activeUsers: value }) => value)),
+    clicks,
+    ctr: clicks !== null && impressions !== null && impressions > 0 ? clicks / impressions : null,
+    impressions,
+    pageViews: sumPresent(selected.map(({ pageViews: value }) => value)),
+    position:
+      impressions !== null && impressions > 0 && weightedPosition > 0
+        ? weightedPosition / impressions
+        : null,
+    sessions: sumPresent(selected.map(({ sessions: value }) => value)),
+    totalSessions: sumPresent(selected.map(({ totalSessions: value }) => value)),
+  };
+}
+
+function analyticsKpis(
+  search: {
+    current: AnalyticsPeriodValues;
+    previous: AnalyticsPeriodValues;
+    state: AnalyticsAvailability;
+  },
+  ga: {
+    current: AnalyticsPeriodValues;
+    previous: AnalyticsPeriodValues;
+    state: AnalyticsAvailability;
+  },
+): AnalyticsKpi[] {
+  return [
+    kpi(
+      'clicks',
+      'Search clicks',
+      search.current.clicks,
+      search.previous.clicks,
+      'count',
+      search.state,
+      'Total clicks reported by Search Console for the selected property and period.',
+      'search_console',
+    ),
+    kpi(
+      'impressions',
+      'Search impressions',
+      search.current.impressions,
+      search.previous.impressions,
+      'count',
+      search.state,
+      'Total Search Console result impressions for the selected property and period.',
+      'search_console',
+    ),
+    kpi(
+      'ctr',
+      'Search CTR',
+      search.current.ctr,
+      search.previous.ctr,
+      'percent',
+      search.state,
+      'Total clicks divided by total impressions. Row-level CTR values are not summed or averaged.',
+      'search_console',
+    ),
+    kpi(
+      'position',
+      'Average position',
+      search.current.position,
+      search.previous.position,
+      'position',
+      search.state,
+      'Search Console position weighted by impressions across stored observations.',
+      'search_console',
+      'Average position is aggregate evidence and does not describe every location, device, or individual result.',
+    ),
+    kpi(
+      'organic_sessions',
+      'Organic sessions',
+      ga.current.sessions,
+      ga.previous.sessions,
+      'count',
+      ga.state,
+      'GA4 sessions where sessionMedium is organic, organic search, or organic_search.',
+      'ga4',
+    ),
+    kpi(
+      'organic_page_views',
+      'Organic page views',
+      ga.current.pageViews,
+      ga.previous.pageViews,
+      'count',
+      ga.state,
+      'GA4 screenPageViews summed for the documented organic session-medium allowlist.',
+      'ga4',
+    ),
+    kpi(
+      'active_user_observations',
+      'Active-user observations',
+      ga.current.activeUsers,
+      ga.previous.activeUsers,
+      'count',
+      ga.state,
+      'Daily GA4 activeUsers values summed across stored organic source/medium rows.',
+      'ga4',
+      'A person may appear in more than one day or source row; this is not a deduplicated period user count.',
+    ),
+    kpi(
+      'total_sessions',
+      'All-channel sessions',
+      ga.current.totalSessions,
+      ga.previous.totalSessions,
+      'count',
+      ga.state,
+      'GA4 sessions across all stored source and medium rows, shown as context beside organic traffic.',
+      'ga4',
+      'This context metric includes direct, referral, paid, organic, and other measured channels.',
+    ),
+    {
+      current: null,
+      definition:
+        'GA4 engagement-rate collection is not implemented in the current provider contract.',
+      deltaPercent: null,
+      key: 'engagement_rate',
+      label: 'Engagement rate',
+      previous: null,
+      source: 'ga4',
+      state: 'unsupported',
+      unit: 'percent',
+    },
+    {
+      current: null,
+      definition:
+        'GA4 key-event or conversion collection is not implemented in the current provider contract.',
+      deltaPercent: null,
+      key: 'conversions',
+      label: 'Conversions',
+      previous: null,
+      source: 'ga4',
+      state: 'unsupported',
+      unit: 'count',
+    },
+  ];
+}
+
+function kpi(
+  key: string,
+  label: string,
+  current: number | null,
+  previous: number | null,
+  unit: AnalyticsKpi['unit'],
+  sourceState: AnalyticsAvailability,
+  definition: string,
+  source: AnalyticsKpi['source'],
+  limitation?: string,
+): AnalyticsKpi {
+  const state = current === null && sourceState === 'available' ? 'no_data' : sourceState;
+  return {
+    current,
+    definition,
+    deltaPercent: analyticsDelta(current, previous),
+    key,
+    label,
+    ...(limitation ? { limitation } : {}),
+    previous,
+    source,
+    state,
+    unit,
+  };
+}
+
+function analyticsSourceState(
+  connection: { lastSyncedAt: string | null; status: string } | undefined,
+  hasRows: boolean,
+  now: Date,
+): AnalyticsAvailability {
+  if (!connection) return 'not_connected';
+  if (connection.status !== 'connected') return hasRows ? 'partial' : 'not_connected';
+  if (!hasRows) return 'no_data';
+  if (
+    !connection.lastSyncedAt ||
+    now.getTime() - new Date(connection.lastSyncedAt).getTime() > 72 * 60 * 60_000
+  ) {
+    return 'stale';
+  }
+  return 'available';
+}
+
+function combinedAnalyticsState(
+  search: AnalyticsAvailability,
+  ga: AnalyticsAvailability,
+): AnalyticsAvailability {
+  if (search === 'available' && ga === 'available') return 'available';
+  if (search === 'stale' || ga === 'stale') return 'stale';
+  if (search === 'not_connected' && ga === 'not_connected') return 'not_connected';
+  if (search === 'no_data' && ga === 'no_data') return 'no_data';
+  return 'partial';
+}
+
+function analyticsQualityNotes(
+  connections: readonly {
+    lastSyncedAt: string | null;
+    propertyKind: 'ga4' | 'search_console';
+    status: string;
+  }[],
+  searchState: AnalyticsAvailability,
+  gaState: AnalyticsAvailability,
+): string[] {
+  const notes = [
+    'Google can revise recent measurements; a re-finalized observation replaces its prior stored value.',
+    'Search Console may omit anonymized or low-volume queries, so query rows may not sum to property totals.',
+    'Metrics are collected by scheduled workers and this page never polls Google on demand.',
+    'Date labels preserve source-reported calendar dates: Search Console uses Pacific Time and GA4 uses the connected property time zone, so cross-source day boundaries may differ.',
+  ];
+  if (searchState !== 'available') notes.push(`Search Console data state: ${searchState}.`);
+  if (gaState !== 'available') notes.push(`GA4 data state: ${gaState}.`);
+  if (connections.length === 0) notes.push('No Google property is connected for this site.');
+  return notes;
+}
+
+function analyticsEventSummary(category: string, state: string): string {
+  const label =
+    {
+      aio_proposal: 'AI proposal review',
+      backup: 'Backup job',
+      crawl: 'Site crawl',
+      health_check: 'Health check',
+      metrics_sync: 'Google metrics sync',
+      publication: 'Website publication',
+      publish: 'Publication worker',
+      seo_audit: 'SEO audit',
+    }[category] ?? category.replaceAll('_', ' ');
+  return `${label} ${state}`;
+}
+
+function analyticsDates(startDate: string, endDate: string): string[] {
+  const dates: string[] = [];
+  const end = new Date(`${endDate}T00:00:00.000Z`).getTime();
+  for (
+    let current = new Date(`${startDate}T00:00:00.000Z`).getTime();
+    current <= end;
+    current += 86_400_000
+  ) {
+    dates.push(new Date(current).toISOString().slice(0, 10));
+  }
+  return dates;
+}
+
+function hasAnalyticsRows(
+  rows: readonly { date: string }[],
+  startDate: string,
+  endDate: string,
+): boolean {
+  return rows.some(({ date }) => date >= startDate && date <= endDate);
+}
+
+function inclusiveDays(startDate: string, endDate: string): number {
+  return analyticsDates(startDate, endDate).length;
+}
+
+function sumPresent(values: readonly (number | null)[]): number | null {
+  const present = values.filter((value): value is number => value !== null);
+  return present.length > 0 ? present.reduce((total, value) => total + value, 0) : null;
+}
+
+function decimalValue(value: unknown): number | null {
+  if (typeof value !== 'number' && typeof value !== 'string') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function integerValue(value: unknown): number {
+  return Math.max(0, Math.trunc(decimalValue(value) ?? 0));
+}
+
+function nullableIntegerValue(value: unknown): number | null {
+  const parsed = decimalValue(value);
+  return parsed === null ? null : Math.max(0, Math.trunc(parsed));
+}
+
+function dateOnlyString(value: Date | string): string {
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  return value.slice(0, 10);
+}
+
+function dateOnlyNullableString(value: Date | string | null | undefined): string | null {
+  return value ? dateOnlyString(value) : null;
+}
+
+function findingPage(evidence: unknown): string | null {
+  if (!evidence || typeof evidence !== 'object' || Array.isArray(evidence)) return null;
+  const candidate = (evidence as Record<string, unknown>).url;
+  if (typeof candidate !== 'string' || candidate.length > 2_000) return null;
+  try {
+    const url = new URL(candidate);
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function dateTimeString(value: Date | string | null | undefined): string | null {
+  if (!value) return null;
+  const parsed = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
 async function assertCurrentOrapAuthorization(
