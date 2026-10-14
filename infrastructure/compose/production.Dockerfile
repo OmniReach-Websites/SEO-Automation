@@ -18,7 +18,21 @@ RUN apt-get update \
 FROM source AS migrator
 
 RUN apt-get update \
-  && apt-get install --yes --no-install-recommends postgresql-client \
+  && apt-get install --yes --no-install-recommends curl \
+  && install -d -m 0755 /usr/share/postgresql-common/pgdg \
+  && curl --fail --location --show-error \
+    --output /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+    https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+  && printf '%s\n' \
+    'Types: deb' \
+    'URIs: https://apt.postgresql.org/pub/repos/apt' \
+    'Suites: bookworm-pgdg' \
+    'Components: main' \
+    'Signed-By: /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc' \
+    > /etc/apt/sources.list.d/pgdg.sources \
+  && apt-get update \
+  && apt-get install --yes --no-install-recommends postgresql-client-16 \
+  && pg_dump --version | grep -Eq '^pg_dump \(PostgreSQL\) 16\.' \
   && rm -rf /var/lib/apt/lists/*
 
 ENTRYPOINT ["/opt/omnireach/infrastructure/compose/scripts/migrate-entrypoint.sh"]
