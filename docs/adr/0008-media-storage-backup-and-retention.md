@@ -47,8 +47,11 @@ The initial VPS can host persistent media, but storage must remain portable, iso
   This supersedes the earlier 7-daily/4-weekly proposal as of 2026-10-14.
 - Reference-aware delayed garbage collection is required.
 - Backup status and restore-test date are operational health signals.
-- Production completion requires automated upload satisfying the 24-hour RPO and evidence
-  from a successful real isolated restore, not only archive creation or a mock adapter.
+- Initial production completion was evidenced on 2026-10-14 by an automated encrypted
+  upload, independent R2 download/authentication, and a real isolated tmpfs PostgreSQL 16
+  restore. The 155,720-byte recovery point restored in 2.989 seconds and verified 1
+  tenant, 1 site, and 86 RLS policies. Ongoing daily success and monthly restore evidence
+  remain operational obligations under the 24-hour RPO and 8-hour RTO objectives.
 - Storage migration can preserve site IDs, asset keys/manifests, and artifacts behind the adapter.
 
 ## Validation

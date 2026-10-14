@@ -354,9 +354,13 @@ overlapping target before `pg_restore --exit-on-error` runs.
 
 Monthly restore proof uses a new isolated database/storage namespace and verifies schema, row/reference counts, tenant boundaries, media links, one previously published artifact, and application compatibility. Production restoration requires declared incident scope, owner authorization, key custody, a fresh preservation backup where safe, and post-restore security/health checks.
 
-R-005 remains incomplete for production until the authorized automated off-server path
-meets the 24-hour RPO and a real isolated restore succeeds. Manual deletion always
-requires the owner's authorization and an audit record.
+R-005 completed initial production activation on 2026-10-14. The scheduled-path backup
+created and independently verified a 155,720-byte encrypted R2 recovery point. A separate
+download restored into an isolated tmpfs PostgreSQL 16 database, verified 1 tenant, 1
+site, and 86 RLS policies, and measured 2.989 seconds for the restore operation. Both
+systemd timers are enabled; the deduplicated failure alert resolved after success. The
+24-hour RPO and 8-hour RTO objectives remain continuously monitored operational targets.
+Manual deletion always requires the owner's authorization and an audit record.
 
 ## 8. Monitoring and alerts
 
