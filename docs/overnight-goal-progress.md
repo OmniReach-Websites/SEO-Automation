@@ -2,7 +2,7 @@
 
 **Started:** 2026-10-13 (America/Chicago)
 
-**Working branch:** `feature/maintenance-review-20261014`
+**Working branch:** `feature/overnight-goal-closure`
 **Source goal:** `OMNIREACH_AUTONOMOUS_OVERNIGHT_GOAL.md`
 
 This file is the durable resume point for the autonomous overnight goal. Evidence states
@@ -12,11 +12,11 @@ work, `WAITING_FOR_OWNER` needs a human decision/credential, and
 
 ## Current milestone
 
-- `IN_PROGRESS` — Priorities 1 through 5 are merged and deployed through protected
-  workflows. Production backup and provider activation remain separately owner-gated
-  and have not occurred.
-- Current focus: complete Priority 6 dependency review and repair the bounded
-  production-Compose worker-recovery check discovered by that review.
+- `DONE` — All independently executable repository work in Priorities 1 through 6 is
+  merged and deployed through protected workflows.
+- `WAITING_FOR_OWNER` / `WAITING_FOR_PRODUCTION_PROOF` — the remaining unchecked items
+  are deliberately gated production activation or live authenticated/provider evidence;
+  they are listed under their owning priorities and were not bypassed.
 
 ## Priority checklist
 
@@ -74,8 +74,9 @@ work, `WAITING_FOR_OWNER` needs a human decision/credential, and
 
 - [x] Review the six historical Dependabot PRs individually; do not blindly merge.
 - [x] Refresh the authoritative handoff and record exact dependency dispositions.
-- [ ] Merge and verify the bounded production-Compose worker-recovery check; then
-      refresh and re-evaluate the two safe workflow-action PRs.
+- [x] Merge and verify the bounded production-Compose worker-recovery check.
+- [x] Refresh, re-review, merge, and deploy the safe pinned `setup-node` and `checkout`
+      action upgrades one at a time; retain the coordinated holds on PRs #3 through #6.
 
 ## Evidence log
 
@@ -439,9 +440,37 @@ work, `WAITING_FOR_OWNER` needs a human decision/credential, and
   daemon is unavailable, so protected Linux CI is required to prove the full disposable
   runtime repair before merge.
 
+### 2026-10-14 UTC — Priority 6 protected releases complete
+
+- PR #69 passed protected Branch CI runs `38581211410` and `38581243080`, including the
+  repaired disposable production-Compose check, and merged as
+  `ad04297bbd1909b80ab341d6c8df09b92759dd5f`. Main CI run `38581722196` and production
+  deployment run `38581722099` passed that exact commit. Independent checks returned
+  200 for readiness, OmniReach home, Terms, and Coop; unauthenticated ORAP Operations
+  returned 403; and the public inquiry endpoint remained exactly `{"enabled":false}`.
+- Dependabot PR #1 was refreshed onto the repair, re-reviewed as pinned action-SHA-only,
+  and passed both checks `38582993746` and `38583006116`. It merged as
+  `2848e4fb604b43a25ac79c1edc405c1ae44db729`; main CI `38583492763` and production
+  deployment `38583492784` passed the exact commit.
+- Dependabot PR #2 was then refreshed onto that deployed commit. It retained exact-ref,
+  history-depth, and `persist-credentials: false` controls and passed both checks
+  `38584662472` and `38584672613`. It merged as
+  `2cf8302b039b3b1be481edb40d112b84db554bd4`; main CI `38585086048` and production
+  deployment `38585086093` passed the exact commit.
+- The final main CI emitted no deprecated Node 20 action annotation. Independent final
+  checks returned 200 for readiness, OmniReach home, Terms, and Coop; unauthenticated
+  ORAP Operations returned 403; and public inquiry remained disabled. PRs #3 through #6
+  remain intentionally unmerged under their documented coordinated-upgrade holds.
+- The named source goal file is not present in the worktree or any reachable Git object.
+  This ledger is the durable requirement/evidence record available for completion
+  auditing; missing source text was not invented.
+
 ## Resume point
 
-Commit and open the focused Priority 6 maintenance PR, require both protected checks,
-and verify its exact protected-main deployment. Then refresh PRs #1 and #2 onto that
-main commit and re-evaluate them individually. Do not merge PRs #3 through #6 as routine
-updates, and do not activate paid OpenAI calls, Resend, contact delivery, or backups.
+No unblocked overnight repository implementation remains. Resume only with the relevant
+owner authorization or live access needed for an explicitly waiting item: authenticated
+employee Analytics smoke, exact Google-console reconciliation, production backup secret
+installation/scheduling and timed restore proof, Resend/contact activation evidence, or
+paid OpenAI benchmark/activation. Do not weaken authentication, enable a provider, or
+invent production proof to close these gates. Keep PRs #3 through #6 unmerged until their
+documented coordinated migrations are completed.

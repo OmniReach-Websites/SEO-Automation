@@ -1,13 +1,19 @@
-# OmniReach handoff context — October 14, 2026, updated through 14:30 UTC
+# OmniReach handoff context — October 14, 2026, updated through 15:05 UTC
 
-**Purpose:** authoritative first-read snapshot for the next Codex session or developer  
-**Repository:** `OmniReach-Websites/SEO-Automation`  
-**Protected production branch:** `main`  
-**Latest protected-main commit:** `d73ab70f62b3eebf15df958e2161e755f64855c7`
-(`Complete disabled AI proposal pipeline (#68)`)  
-**Latest verified production workflow:** GitHub Actions run `38542647373`  
-**Latest verified main CI:** GitHub Actions run `38542647400`  
-**Current repository branch:** `feature/maintenance-review-20261014`, created from the
+**Purpose:** authoritative first-read snapshot for the next Codex session or developer
+
+**Repository:** `OmniReach-Websites/SEO-Automation`
+
+**Protected production branch:** `main`
+
+**Latest application/maintenance baseline:** `2cf8302b039b3b1be481edb40d112b84db554bd4`
+(`Bump actions/checkout from 4.4.0 to 7.0.1 (#2)`)
+
+**Verified production workflow for that baseline:** GitHub Actions run `38585086093`
+
+**Verified main CI for that baseline:** GitHub Actions run `38585086048`
+
+**Current repository branch:** `feature/overnight-goal-closure`, created from the
 latest protected-main commit
 
 This document supersedes
@@ -88,12 +94,14 @@ rollback path.
 
 ## Current verified production baseline
 
-PR #68 was squash-merged as
-`d73ab70f62b3eebf15df958e2161e755f64855c7`. Main CI run `38542647400` and production
-deployment run `38542647373` both passed for that exact commit. The deployment rebuilt
-and tested the source, built immutable artifacts, transferred and activated the release
-through the restricted ephemeral SSH path, ran health checks, verified the Coop and
-OmniReach sites, and removed the ephemeral identity.
+The latest protected main includes the Priority 5 release, the Priority 6 verifier
+repair, and the reviewed pinned `setup-node` 7.1.0 and `checkout` 7.0.1 action upgrades.
+Main CI run `38585086048` and production deployment run `38585086093` both passed for
+exact commit `2cf8302b039b3b1be481edb40d112b84db554bd4`. The deployment rebuilt and tested the
+source, built immutable artifacts, transferred and activated the release through the
+restricted ephemeral SSH path, ran health checks, verified the Coop and OmniReach sites,
+and removed the ephemeral identity. The final main CI emitted no deprecated Node 20
+action annotation.
 
 Independent post-deployment checks returned:
 
@@ -209,13 +217,13 @@ representative paid-provider benchmark and explicit production activation remain
 
 ### Priority 6 — dependency and routine-maintenance review
 
-The review is in progress on `feature/maintenance-review-20261014`. No dependency PR
-has been merged blindly.
+The review and safe routine maintenance are complete. No dependency PR was merged
+blindly.
 
 | PR  | Change                               | Current evidence and disposition                                                                                                                                                                |
 | --- | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| #1  | `actions/setup-node` 4.4.0 → 7.1.0   | Refreshed onto current main; both protected Branch CI checks passed and the diff contains only pinned action-SHA changes. Refresh again after the maintenance repair lands before merging.      |
-| #2  | `actions/checkout` 4.4.0 → 7.0.1     | Refreshed onto current main; one duplicate check passed and one exposed an immediate post-restart heartbeat race. Hold until the bounded verifier repair lands, then refresh and rerun checks.  |
+| #1  | `actions/setup-node` 4.4.0 → 7.1.0   | Refreshed after the verifier repair, passed both protected checks, merged as `2848e4fb`, and passed exact-main CI and production deployment.                                                    |
+| #2  | `actions/checkout` 4.4.0 → 7.0.1     | Refreshed after #1, preserved exact-ref/fetch-depth and `persist-credentials: false`, passed both checks, merged as `2cf8302b`, and passed exact-main CI and deployment.                        |
 | #3  | TypeScript/Prisma/dev-tooling majors | Both checks fail during install because `typescript-eslint@8.71.1` requires TypeScript `<6.1.0`, while the PR selects TypeScript 7. Do not merge; this needs a coordinated toolchain migration. |
 | #4  | BullMQ 5.61.2 → 6.3.12               | Both checks fail because the disposable production `publisher` worker becomes unhealthy. Do not merge until the queue/runtime compatibility change is understood and tested.                    |
 | #5  | `@prisma/adapter-pg` 6.12.0 → 7.10.0 | Both checks pass, but do not merge this package independently from the Prisma CLI/client/schema-generation migration.                                                                           |
@@ -261,22 +269,20 @@ sites on the current two-core/eight-GiB VPS. These are targets, not proof of att
 
 ## Exact safe resume point
 
-1. Finish the current-main CI review for Dependabot PRs #1 and #2. Merge only if both
-   protected checks pass and the pinned action changes preserve workflow security.
-2. Write the durable Priority 6 dependency review and update the overnight progress
-   ledger with exact evidence and dispositions.
-3. Preserve the independent production-proof gaps: authenticated employee Analytics
+1. Preserve the independent production-proof gaps: authenticated employee Analytics
    smoke, exact Google-console reconciliation, real R2 copy validation, and timed
    isolated restore.
-4. Keep Resend/contact/alert delivery, backup scheduling, and paid OpenAI calls disabled
+2. Keep Resend/contact/alert delivery, backup scheduling, and paid OpenAI calls disabled
    unless the owner explicitly authorizes the specific production activation.
+3. Keep Dependabot PRs #3 through #6 unmerged until their documented coordinated
+   TypeScript/ESLint/Prisma or BullMQ migrations are implemented and verified.
 
 ## Git/worktree warning
 
 The historical local `main` is 25 commits ahead of and 76 commits behind protected
 `origin/main`. Do not reset, delete, rewrite, or force-update it. New work must branch
 from a freshly fetched `origin/main`. The current clean branch is
-`feature/maintenance-review-20261014` at `d73ab70f62b3eebf15df958e2161e755f64855c7`.
+`feature/overnight-goal-closure` at `2cf8302b039b3b1be481edb40d112b84db554bd4`.
 
 ## Detailed sources of truth
 
