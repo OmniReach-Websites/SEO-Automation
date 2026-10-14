@@ -355,12 +355,13 @@ export function renderOrapSiteDetails(
     canEditBudget?: boolean;
     canEditSubscription?: boolean;
     canManageGoogle?: boolean;
+    notice?: string | undefined;
   } = {},
 ): string {
   const effective = management ? renderEffectiveSiteManagement(site, management, permissions) : '';
   return renderOrapShell({
     actions: '<a class="button secondary" href="/orap/sites">Back to sites</a>',
-    content: `<section class="panel"><h2>Site record</h2><dl class="detail-list"><dt>Site</dt><dd>${escapeHtml(site.name)}</dd><dt>Tenant</dt><dd>${escapeHtml(site.tenantName)}</dd><dt>Status</dt><dd><span class="badge${site.status === 'disabled' ? ' disabled' : ''}">${escapeHtml(site.status)}</span></dd>${site.id ? `<dt>Site ID</dt><dd><code>${escapeHtml(site.id)}</code></dd>` : ''}${site.tenantId ? `<dt>Tenant ID</dt><dd><code>${escapeHtml(site.tenantId)}</code></dd>` : ''}</dl></section>${effective || '<section class="panel"><h2>Management controls</h2><p class="lede">Effective controls are unavailable for this account.</p></section>'}`,
+    content: `${permissions.notice ? `<div class="notice" role="status">${escapeHtml(permissions.notice)}</div>` : ''}<section class="panel"><h2>Site record</h2><dl class="detail-list"><dt>Site</dt><dd>${escapeHtml(site.name)}</dd><dt>Tenant</dt><dd>${escapeHtml(site.tenantName)}</dd><dt>Status</dt><dd><span class="badge${site.status === 'disabled' ? ' disabled' : ''}">${escapeHtml(site.status)}</span></dd>${site.id ? `<dt>Site ID</dt><dd><code>${escapeHtml(site.id)}</code></dd>` : ''}${site.tenantId ? `<dt>Tenant ID</dt><dd><code>${escapeHtml(site.tenantId)}</code></dd>` : ''}</dl></section>${effective || '<section class="panel"><h2>Management controls</h2><p class="lede">Effective controls are unavailable for this account.</p></section>'}`,
     current: 'sites',
     eyebrow: 'Site management',
     heading: site.name,

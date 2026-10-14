@@ -176,54 +176,76 @@ export class PostgresGoogleIntegrationService implements IntegrationEndpointServ
         return storedState;
       },
     );
-    const request = this.decrypt<OAuthRequest>(
-      state.encrypted_request,
-      state.tenant_id,
-      state.site_id,
-      state.key_version,
-    );
-    this.#connectionManager.acceptCallback(request, {
-      nonce: request.nonce,
-      redirectUri: state.redirect_uri,
-      state: input.state,
-    });
-    const tokens = await this.#provider.exchangeCode({ code: input.code, request });
-    assertScopes(tokens.scopes, state.property_kind);
-    const properties = await this.#provider.listProperties(tokens, state.property_kind);
-    const siteHostname = await this.publicHostname(actor, state.tenant_id, state.site_id);
-    const eligible = properties.filter((property) => {
-      try {
-        this.#connectionManager.verifyProperty(property, siteHostname);
-        return true;
-      } catch {
-        return false;
+    let stage: GoogleCallbackStage = 'decrypt_state';
+    try {
+      const request = this.decrypt<OAuthRequest>(
+        state.encrypted_request,
+        state.tenant_id,
+        state.site_id,
+        state.key_version,
+      );
+      stage = 'validate_callback';
+      this.#connectionManager.acceptCallback(request, {
+        nonce: request.nonce,
+        redirectUri: state.redirect_uri,
+        state: input.state,
+      });
+      stage = 'exchange_code';
+      const tokens = await this.#provider.exchangeCode({ code: input.code, request });
+      stage = 'validate_scopes';
+      assertScopes(tokens.scopes, state.property_kind);
+      stage = 'list_properties';
+      const properties = await this.#provider.listProperties(tokens, state.property_kind);
+      stage = 'resolve_site_hostname';
+      const siteHostname = await this.publicHostname(actor, state.tenant_id, state.site_id);
+      const eligible = properties.filter((property) => {
+        try {
+          this.#connectionManager.verifyProperty(property, siteHostname);
+          return true;
+        } catch {
+          return false;
+        }
+      });
+      stage = 'store_credential';
+      const credentialId = await this.storeCredential(
+        actor,
+        state.tenant_id,
+        state.site_id,
+        tokens,
+      );
+      const selected = input.propertyId
+        ? eligible.find((property) => property.id === input.propertyId)
+        : eligible.length === 1
+          ? eligible[0]
+          : undefined;
+      if (!selected) {
+        return {
+          eligibleProperties: eligible.map((property) => ({
+            id: property.id,
+            kind: property.kind,
+            siteUrl: property.siteUrl,
+          })),
+          pendingSelectionId: credentialId,
+          siteId: state.site_id,
+          status: eligible.length === 0 ? 'no_matching_property' : 'property_selection_required',
+        };
       }
-    });
-    const credentialId = await this.storeCredential(actor, state.tenant_id, state.site_id, tokens);
-    const selected = input.propertyId
-      ? eligible.find((property) => property.id === input.propertyId)
-      : eligible.length === 1
-        ? eligible[0]
-        : undefined;
-    if (!selected) {
-      return {
-        eligibleProperties: eligible.map((property) => ({
-          id: property.id,
-          kind: property.kind,
-          siteUrl: property.siteUrl,
-        })),
-        pendingSelectionId: credentialId,
+      stage = 'connect_property';
+      return this.connectProperty(actor, {
+        credentialId,
+        property: selected,
+        scopes: tokens.scopes,
         siteId: state.site_id,
-        status: eligible.length === 0 ? 'no_matching_property' : 'property_selection_required',
-      };
+        tenantId: state.tenant_id,
+      });
+    } catch (error) {
+      throw new GoogleIntegrationCallbackError(
+        error instanceof GoogleProviderError ? error.code : 'connection_failed',
+        state.site_id,
+        stage,
+        error,
+      );
     }
-    return this.connectProperty(actor, {
-      credentialId,
-      property: selected,
-      scopes: tokens.scopes,
-      siteId: state.site_id,
-      tenantId: state.tenant_id,
-    });
   }
 
   selectGoogleProperty(
@@ -697,6 +719,29 @@ export class PostgresGoogleIntegrationService implements IntegrationEndpointServ
     ) as T;
   }
 }
+
+export class GoogleIntegrationCallbackError extends Error {
+  override readonly name = 'GoogleIntegrationCallbackError';
+
+  constructor(
+    readonly code: string,
+    readonly siteId: string,
+    readonly stage: GoogleCallbackStage,
+    override readonly cause: unknown,
+  ) {
+    super(`Google integration callback failed: ${code}`);
+  }
+}
+
+export type GoogleCallbackStage =
+  | 'connect_property'
+  | 'decrypt_state'
+  | 'exchange_code'
+  | 'list_properties'
+  | 'resolve_site_hostname'
+  | 'store_credential'
+  | 'validate_callback'
+  | 'validate_scopes';
 
 function canonicalPoint(point: GoogleMetricPoint): unknown {
   return {
