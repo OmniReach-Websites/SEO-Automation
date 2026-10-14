@@ -504,14 +504,32 @@ export class PostgresGoogleIntegrationService implements IntegrationEndpointServ
     return this.withWorkerSite(input, async (client) => {
       let inserted = 0;
       for (const point of points) {
-        const sourceHash = digest(JSON.stringify(canonicalPoint(point)));
-        const result = await query<{ id: string }>(
+        const result = await query<{ id: string; inserted: boolean }>(
           client,
           `INSERT INTO metric_snapshots
              (tenant_id, site_id, connection_id, source, metric, dimensions,
               window_start, window_end, value, source_hash, ingested_at, expires_at)
-           VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12)
-           ON CONFLICT (connection_id, source_hash) DO NOTHING RETURNING id`,
+           VALUES (
+             $1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9,
+             encode(
+               digest(
+                 concat_ws(
+                   chr(31), $3::text, $4, $5, ($6::jsonb)::text,
+                   extract(epoch FROM $7::timestamptz)::text,
+                   extract(epoch FROM $8::timestamptz)::text
+                 ),
+                 'sha256'
+               ),
+               'hex'
+             ),
+             $10, $11
+           )
+           ON CONFLICT (connection_id, source_hash) DO UPDATE
+             SET value = EXCLUDED.value,
+                 ingested_at = EXCLUDED.ingested_at,
+                 expires_at = EXCLUDED.expires_at
+             WHERE metric_snapshots.value IS DISTINCT FROM EXCLUDED.value
+           RETURNING id, (xmax = 0) AS inserted`,
           [
             input.tenantId,
             input.siteId,
@@ -522,12 +540,11 @@ export class PostgresGoogleIntegrationService implements IntegrationEndpointServ
             `${point.startDate}T00:00:00Z`,
             `${point.endDate}T23:59:59.999Z`,
             point.value,
-            sourceHash,
             now,
             new Date(now.getTime() + 18 * 30 * 24 * 60 * 60_000),
           ],
         );
-        inserted += result.rows.length;
+        inserted += result.rows.filter((row) => row.inserted).length;
       }
       await client.query(
         `UPDATE integration_credentials
@@ -770,20 +787,6 @@ export type GoogleCallbackStage =
   | 'store_credential'
   | 'validate_callback'
   | 'validate_scopes';
-
-function canonicalPoint(point: GoogleMetricPoint): unknown {
-  return {
-    dimensions: Object.fromEntries(
-      Object.entries(point.dimensions).sort(([left], [right]) => left.localeCompare(right)),
-    ),
-    endDate: point.endDate,
-    metric: point.metric,
-    propertyId: point.propertyId,
-    source: point.source,
-    startDate: point.startDate,
-    value: point.value,
-  };
-}
 
 function digest(value: string): string {
   return createHash('sha256').update(value).digest('hex');

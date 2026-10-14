@@ -12,6 +12,13 @@ const migration = readFileSync(
   'utf8',
 );
 const service = readFileSync(resolve(root, 'apps/api/src/postgres-google.ts'), 'utf8');
+const metricIdentityMigration = readFileSync(
+  resolve(
+    root,
+    'packages/database/prisma/migrations/20261013170000_google_metric_observation_identity/migration.sql',
+  ),
+  'utf8',
+);
 
 describe('Google provider persistence boundary', () => {
   it('stores one-use hashed OAuth state and encrypted request/token envelopes', () => {
@@ -39,7 +46,11 @@ describe('Google provider persistence boundary', () => {
     expect(service).toContain('integration.google.consent_started');
     expect(service).toContain('integration.google.connected');
     expect(service).toContain('integration.google.disconnected');
-    expect(service).toContain('ON CONFLICT (connection_id, source_hash) DO NOTHING');
+    expect(service).toContain('ON CONFLICT (connection_id, source_hash) DO UPDATE');
+    expect(service).toContain('metric_snapshots.value IS DISTINCT FROM EXCLUDED.value');
+    expect(metricIdentityMigration).toContain(
+      'PARTITION BY connection_id, source, metric, dimensions, window_start, window_end',
+    );
     expect(service).toContain("status = 'disconnected'");
   });
 });

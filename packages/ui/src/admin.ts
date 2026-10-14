@@ -83,7 +83,8 @@ const platformOwnerAuthority: OrapStaffRoleOption = {
   slug: 'platform-owner',
 };
 
-export type OrapNavigationItem = 'operations' | 'overview' | 'security' | 'sites' | 'staff';
+export type OrapNavigationItem =
+  'analytics' | 'operations' | 'overview' | 'security' | 'sites' | 'staff';
 
 export interface OrapOverviewModel {
   alerts: readonly { message: string; severity: string; state: string }[];
@@ -124,12 +125,17 @@ export function renderOrapShell(input: {
   const notice = input.notice
     ? `<div class="notice${input.notice.kind === 'error' ? ' error' : ''}" role="status" tabindex="-1">${escapeHtml(input.notice.message)}</div>`
     : '';
-  const navigation = new Set(input.navigation ?? ['overview', 'sites', 'operations', 'security']);
+  const navigation = new Set(
+    input.navigation ?? ['overview', 'sites', 'analytics', 'operations', 'security'],
+  );
   const overviewLink = navigation.has('overview')
     ? `<p class="nav-label">Workspace</p><a href="/orap"${current('overview')}>Overview</a>`
     : '';
   const siteLink = navigation.has('sites')
     ? `<p class="nav-label">Portfolio</p><a href="/orap/sites"${current('sites')}>Customer sites</a>`
+    : '';
+  const analyticsLink = navigation.has('analytics')
+    ? `<a href="/orap/analytics"${current('analytics')}>Analytics &amp; SEO</a>`
     : '';
   const operationsLink = navigation.has('operations')
     ? `<p class="nav-label">Operations</p><a href="/orap/operations"${current('operations')}>Jobs &amp; alerts</a>`
@@ -144,10 +150,12 @@ export function renderOrapShell(input: {
     ? '/orap'
     : navigation.has('sites')
       ? '/orap/sites'
-      : navigation.has('operations')
-        ? '/orap/operations'
-        : '/security';
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><meta name="theme-color" content="#0b1820"><link rel="icon" type="image/png" href="/assets/omnireach-logo.png"><link rel="stylesheet" href="/assets/admin.css?v=orap-3"><title>${escapeHtml(input.title)} | OmniReach Administration</title></head><body><a class="skip-link" href="#main">Skip to content</a><div class="app-shell"><aside class="sidebar"><a class="brand" href="${home}"><img class="brand-mark" src="/assets/omnireach-logo.png" alt="" width="48" height="48"><span class="brand-copy"><strong>OmniReach</strong><small>Agency operations</small></span></a><nav class="nav" aria-label="Administration">${overviewLink}${siteLink}${operationsLink}${staffLink}${securityLink}</nav><div class="sidebar-footer"><form method="post" action="/auth/logout"><button class="link-button" type="submit">Sign out</button></form></div></aside><div class="workspace"><main class="content" id="main"><div class="page-head"><div>${input.eyebrow ? `<p class="eyebrow">${escapeHtml(input.eyebrow)}</p>` : ''}<h1>${escapeHtml(input.heading)}</h1></div>${input.actions ?? ''}</div>${notice}${input.content}</main></div></div></body></html>`;
+      : navigation.has('analytics')
+        ? '/orap/analytics'
+        : navigation.has('operations')
+          ? '/orap/operations'
+          : '/security';
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><meta name="theme-color" content="#0b1820"><link rel="icon" type="image/png" href="/assets/omnireach-logo.png"><link rel="stylesheet" href="/assets/admin.css?v=orap-4"><title>${escapeHtml(input.title)} | OmniReach Administration</title></head><body><a class="skip-link" href="#main">Skip to content</a><div class="app-shell"><aside class="sidebar"><a class="brand" href="${home}"><img class="brand-mark" src="/assets/omnireach-logo.png" alt="" width="48" height="48"><span class="brand-copy"><strong>OmniReach</strong><small>Agency operations</small></span></a><nav class="nav" aria-label="Administration">${overviewLink}${siteLink}${analyticsLink}${operationsLink}${staffLink}${securityLink}</nav><div class="sidebar-footer"><form method="post" action="/auth/logout"><button class="link-button" type="submit">Sign out</button></form></div></aside><div class="workspace"><main class="content" id="main"><div class="page-head"><div>${input.eyebrow ? `<p class="eyebrow">${escapeHtml(input.eyebrow)}</p>` : ''}<h1>${escapeHtml(input.heading)}</h1></div>${input.actions ?? ''}</div>${notice}${input.content}</main></div></div></body></html>`;
 }
 
 export function renderOrapStaffDirectory(
@@ -359,8 +367,16 @@ export function renderOrapSiteDetails(
   } = {},
 ): string {
   const effective = management ? renderEffectiveSiteManagement(site, management, permissions) : '';
+  const actions = [
+    site.id && navigation?.includes('analytics')
+      ? `<a class="button" href="/orap/analytics?siteId=${encodeURIComponent(site.id)}&amp;range=28">View analytics</a>`
+      : '',
+    '<a class="button secondary" href="/orap/sites">Back to sites</a>',
+  ]
+    .filter(Boolean)
+    .join('');
   return renderOrapShell({
-    actions: '<a class="button secondary" href="/orap/sites">Back to sites</a>',
+    actions: `<div class="actions">${actions}</div>`,
     content: `${permissions.notice ? `<div class="notice" role="status">${escapeHtml(permissions.notice)}</div>` : ''}<section class="panel"><h2>Site record</h2><dl class="detail-list"><dt>Site</dt><dd>${escapeHtml(site.name)}</dd><dt>Tenant</dt><dd>${escapeHtml(site.tenantName)}</dd><dt>Status</dt><dd><span class="badge${site.status === 'disabled' ? ' disabled' : ''}">${escapeHtml(site.status)}</span></dd>${site.id ? `<dt>Site ID</dt><dd><code>${escapeHtml(site.id)}</code></dd>` : ''}${site.tenantId ? `<dt>Tenant ID</dt><dd><code>${escapeHtml(site.tenantId)}</code></dd>` : ''}</dl></section>${effective || '<section class="panel"><h2>Management controls</h2><p class="lede">Effective controls are unavailable for this account.</p></section>'}`,
     current: 'sites',
     eyebrow: 'Site management',

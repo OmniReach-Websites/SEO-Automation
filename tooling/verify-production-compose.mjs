@@ -293,6 +293,48 @@ try {
   );
   assert.equal(workerHeartbeats.stdout.trim(), '6');
 
+  dockerCompose([
+    'exec',
+    '--no-TTY',
+    'postgres',
+    'sh',
+    '-ceu',
+    `PGPASSWORD="$(cat /run/secrets/postgres_admin_password)" psql -U omnireach_db_admin -d omnireach -v ON_ERROR_STOP=1 -c "INSERT INTO tenants (id, name) VALUES ('10000000-0000-4000-8000-000000000099', 'Analytics verifier') ON CONFLICT (id) DO NOTHING; INSERT INTO sites (id, tenant_id, name) VALUES ('20000000-0000-4000-8000-000000000099', '10000000-0000-4000-8000-000000000099', 'Analytics verifier') ON CONFLICT (id) DO NOTHING" >/dev/null`,
+  ]);
+  const analyticsQuery = dockerCompose(
+    [
+      'exec',
+      '--no-TTY',
+      'api',
+      '/opt/omnireach/infrastructure/compose/scripts/runtime-entrypoint.sh',
+      'node',
+      '--experimental-transform-types',
+      '--input-type=module',
+      '--eval',
+      `import pg from 'pg';
+       import { PostgresOrapService } from './apps/api/src/postgres-orap.ts';
+       const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+       const service = new PostgresOrapService(pool, { send: async () => undefined }, async () => undefined);
+       const model = await service.siteAnalytics(
+         { id: '40000000-0000-4000-8000-000000000099', role: 'platform_owner', traceId: 'compose-analytics-verifier' },
+         {
+           endDate: '2026-10-12', limit: 25, pageSort: 'clicks', preset: '7',
+           previousEndDate: '2026-10-05', previousStartDate: '2026-09-29',
+           querySort: 'clicks', siteId: '20000000-0000-4000-8000-000000000099',
+           startDate: '2026-10-06', tenantId: '10000000-0000-4000-8000-000000000099'
+         }
+       );
+       if (model.site.id !== '20000000-0000-4000-8000-000000000099' || model.series.length !== 7) process.exitCode = 1;
+       await pool.end();`,
+    ],
+    { capture: true },
+  );
+  assert.equal(
+    analyticsQuery.status,
+    0,
+    'analytics queries must execute against migrated PostgreSQL',
+  );
+
   let readiness;
   for (let attempt = 0; attempt < 10; attempt += 1) {
     try {
@@ -323,6 +365,7 @@ try {
   console.log(
     JSON.stringify({
       apiReadiness: 'verified',
+      analyticsQuery: 'verified against migrated PostgreSQL',
       authentication: 'verified',
       check: 'production-compose-runtime',
       credentialLeakage: 'not detected in rendered config or container metadata',

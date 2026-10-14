@@ -1363,6 +1363,7 @@ model MetricSnapshot {
 
   @@unique([connectionId, sourceHash])
   @@index([tenantId, siteId, metric, windowStart])
+  @@index([tenantId, siteId, source, windowStart])
   @@map("metric_snapshots")
 }
 

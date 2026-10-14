@@ -9,6 +9,8 @@ export interface OrapRoutePolicy {
 
 export const orapRoutePolicyRegistry = [
   route('GET', '/v1/orap/operations', 'dashboard.view'),
+  route('GET', '/v1/orap/analytics/sites', 'analytics.view'),
+  route('GET', '/v1/orap/sites/:siteId/analytics', 'analytics.view'),
   route('GET', '/v1/orap/sites/:siteId/effective-settings', 'websites.view'),
   { capabilities: [], method: 'GET', ownerIdentityOnly: true, path: '/v1/orap/staff' },
   { capabilities: [], method: 'GET', ownerIdentityOnly: true, path: '/v1/orap/staff/roles' },
