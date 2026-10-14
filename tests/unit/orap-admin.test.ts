@@ -94,6 +94,10 @@ describe('ORAP administration slice', () => {
     expect(html).toContain('<caption>');
     expect(html).toContain('role="status"');
     expect(html).not.toContain('<script>');
+    expect(html).not.toContain('OmniReach Administration Platform');
+    expect(html).not.toContain('Managed websites, automation, and customer operations');
+    expect(html).not.toContain('Secure workspace');
+    expect(html).not.toContain('class="topbar"');
   });
 
   it('manages customer membership and revokes site sessions transactionally', async () => {
