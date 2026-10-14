@@ -96,7 +96,6 @@ export async function createEncryptedBackup(options) {
       : sourceStat.isFile()
         ? [absolute]
         : [];
-    if (members.length === 0) throw new Error(`Backup input has no files: ${basename(absolute)}`);
     for (const member of members) {
       if (files.length >= maximumFiles) throw new Error('Backup exceeds the configured file limit');
       const name = sourceStat.isDirectory()
@@ -122,6 +121,7 @@ export async function createEncryptedBackup(options) {
       });
     }
   }
+  if (files.length === 0) throw new Error('Backup input set has no files');
   const manifest = {
     createdAt: options.createdAt.toISOString(),
     files: files.map((entry) => ({ name: entry.name, sha256: entry.sha256 })),

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -56,6 +56,32 @@ describe('backup operational safety', () => {
     expect(backupErrorCode(new Error('Secret-shaped unexpected detail'), 'backup')).toBe(
       'backup_failed',
     );
+  });
+
+  it('allows empty content directories when the backup set contains required data', async () => {
+    const fixture = await backupFixture(1);
+    const emptyContent = join(fixture.root, 'assets');
+    await mkdir(emptyContent);
+
+    await expect(
+      createEncryptedBackup({
+        createdAt: new Date(Date.UTC(2026, 9, 14)),
+        destinationRoot: join(fixture.root, 'mixed-backup'),
+        encryptionKeyHex: 'ab'.repeat(32),
+        inputPaths: [emptyContent, fixture.source],
+        kind: 'daily',
+      }),
+    ).resolves.toMatchObject({ manifest: { files: [{ name: 'content.txt' }] } });
+
+    await expect(
+      createEncryptedBackup({
+        createdAt: new Date(Date.UTC(2026, 9, 14)),
+        destinationRoot: join(fixture.root, 'empty-backup'),
+        encryptionKeyHex: 'ab'.repeat(32),
+        inputPaths: [emptyContent],
+        kind: 'daily',
+      }),
+    ).rejects.toThrow('Backup input set has no files');
   });
 
   it('requires an audit log for applied pruning and records manual deletion intent and completion', async () => {
