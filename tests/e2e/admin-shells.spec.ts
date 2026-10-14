@@ -315,6 +315,12 @@ test('served ORAP and customer shells remain accessible and host isolated', asyn
     await expect(staffPage.getByRole('heading', { level: 1 })).toHaveText('Customer sites');
     await expect(staffPage.getByRole('table')).toContainText('Fictional Group');
     await expect(staffPage.getByRole('link', { name: 'Skip to content' })).toBeVisible();
+    await expect(staffPage.getByText('OmniReach Administration Platform')).toHaveCount(0);
+    await expect(
+      staffPage.getByText('Managed websites, automation, and customer operations'),
+    ).toHaveCount(0);
+    await expect(staffPage.getByText('Secure workspace')).toHaveCount(0);
+    await expect(staffPage.locator('.topbar')).toHaveCount(0);
     await expect(staffPage.locator('html')).toHaveCSS('background-color', 'rgb(11, 24, 32)');
     await expect(staffPage.locator('html')).toHaveCSS('color-scheme', 'dark');
     await expect(staffPage.locator('meta[name="theme-color"]')).toHaveAttribute(
