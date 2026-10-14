@@ -17,6 +17,7 @@ export class PostgresContactService implements ContactEndpointService {
     private readonly delivery: ContactDeliveryAdapter,
     private readonly options: {
       contracts: ReadonlyMap<string, SiteContract>;
+      deliveryEnabled?: boolean;
       encryptionKey: Uint8Array;
       retentionDays?: number;
       turnstile: TurnstileVerifier;
@@ -32,6 +33,7 @@ export class PostgresContactService implements ContactEndpointService {
     context: ContactSiteContext,
     formId: string,
   ): Promise<{ enabled: boolean; turnstileSiteKey?: string }> {
+    if (!(this.options.deliveryEnabled ?? true)) return { enabled: false };
     const turnstileSiteKey = this.options.turnstileSiteKey;
     if (!turnstileSiteKey) return { enabled: false };
     const jobId = `contact-config:${context.siteId}:${formId}`;
@@ -65,6 +67,9 @@ export class PostgresContactService implements ContactEndpointService {
       website?: string;
     },
   ): Promise<{ submissionId: string }> {
+    if (!(this.options.deliveryEnabled ?? true)) {
+      throw new Error('Contact delivery is disabled');
+    }
     const expectedHostname = new URL(context.allowedOrigin).hostname;
     if (
       !(await this.options.turnstile.verify({

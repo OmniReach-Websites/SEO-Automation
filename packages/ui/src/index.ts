@@ -41,6 +41,7 @@ export {
   type AlertRow,
   type BackupStatusView,
   type BudgetView,
+  type EmailOperationsView,
   type DomainRow,
   type IntegrationRow,
   type JobRow,

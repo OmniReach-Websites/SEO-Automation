@@ -62,6 +62,16 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
         standardPageCount?: number;
       }
     > = new Map(),
+    private readonly emailRuntime?: {
+      readonly alertEnabled: boolean;
+      readonly alertSender: string;
+      readonly authenticationEnabled: boolean;
+      readonly authenticationSender?: string;
+      readonly contactEnabled: boolean;
+      readonly contactSender: string;
+      readonly credentialConfigured: boolean;
+      readonly turnstileConfigured: boolean;
+    },
   ) {}
 
   createPlan(
@@ -2226,6 +2236,7 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
     const jobScope = orapVisibleScope(actor, 'automation.jobs.view');
     const budgetAllowed = canOrap(actor, 'ai_budget.platform.view');
     const backupAllowed = canOrap(actor, 'backups.status.view');
+    const emailAllowed = Boolean(this.emailRuntime) && canOrap(actor, 'alerts.view');
     return this.transaction(actor, async (client) => {
       const alerts = alertAllowed
         ? await query<{
@@ -2326,6 +2337,46 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
             )
           ).rows[0]
         : undefined;
+      const email = emailAllowed
+        ? required(
+            (
+              await query<{
+                cap_count: number;
+                failed_attempt_count: number;
+                last_attempt_at: Date | null;
+                last_error_code: string | null;
+                period_start: Date;
+                reserved_count: number;
+                sent_count: number;
+              }>(
+                client,
+                `SELECT policy.monthly_limit AS cap_count,
+                        date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+                          AS period_start,
+                        COALESCE(period.sent_count, 0)::integer AS sent_count,
+                        COALESCE(period.failed_attempt_count, 0)::integer
+                          AS failed_attempt_count,
+                        (SELECT count(*)::integer FROM email_delivery_reservations reservation
+                          WHERE reservation.period_start =
+                            date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+                            AND reservation.state = 'active'
+                            AND reservation.expires_at > now()) AS reserved_count,
+                        (SELECT max(created_at) FROM email_delivery_reservations)
+                          AS last_attempt_at,
+                        (SELECT error_code FROM email_delivery_reservations
+                          WHERE state = 'failed' AND error_code IS NOT NULL
+                          ORDER BY created_at DESC LIMIT 1) AS last_error_code
+                   FROM email_delivery_policy policy
+                   LEFT JOIN email_delivery_periods period
+                     ON period.period_start =
+                       date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+                  WHERE policy.singleton = true`,
+                [],
+              )
+            ).rows[0],
+            'Email delivery policy is not configured',
+          )
+        : undefined;
       return {
         alerts: alerts.rows,
         ...(backupAllowed
@@ -2349,6 +2400,43 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
                     ...(backup.verified_at ? { verifiedAt: backup.verified_at.toISOString() } : {}),
                   }
                 : null,
+            }
+          : {}),
+        ...(email
+          ? {
+              email: {
+                channels: [
+                  {
+                    enabled: this.emailRuntime?.authenticationEnabled ?? false,
+                    kind: 'Authentication',
+                    sender: this.emailRuntime?.authenticationSender ?? 'Not configured',
+                  },
+                  {
+                    enabled: this.emailRuntime?.alertEnabled ?? false,
+                    kind: 'Urgent alerts',
+                    sender: this.emailRuntime?.alertSender ?? 'Not configured',
+                  },
+                  {
+                    enabled: this.emailRuntime?.contactEnabled ?? false,
+                    kind: 'Forms and inquiries',
+                    sender: this.emailRuntime?.contactSender ?? 'Not configured',
+                  },
+                ],
+                credentialConfigured: this.emailRuntime?.credentialConfigured ?? false,
+                failedAttemptCount: email.failed_attempt_count,
+                ...(email.last_attempt_at
+                  ? { lastAttemptAt: email.last_attempt_at.toISOString() }
+                  : {}),
+                ...(email.last_error_code
+                  ? { lastErrorCode: safeEmailErrorCode(email.last_error_code) }
+                  : {}),
+                monthlyLimit: email.cap_count,
+                periodStart: email.period_start.toISOString(),
+                provider: 'Resend',
+                reservedCount: email.reserved_count,
+                sentCount: email.sent_count,
+                turnstileConfigured: this.emailRuntime?.turnstileConfigured ?? false,
+              },
             }
           : {}),
         budget: budget
@@ -3366,6 +3454,20 @@ function safeBackupErrorCode(value: string): string {
   ]).has(value)
     ? value
     : 'backup_failed';
+}
+
+function safeEmailErrorCode(value: string): string {
+  return new Set([
+    'network_failure',
+    'provider_4xx',
+    'provider_429',
+    'provider_5xx',
+    'provider_invalid_response',
+    'reservation_expired',
+    'reservation_released',
+  ]).has(value)
+    ? value
+    : 'provider_failure';
 }
 
 function redactContactRecipient(

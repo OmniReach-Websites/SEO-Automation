@@ -966,6 +966,43 @@ model SiteContactForm {
   @@map("site_contact_forms")
 }
 
+model EmailDeliveryPolicy {
+  singleton    Boolean  @id @default(true)
+  provider     String   @default("resend") @db.VarChar(30)
+  monthlyLimit Int      @default(3000) @map("monthly_limit")
+  policyVersion Int     @default(1) @map("policy_version")
+  updatedAt    DateTime @default(now()) @map("updated_at") @db.Timestamptz(3)
+
+  @@map("email_delivery_policy")
+}
+
+model EmailDeliveryPeriod {
+  periodStart        DateTime                   @id @map("period_start") @db.Timestamptz(3)
+  capCount           Int                        @map("cap_count")
+  sentCount          Int                        @default(0) @map("sent_count")
+  failedAttemptCount Int                        @default(0) @map("failed_attempt_count")
+  updatedAt          DateTime                   @default(now()) @map("updated_at") @db.Timestamptz(3)
+  reservations       EmailDeliveryReservation[]
+
+  @@map("email_delivery_periods")
+}
+
+model EmailDeliveryReservation {
+  id                String              @id @default(uuid()) @db.Uuid
+  periodStart       DateTime            @map("period_start") @db.Timestamptz(3)
+  period            EmailDeliveryPeriod @relation(fields: [periodStart], references: [periodStart], onDelete: Restrict)
+  channel           String              @db.VarChar(30)
+  state             String              @default("active") @db.VarChar(20)
+  providerReference String?             @map("provider_reference") @db.VarChar(200)
+  errorCode         String?             @map("error_code") @db.VarChar(100)
+  createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  expiresAt         DateTime            @map("expires_at") @db.Timestamptz(3)
+  finalizedAt       DateTime?           @map("finalized_at") @db.Timestamptz(3)
+
+  @@index([periodStart, state, createdAt])
+  @@map("email_delivery_reservations")
+}
+
 model PublicationRequest {
   id                 String    @id @default(uuid()) @db.Uuid
   tenantId           String    @map("tenant_id") @db.Uuid

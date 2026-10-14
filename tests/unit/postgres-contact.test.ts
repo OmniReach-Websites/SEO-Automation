@@ -17,6 +17,36 @@ const context = {
 };
 
 describe('PostgreSQL contact service', () => {
+  it('fails closed before database or provider work when delivery is disabled', async () => {
+    const query = vi.fn();
+    const delivery = new MockContactDelivery();
+    const service = new PostgresContactService(
+      { connect: vi.fn(async () => ({ query, release: vi.fn() })) },
+      delivery,
+      {
+        contracts: new Map(),
+        deliveryEnabled: false,
+        encryptionKey: new Uint8Array(32).fill(7),
+        turnstile: new MockTurnstileVerifier(),
+        turnstileSiteKey: 'fictional-public-key',
+      },
+    );
+    await expect(service.publicConfig(context, 'general-inquiry')).resolves.toEqual({
+      enabled: false,
+    });
+    await expect(
+      service.submit(context, {
+        fields: {},
+        formId: 'general-inquiry',
+        origin: context.allowedOrigin,
+        remoteIp: '127.0.0.1',
+        turnstileToken: 'test-token',
+      }),
+    ).rejects.toThrow('disabled');
+    expect(query).not.toHaveBeenCalled();
+    expect(delivery.deliveries).toHaveLength(0);
+  });
+
   it('exposes only enabled state and the public Turnstile key for verified forms', async () => {
     const query = vi.fn(async (text: string) =>
       text.includes('FROM site_contact_forms')

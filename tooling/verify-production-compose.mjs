@@ -386,6 +386,67 @@ try {
     'restricted backup status, copy lifecycle, and platform alerts must execute against migrated PostgreSQL',
   );
 
+  dockerCompose([
+    'exec',
+    '--no-TTY',
+    'postgres',
+    'sh',
+    '-ceu',
+    `PGPASSWORD="$(cat /run/secrets/postgres_admin_password)" psql -U omnireach_db_admin -d omnireach -v ON_ERROR_STOP=1 -c "SET ROLE omnireach_platform; UPDATE email_delivery_policy SET monthly_limit = 2, policy_version = policy_version + 1" >/dev/null`,
+  ]);
+  const emailQuotaQuery = dockerCompose(
+    [
+      'exec',
+      '--no-TTY',
+      'api',
+      '/opt/omnireach/infrastructure/compose/scripts/runtime-entrypoint.sh',
+      'node',
+      '--experimental-transform-types',
+      '--input-type=module',
+      '--eval',
+      `import pg from 'pg';
+       import { EmailDeliveryQuotaExceededError, PostgresEmailDeliveryQuota } from './packages/database/src/index.ts';
+       const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+       const quota = new PostgresEmailDeliveryQuota(pool);
+       const first = await quota.reserve('contact');
+       await quota.finalize(first, { providerReference: 'fixture-provider-reference', state: 'sent' });
+       const second = await quota.reserve('authentication');
+       let exhausted = false;
+       try { await quota.reserve('alert'); } catch (error) { exhausted = error instanceof EmailDeliveryQuotaExceededError; }
+       if (!exhausted) process.exitCode = 1;
+       await quota.finalize(second, { errorCode: 'provider_429', state: 'failed' });
+       const third = await quota.reserve('alert');
+       await quota.finalize(third, { errorCode: 'reservation_released', state: 'released' });
+       let privateTableDenied = false;
+       try { await pool.query('SELECT sent_count FROM email_delivery_periods'); }
+       catch (error) { privateTableDenied = error?.code === '42501'; }
+       if (!privateTableDenied) process.exitCode = 1;
+       await pool.end();`,
+    ],
+    { capture: true },
+  );
+  assert.equal(
+    emailQuotaQuery.status,
+    0,
+    'restricted email reservations must atomically enforce the platform cap and safe lifecycle',
+  );
+  const emailQuotaStatus = dockerCompose(
+    [
+      'exec',
+      '--no-TTY',
+      'postgres',
+      'sh',
+      '-ceu',
+      `PGPASSWORD="$(cat /run/secrets/postgres_admin_password)" psql -U omnireach_db_admin -d omnireach -At -v ON_ERROR_STOP=1 -c "SET ROLE omnireach_platform; SELECT sent_count || '|' || failed_attempt_count FROM email_delivery_periods"`,
+    ],
+    { capture: true },
+  );
+  assert.equal(
+    emailQuotaStatus.stdout.trim().split(/\r?\n/u).at(-1),
+    '1|1',
+    'platform inspection must observe one sent message and one failed provider attempt',
+  );
+
   let readiness;
   for (let attempt = 0; attempt < 10; attempt += 1) {
     try {
@@ -421,6 +482,7 @@ try {
       backupStatus: 'restricted recording, copy lifecycle, and alert transition verified',
       check: 'production-compose-runtime',
       credentialLeakage: 'not detected in rendered config or container metadata',
+      emailQuota: 'restricted atomic admission and finalization verified',
       isolation: 'verified',
       ok: true,
       persistence: 'verified after restart',

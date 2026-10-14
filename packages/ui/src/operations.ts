@@ -43,6 +43,23 @@ export interface BackupStatusView {
   readonly state: 'failed' | 'healthy' | 'local_only' | 'stale';
   readonly verifiedAt?: string;
 }
+export interface EmailOperationsView {
+  readonly channels: readonly {
+    readonly enabled: boolean;
+    readonly kind: string;
+    readonly sender: string;
+  }[];
+  readonly credentialConfigured: boolean;
+  readonly failedAttemptCount: number;
+  readonly lastAttemptAt?: string;
+  readonly lastErrorCode?: string;
+  readonly monthlyLimit: number;
+  readonly periodStart: string;
+  readonly provider: string;
+  readonly reservedCount: number;
+  readonly sentCount: number;
+  readonly turnstileConfigured: boolean;
+}
 
 export function renderDomainOperations(domains: readonly DomainRow[], csrfToken: string): string {
   const rows = domains
@@ -62,6 +79,7 @@ export function renderOperationsCenter(input: {
   readonly canCancelJobs?: boolean;
   readonly canReplayJobs?: boolean;
   readonly canResolveAlerts?: boolean;
+  readonly email?: EmailOperationsView;
   readonly jobs: readonly JobRow[];
 }): string {
   const jobs = input.jobs
@@ -95,7 +113,32 @@ export function renderOperationsCenter(input: {
     : '<div class="surface-note">Platform AI budget details are hidden because this account does not have financial visibility.</div>';
   const period = input.budget ? ` · UTC period ${escapeHtml(input.budget.periodStart)}` : '';
   const backup = renderBackupStatus(input.backup);
-  return `${budget}<p class="page-subtitle">Review authorized automation work and respond to operational incidents.</p>${backup}<section class="panel flush" aria-labelledby="jobs-heading"><div class="panel-header"><div><h2 id="jobs-heading">Automation jobs</h2><p class="help">Recent work in your assigned scope${period}</p></div></div><table><caption>Scoped job activity</caption><thead><tr><th>Type</th><th>State</th><th>Updated</th><th>Trace</th><th>Action</th></tr></thead><tbody>${jobs || '<tr><td colspan="5"><div class="empty"><strong>No jobs</strong>Queued and recent automation work will appear here.</div></td></tr>'}</tbody></table></section><section class="panel" aria-labelledby="alerts-heading"><h2 id="alerts-heading">Alerts</h2><ul class="alert-list">${alerts || '<li class="empty"><strong>No open alerts</strong>The platform has no active operational incidents in your scope.</li>'}</ul></section>`;
+  const email = renderEmailOperations(input.email);
+  return `${budget}<p class="page-subtitle">Review authorized automation work and respond to operational incidents.</p>${backup}${email}<section class="panel flush" aria-labelledby="jobs-heading"><div class="panel-header"><div><h2 id="jobs-heading">Automation jobs</h2><p class="help">Recent work in your assigned scope${period}</p></div></div><table><caption>Scoped job activity</caption><thead><tr><th>Type</th><th>State</th><th>Updated</th><th>Trace</th><th>Action</th></tr></thead><tbody>${jobs || '<tr><td colspan="5"><div class="empty"><strong>No jobs</strong>Queued and recent automation work will appear here.</div></td></tr>'}</tbody></table></section><section class="panel" aria-labelledby="alerts-heading"><h2 id="alerts-heading">Alerts</h2><ul class="alert-list">${alerts || '<li class="empty"><strong>No open alerts</strong>The platform has no active operational incidents in your scope.</li>'}</ul></section>`;
+}
+
+function renderEmailOperations(email: EmailOperationsView | undefined): string {
+  if (!email) return '';
+  const enabled = email.channels.filter((channel) => channel.enabled);
+  const quotaExhausted = email.sentCount + email.reservedCount >= email.monthlyLimit;
+  const blocked =
+    enabled.length > 0 &&
+    (!email.credentialConfigured ||
+      (enabled.some(({ kind }) => kind === 'Forms and inquiries') && !email.turnstileConfigured));
+  const state = quotaExhausted
+    ? { className: 'blocked', label: 'Monthly quota exhausted' }
+    : blocked
+      ? { className: 'blocked', label: 'Configuration incomplete' }
+      : enabled.length > 0
+        ? { className: 'ready', label: 'Delivery enabled' }
+        : { className: 'blocked', label: 'Delivery disabled' };
+  const channelRows = email.channels
+    .map(
+      (channel) =>
+        `<tr><th scope="row">${escapeHtml(channel.kind)}</th><td>${channel.enabled ? 'Enabled' : 'Disabled'}</td><td>${escapeHtml(channel.sender)}</td></tr>`,
+    )
+    .join('');
+  return `<section class="panel" aria-labelledby="email-heading"><div class="panel-header"><div><h2 id="email-heading">Email delivery</h2><p class="help">Provider health and quota evidence only. Credentials, recipients, and message contents are never shown.</p></div><span class="state-pill ${state.className}">${state.label}</span></div><dl class="stats"><div class="stat"><dt>Provider</dt><dd>${escapeHtml(email.provider)}</dd><small>${email.credentialConfigured ? 'Credential configured' : 'Credential missing'}</small></div><div class="stat"><dt>Monthly sent</dt><dd>${email.sentCount} / ${email.monthlyLimit}</dd><small>UTC period ${escapeHtml(email.periodStart)}</small></div><div class="stat"><dt>Reserved</dt><dd>${email.reservedCount}</dd><small>In-flight provider calls</small></div><div class="stat"><dt>Failed attempts</dt><dd>${email.failedAttemptCount}</dd><small>Latest attempt ${escapeHtml(email.lastAttemptAt ?? 'Never')}</small></div></dl><table><caption>Configured email channels and approved sender identities</caption><thead><tr><th>Channel</th><th>State</th><th>Sender</th></tr></thead><tbody>${channelRows}</tbody></table>${email.lastErrorCode ? `<p class="notice error"><strong>Latest safe failure code:</strong> <code>${escapeHtml(email.lastErrorCode)}</code></p>` : ''}</section>`;
 }
 
 function renderBackupStatus(backup: BackupStatusView | null | undefined): string {

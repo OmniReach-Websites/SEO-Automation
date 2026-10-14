@@ -229,6 +229,20 @@ const configSchema = z
       });
     }
     if (
+      config.CONTACT_DELIVERY_ENABLED &&
+      (!config.TURNSTILE_SECRET_KEY || !config.TURNSTILE_SITE_KEY)
+    ) {
+      for (const path of ['TURNSTILE_SECRET_KEY', 'TURNSTILE_SITE_KEY'] as const) {
+        if (!config[path]) {
+          context.addIssue({
+            code: 'custom',
+            message: 'Turnstile keys are required when contact delivery is enabled',
+            path: [path],
+          });
+        }
+      }
+    }
+    if (
       config.AUTH_EMAIL_DELIVERY_ENABLED &&
       (!config.RESEND_API_KEY || !config.RESEND_AUTH_FROM)
     ) {

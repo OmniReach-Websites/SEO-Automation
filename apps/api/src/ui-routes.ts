@@ -20,6 +20,7 @@ import {
   type AlertRow,
   type BackupStatusView,
   type BudgetView,
+  type EmailOperationsView,
   type JobRow,
   type OrapNavigationItem,
   type OrapSiteManagementModel,
@@ -1174,6 +1175,7 @@ function parseOperationsModel(value: unknown): {
   alerts: AlertRow[];
   backup?: BackupStatusView | null;
   budget: BudgetView | null;
+  email?: EmailOperationsView;
   jobs: JobRow[];
 } {
   if (!isRecord(value)) {
@@ -1241,11 +1243,63 @@ function parseOperationsModel(value: unknown): {
         : undefined;
   if (parsedBudget === undefined) throw new Error('Operations budget model is unavailable');
   const backup = parseBackupStatus(value.backup);
+  const email = parseEmailOperations(value.email);
   return {
     alerts,
     ...(backup !== undefined ? { backup } : {}),
     budget: parsedBudget,
+    ...(email ? { email } : {}),
     jobs,
+  };
+}
+
+function parseEmailOperations(value: unknown): EmailOperationsView | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value) || !Array.isArray(value.channels)) {
+    throw new Error('Operations email model is unavailable');
+  }
+  const provider = stringValue(value.provider);
+  const periodStart = stringValue(value.periodStart);
+  const lastAttemptAt = stringValue(value.lastAttemptAt);
+  const lastErrorCode = stringValue(value.lastErrorCode);
+  const numbers = [
+    value.monthlyLimit,
+    value.sentCount,
+    value.reservedCount,
+    value.failedAttemptCount,
+  ];
+  if (
+    !provider ||
+    !periodStart ||
+    numbers.some(
+      (entry) => typeof entry !== 'number' || !Number.isSafeInteger(entry) || entry < 0,
+    ) ||
+    typeof value.credentialConfigured !== 'boolean' ||
+    typeof value.turnstileConfigured !== 'boolean'
+  ) {
+    throw new Error('Operations email model is unavailable');
+  }
+  const channels = value.channels.flatMap((entry): EmailOperationsView['channels'][number][] => {
+    if (!isRecord(entry) || typeof entry.enabled !== 'boolean') return [];
+    const kind = stringValue(entry.kind);
+    const sender = stringValue(entry.sender);
+    return kind && sender ? [{ enabled: entry.enabled, kind, sender }] : [];
+  });
+  if (channels.length !== value.channels.length || channels.length > 10) {
+    throw new Error('Operations email model is unavailable');
+  }
+  return {
+    channels,
+    credentialConfigured: value.credentialConfigured,
+    failedAttemptCount: value.failedAttemptCount as number,
+    ...(lastAttemptAt ? { lastAttemptAt } : {}),
+    ...(lastErrorCode ? { lastErrorCode } : {}),
+    monthlyLimit: value.monthlyLimit as number,
+    periodStart,
+    provider,
+    reservedCount: value.reservedCount as number,
+    sentCount: value.sentCount as number,
+    turnstileConfigured: value.turnstileConfigured,
   };
 }
 

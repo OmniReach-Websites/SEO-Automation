@@ -10,7 +10,11 @@ import {
   type AuthenticationTransactionPool,
   type PasswordRecoveryOutboxPool,
 } from '@omnireach/auth';
-import { createDatabase } from '@omnireach/database';
+import {
+  createDatabase,
+  PostgresEmailDeliveryQuota,
+  type EmailDeliveryQuotaPool,
+} from '@omnireach/database';
 import {
   LocalAssetStorage,
   MockContactDelivery,
@@ -57,6 +61,9 @@ import { PostgresGoogleIntegrationService } from './postgres-google.ts';
 
 const config = parseConfig(process.env);
 const database = createDatabase(config.DATABASE_URL);
+const emailDeliveryQuota = new PostgresEmailDeliveryQuota(
+  database.pool as unknown as EmailDeliveryQuotaPool,
+);
 const redis = createClient({ url: config.REDIS_URL });
 const authRepository = new PostgresAuthenticationRepository(
   database.pool as unknown as AuthenticationTransactionPool,
@@ -78,12 +85,14 @@ const recoveryDelivery = config.AUTH_EMAIL_DELIVERY_ENABLED
       apiKey: config.RESEND_API_KEY ?? '',
       from: config.RESEND_AUTH_FROM ?? '',
       kind: 'password-recovery',
+      quota: emailDeliveryQuota,
     })
   : new LocalRedisPasswordRecoveryNotifier(redisAuth, config.OMNIREACH_ENV);
 const verificationNotifier = config.AUTH_EMAIL_DELIVERY_ENABLED
   ? new ResendVerificationCodeNotifier({
       apiKey: config.RESEND_API_KEY ?? '',
       from: config.RESEND_AUTH_FROM ?? '',
+      quota: emailDeliveryQuota,
     })
   : undefined;
 const recoveryOutbox = new PostgresPasswordRecoveryOutbox(
@@ -149,6 +158,7 @@ const orapService = new PostgresOrapService(
         apiKey: config.RESEND_API_KEY ?? '',
         from: config.RESEND_AUTH_FROM ?? '',
         kind: 'invitation',
+        quota: emailDeliveryQuota,
       })
     : new LocalRedisInvitationNotifier(redisAuth, config.OMNIREACH_ENV),
   (input) => authService.requestPasswordRecovery(input),
@@ -171,6 +181,16 @@ const orapService = new PostgresOrapService(
       },
     ]),
   ),
+  {
+    alertEnabled: config.ALERT_EMAIL_DELIVERY_ENABLED,
+    alertSender: config.RESEND_ALERT_FROM,
+    authenticationEnabled: config.AUTH_EMAIL_DELIVERY_ENABLED,
+    ...(config.RESEND_AUTH_FROM ? { authenticationSender: config.RESEND_AUTH_FROM } : {}),
+    contactEnabled: config.CONTACT_DELIVERY_ENABLED,
+    contactSender: config.RESEND_CONTACT_FROM,
+    credentialConfigured: Boolean(config.RESEND_API_KEY),
+    turnstileConfigured: Boolean(config.TURNSTILE_SECRET_KEY && config.TURNSTILE_SITE_KEY),
+  },
 );
 const integrationService = config.GOOGLE_INTEGRATION_ENABLED
   ? new PostgresGoogleIntegrationService(tenantPool, {
@@ -186,21 +206,25 @@ const contactDelivery = config.CONTACT_DELIVERY_ENABLED
   ? new ResendContactDelivery({
       apiKey: config.RESEND_API_KEY ?? '',
       from: config.RESEND_CONTACT_FROM,
+      maxAttempts: 4,
+      quota: emailDeliveryQuota,
     })
   : new MockContactDelivery();
 const contactService = new PostgresContactService(tenantPool, contactDelivery, {
   contracts: siteContracts,
+  deliveryEnabled: config.CONTACT_DELIVERY_ENABLED,
   encryptionKey: contactEncryptionKey,
   turnstile: config.TURNSTILE_SECRET_KEY
     ? new CloudflareTurnstileVerifier(config.TURNSTILE_SECRET_KEY)
     : new MockTurnstileVerifier(config.OMNIREACH_ENV === 'local'),
   ...(config.TURNSTILE_SITE_KEY ? { turnstileSiteKey: config.TURNSTILE_SITE_KEY } : {}),
 });
-const platformInquiryDeliveryEnabled = Boolean(config.RESEND_API_KEY);
+const platformInquiryDeliveryEnabled = config.CONTACT_DELIVERY_ENABLED;
 const platformInquiryDelivery = platformInquiryDeliveryEnabled
   ? new ResendPlatformInquiryDelivery({
       apiKey: config.RESEND_API_KEY ?? '',
       from: config.RESEND_CONTACT_FROM,
+      quota: emailDeliveryQuota,
     })
   : {
       async deliver() {

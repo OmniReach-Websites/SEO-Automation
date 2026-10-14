@@ -5,6 +5,14 @@ export {
   type OwnerBootstrapClient,
   type OwnerBootstrapToken,
 } from './owner-bootstrap.ts';
+export {
+  EmailDeliveryQuotaExceededError,
+  PostgresEmailDeliveryQuota,
+  type EmailDeliveryChannel,
+  type EmailDeliveryQuotaClient,
+  type EmailDeliveryQuotaPool,
+  type EmailDeliveryReservation,
+} from './email-delivery-quota.ts';
 
 export interface DatabaseConnection {
   close(): Promise<void>;

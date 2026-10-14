@@ -397,6 +397,30 @@ Production email paths are fail-closed and disabled by default. Contact delivery
 `CONTACT_DELIVERY_ENABLED`; invitation/password recovery uses
 `AUTH_EMAIL_DELIVERY_ENABLED`; urgent alerts use `ALERT_EMAIL_DELIVERY_ENABLED`. Enabling
 a path requires `RESEND_API_KEY` plus its verified sender/recipient configuration.
+Installing a credential alone never enables any path. Contact delivery additionally
+requires both Cloudflare Turnstile keys at process startup; missing abuse-control
+configuration rejects activation rather than exposing an unprotected form.
+
+All enabled Resend channels share one PostgreSQL-authoritative UTC calendar-month
+admission policy. The initial no-spend limit is 3,000 messages across urgent alerts,
+authentication, contact, and platform-inquiry channels. A restricted application or
+worker transaction calls security-definer reserve/finalize functions; the runtime login
+cannot read the underlying policy, period, or reservation tables directly. Admission
+locks the singleton policy/period, releases expired 15-minute reservations, and rejects
+when sent plus active reservations reaches the cap. Failed/released reservations do not
+consume sent capacity. Records contain only channel, lifecycle timestamps, a provider
+reference, and an allowlisted safe error code—never a recipient, subject, body,
+verification code, form payload, API key, or provider response.
+
+The reservation UUID is sent as Resend's `Idempotency-Key`. Contact delivery performs
+one initial attempt plus at most three retries for network, throttling, and provider 5xx
+failures, with bounded exponential backoff. Client/provider 4xx failures are terminal.
+Optional confirmation delivery is admitted and recorded separately. ORAP Operations
+shows only nonsecret activation/configuration state, the current limit and counters,
+channel status, latest attempt time, and allowlisted failure class. Quota exhaustion,
+provider failure, or ORAP status-query failure must not reduce static website
+availability.
+
 Authentication emails use the database-resolved exact customer admin hostname and
 time-limited one-time tokens; request URLs are redacted from application logs.
 Password-recovery delivery is queued in the restricted PostgreSQL outbox before the

@@ -64,6 +64,67 @@ describe('PostgreSQL ORAP service', () => {
     });
   });
 
+  it('reports bounded email provider readiness without credentials or recipients', async () => {
+    const query = vi.fn(async (text: string) => {
+      if (text.includes('FROM platform_ai_budget b')) {
+        return {
+          rows: [
+            {
+              cap_usd_micros: '50000000',
+              period_start: new Date('2026-10-01T00:00:00.000Z'),
+              reserved_usd_micros: '0',
+              used_usd_micros: '0',
+            },
+          ],
+        };
+      }
+      if (text.includes('FROM email_delivery_policy policy')) {
+        expect(text).not.toMatch(/recipient|api_key|message|subject/iu);
+        return {
+          rows: [
+            {
+              cap_count: 3000,
+              failed_attempt_count: 2,
+              last_attempt_at: new Date('2026-10-14T01:00:00.000Z'),
+              last_error_code: 'provider detail that must not be exposed',
+              period_start: new Date('2026-10-01T00:00:00.000Z'),
+              reserved_count: 1,
+              sent_count: 12,
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+    const service = new PostgresOrapService(
+      { connect: vi.fn(async () => ({ query, release: vi.fn() })) },
+      { send: vi.fn() },
+      vi.fn(),
+      new Map(),
+      {
+        alertEnabled: false,
+        alertSender: 'alerts@updates.omnireach.cloud',
+        authenticationEnabled: false,
+        authenticationSender: 'auth@updates.omnireach.cloud',
+        contactEnabled: false,
+        contactSender: 'forms@updates.omnireach.cloud',
+        credentialConfigured: true,
+        turnstileConfigured: false,
+      },
+    );
+
+    await expect(service.listOperations(actor)).resolves.toMatchObject({
+      email: {
+        credentialConfigured: true,
+        failedAttemptCount: 2,
+        lastErrorCode: 'provider_failure',
+        monthlyLimit: 3000,
+        reservedCount: 1,
+        sentCount: 12,
+      },
+    });
+  });
+
   it('replaces a staff password through the owner-only audited database function', async () => {
     const targetUserId = '40000000-0000-4000-8000-000000000099';
     const query = vi.fn(async (text: string, values?: unknown[]) => {
