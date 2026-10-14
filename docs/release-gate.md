@@ -48,7 +48,7 @@ production or paid providers. The production observation helper is prepared at
 1. Representative sanitized VPS resource evidence after G31 stages OmniReach and before
    public activation, plus the planned post-activation observation of existing Caddy and
    Christians Reunite routes.
-2. Automated encrypted off-server backups meeting the 24-hour RPO and 7-daily/4-weekly
+2. Automated encrypted off-server backups meeting the 24-hour RPO and 3-daily/1-weekly
    retention target; the development-stage weekly manual download is insufficient.
 3. The approved G31 window is 2026-10-18 02:00–04:00 America/Chicago. The exact change
    set, prechecks, rollback evidence, scoped SSH/GitHub credentials, and pre/post

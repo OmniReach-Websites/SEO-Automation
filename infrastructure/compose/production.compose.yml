@@ -344,12 +344,14 @@ services:
     networks:
       - backend
       - egress
+      - restore
     restart: 'no'
     read_only: true
     secrets:
       - postgres_admin_password
       - postgres_app_password
       - backup_encryption_key
+      - backup_restore_password
       - r2_access_key_id
       - r2_secret_access_key
     security_opt:
@@ -365,6 +367,34 @@ services:
     volumes:
       - platform-data:/var/lib/omnireach:ro
       - ${OMNIREACH_BACKUP_ROOT:-/opt/backups/omnireach}:/var/backups/omnireach
+    logging: *production-logging
+
+  restore-postgres:
+    profiles: ['restore-drill']
+    image: postgres:16.10-alpine@sha256:029660641a0cfc575b14f336ba448fb8a75fd595d42e1fa316b9fb4378742297
+    environment:
+      POSTGRES_DB: omnireach_restore
+      POSTGRES_PASSWORD_FILE: /run/secrets/backup_restore_password
+      POSTGRES_USER: omnireach_restore
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -q -U omnireach_restore -d omnireach_restore']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    networks:
+      - restore
+    restart: 'no'
+    secrets:
+      - backup_restore_password
+    security_opt:
+      - no-new-privileges:true
+    shm_size: 128m
+    cpus: 0.5
+    mem_limit: 1g
+    pids_limit: 128
+    tmpfs:
+      - /var/lib/postgresql/data:size=1g,mode=0700
     logging: *production-logging
 
   coops-mobile-detailing:
@@ -456,6 +486,9 @@ networks:
   proxy:
     external: true
     name: ${OMNIREACH_PROXY_NETWORK:-christiansreunite_frontend}
+  restore:
+    name: ${OMNIREACH_RESOURCE_PREFIX:-omnireach-production}-restore
+    internal: true
 
 volumes:
   platform-data:
@@ -486,6 +519,8 @@ secrets:
     file: ${OMNIREACH_SECRETS_DIR}/google_token_encryption_key
   backup_encryption_key:
     file: ${OMNIREACH_SECRETS_DIR}/backup_encryption_key
+  backup_restore_password:
+    file: ${OMNIREACH_SECRETS_DIR}/backup_restore_password
   r2_access_key_id:
     file: ${OMNIREACH_SECRETS_DIR}/r2_access_key_id
   r2_secret_access_key:

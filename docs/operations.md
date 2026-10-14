@@ -99,7 +99,7 @@ concurrent session to avoid lockout.
 | Planned maintenance        | Sunday 02:00–04:00 America/Chicago                                       |
 | Backup RPO                 | 24 hours                                                                 |
 | Recovery RTO               | 8 hours                                                                  |
-| Backup recovery points     | 7 daily and 4 weekly, encrypted off-server copy included                 |
+| Backup recovery points     | 3 daily and 1 weekly, encrypted off-server copy included                 |
 | Critical notification      | ORAP and email                                                           |
 | Critical acknowledgment    | 30 minutes                                                               |
 | Noncritical acknowledgment | 24 hours                                                                 |
@@ -113,35 +113,30 @@ The first owner-authorized G31 window is Sunday, October 18, 2026, from 02:00 to
 `America/Chicago` (07:00–09:00 UTC). The execution checklist must include a time budget
 and rollback cutoff so work cannot silently extend beyond the window.
 
-### 4.2 Development-stage backup profile (partial R-005)
+### 4.2 Production backup profile (R-005 activation authorized)
 
-The owner has approved the following plan for a later, separately authorized
-development-stage installation only:
+The owner authorized the following production activation on 2026-10-14:
 
 - Write daily compressed encrypted archives under `/opt/backups/omnireach/`.
 - Include PostgreSQL, editable customer website content, uploaded media, and important
   platform configuration; exclude build caches and reproducible artifacts.
 - Validate archive envelopes, checksums, and required members automatically.
-- Target 3 daily and 2 weekly recovery points. Automated pruning is disabled for this
-  development profile; capacity pressure must alert and pause safely until the owner
-  approves and logs an exact manual deletion.
+- Retain 3 daily and 1 weekly recovery point. Automated pruning may enforce only this
+  policy; capacity pressure must alert and pause safely rather than prune below it.
 - Support a monthly isolated restoration test.
 - Permit the owner to download an encrypted archive weekly over SFTP or SCP and verify
   its checksum on the personal destination.
 
-This profile is not installed or scheduled, and its directory has not been created. A
-weekly manual download can lose up to seven days of data if the VPS fails, so it does not
-meet the approved 24-hour production RPO. Cloudflare R2 is now the proposed production
-off-server destination under a proposed $5 monthly storage budget, but no account,
-credentials, spending, transfer, or production configuration was authorized by the
-proposal alone. Public activation within G31 remains blocked until least-privilege
-automated encrypted R2 copies meet the production 7-daily/4-weekly retention target and
-a real isolated restore succeeds.
+Cloudflare R2 is the selected off-server destination under the approved $5 monthly
+storage ceiling. Installation transfers its least-privilege credentials into host-only
+secret files and generates the independent encryption key on the VPS. Completion still
+requires live evidence that the scheduled encrypted copy, 3-daily/1-weekly retention,
+and a real isolated restore succeed.
 
 The owner is the sole encryption-key custodian and sole manual-deletion approver. Every
 manual deletion records the owner approval, exact archive manifest/checksum, reason, and
 outcome. Automated deletion is permitted only when it demonstrably preserves the
-approved production set of 7 daily and 4 weekly recovery points.
+approved production set of 3 daily and 1 weekly recovery points.
 
 ### 4.3 Approved production-provider directions (partial R-006–R-012)
 
@@ -317,9 +312,9 @@ Content rollback creates a new content revision and artifact; it never erases hi
 Approved policy:
 
 - Daily encrypted PostgreSQL, content/media, and artifact-manifest backup.
-- Retain 7 daily and 4 weekly recovery points.
-- Maintain an encrypted off-server copy. Cloudflare R2 is the proposed production target
-  under a proposed $5 monthly budget; use least-privilege credentials and keep them
+- Retain 3 daily and 1 weekly recovery point.
+- Maintain an encrypted off-server copy. Cloudflare R2 is the selected production target
+  under a $5 monthly ceiling with conservative free-tier controls; use least-privilege credentials and keep them
   separate from encryption keys.
 - Verify archive/checksum/completeness daily.
 - Perform a full isolated restore monthly.
@@ -347,7 +342,7 @@ listing pages, response bytes, and listed objects. Remote responses are byte-cou
 streaming even without `Content-Length`. A limit failure means the backup is incomplete and pruning
 must stop; inputs must never be silently skipped. Applied pruning writes requested and
 completed JSONL audit events. Manual pruning requires the owner's authorization
-reference; authorization-free automatic pruning is hard-bound to 7 daily and 4 weekly
+reference; authorization-free automatic pruning is hard-bound to 3 daily and 1 weekly
 recovery points. Active and held points are preserved in addition to those counts.
 Local and off-site deletion timestamps remain distinct, and a recovery point is marked
 pruned only when all recorded copies are gone.
@@ -513,7 +508,7 @@ Roll back only the named route/configuration if an additive change caused the fa
 - Detailed job records: 90 days.
 - Audit records: 12 months.
 - Content revisions: per site/legal policy; no silent pruning.
-- Backups: 7 daily and 4 weekly recovery points.
+- Backups: 3 daily and 1 weekly recovery point.
 
 Retention is configurable and respects active incidents, legal/site holds, customer deletion obligations, and R-006. Changes are audited. Destructive retention remains disabled until the corresponding policy and exact target are verified.
 

@@ -283,8 +283,8 @@ export async function copyOffServer(backupPath, offServerRoot) {
 }
 export function selectRetention(manifests, now, policy = {}) {
   void now;
-  const daily = validateRetentionCount(policy.daily ?? 7, 'daily');
-  const weekly = validateRetentionCount(policy.weekly ?? 4, 'weekly');
+  const daily = validateRetentionCount(policy.daily ?? 3, 'daily');
+  const weekly = validateRetentionCount(policy.weekly ?? 1, 'weekly');
   const sorted = [...manifests]
     .filter((item) => item.complete)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));

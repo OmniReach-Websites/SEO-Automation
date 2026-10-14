@@ -596,7 +596,7 @@ Routes below are suggested, stable UI routes; they are not assertions about exis
 
 ### 13.7 `/settings/backups`
 
-- Current local/off-server backup policy, 7 daily + 4 weekly retention, encryption status **without key**, last archive/checksum verification, last isolated full restore, provider availability, RPO/RTO targets and alerts. Manual deletion only under explicitly permissioned audited workflow; no default delete button. Restore runbook link and gated restore-test initiation if implemented.
+- Current local/off-server backup policy, 3 daily + 1 weekly retention, encryption status **without key**, last archive/checksum verification, last isolated full restore, provider availability, RPO/RTO targets and alerts. Manual deletion only under explicitly permissioned audited workflow; no default delete button. Restore runbook link and gated restore-test initiation if implemented.
 
 ### 13.8 `/settings/deployment`
 

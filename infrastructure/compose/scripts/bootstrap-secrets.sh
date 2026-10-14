@@ -74,7 +74,8 @@ for secret_name in \
   preview_signing_key \
   contact_encryption_key \
   google_token_encryption_key \
-  backup_encryption_key
+  backup_encryption_key \
+  backup_restore_password
 do
   generate_secret "$secret_name"
 done

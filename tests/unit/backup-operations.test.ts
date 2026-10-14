@@ -81,7 +81,7 @@ describe('backup operational safety', () => {
     await expect(stat(join(fixture.backups, `${prunedId}.orbk`))).rejects.toThrow();
   });
 
-  it('allows only the approved 7-daily/4-weekly automatic retention policy', async () => {
+  it('allows only the approved 3-daily/1-weekly automatic retention policy', async () => {
     const fixture = await backupFixture(8);
     vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     await expect(
@@ -98,16 +98,16 @@ describe('backup operational safety', () => {
         '--audit-log',
         fixture.audit,
       ]),
-    ).rejects.toThrow('approved 7-daily/4-weekly policy');
+    ).rejects.toThrow('approved 3-daily/1-weekly policy');
 
     const result = await runBackupCli([
       'prune',
       '--root',
       fixture.backups,
       '--daily',
-      '7',
+      '3',
       '--weekly',
-      '4',
+      '1',
       '--apply',
       '--automated-retention',
       '--audit-log',

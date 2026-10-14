@@ -44,7 +44,7 @@ installer=/opt/servers/omnireach/current/infrastructure/backups/install-backup-s
 if ($SkipFirstBackup) {
   $remoteCommand += "`n`"`$installer`" --credentials-file `"`$credential_file`" --enable"
 } else {
-  $remoteCommand += "`n`"`$installer`" --credentials-file `"`$credential_file`" --enable --run-now"
+  $remoteCommand += "`n`"`$installer`" --credentials-file `"`$credential_file`" --enable --run-now --run-restore"
 }
 
 $payload | & ssh -o StrictHostKeyChecking=yes "$TargetUser@$TargetHost" $remoteCommand

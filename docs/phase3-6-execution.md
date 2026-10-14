@@ -28,7 +28,7 @@ Status vocabulary is strict: **Implemented** means code and local evidence exist
 - [x] Authenticated encrypted backup archive, local/off-site S3-compatible adapter, list/verify/isolated-restore/dry-run-prune and corruption rejection.
 - [x] Static public serving remains independent from API/database/Redis/workers/providers.
 - [x] Private Standard-class R2 bucket and dedicated bucket-scoped S3-compatible credential created; upload/download-integrity/list/delete transport probe passed on 2026-10-13 without exposing credentials.
-- [ ] **TODO:** install the R2 credential and separately held encryption key in protected VPS secret storage; production off-site mode remains disabled until the scheduled job and alerts are reviewed.
+- [ ] **AUTHORIZED/PENDING EVIDENCE:** install the R2 credential and separately held encryption key in protected VPS secret storage, enable the scheduled job and alerts, and record the first verified copy and isolated restore.
 - [ ] **Waiting:** schedule production backup and alerts, prove freshness, and complete a timed isolated restore against the 24h RPO/8h RTO targets.
 - [ ] **Waiting:** authorized production key-rotation and lost-factor exercises.
 

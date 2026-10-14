@@ -65,7 +65,7 @@
 | Supply-chain compromise     | Malicious dependency/action/image           | Locks, pinned actions/images, scans, review ownership, reproducible builds                          | G02–G03, G19, G30  |
 | Secret leakage              | Key in Git/log/build/browser                | Secret stores, server-only env, redaction tests, scanners, least privilege                          | G02, G19, G25, G30 |
 | Deployment takeover         | Branch or stolen key deploys code           | Protected `main`, environment approvals, scoped non-root SSH, host-key verify                       | G03, G19, G31      |
-| Backup exposure/loss        | Public archive or unusable backup           | Encrypt, checksum, off-server, key custody, 7/4 retention, monthly restore                          | G29–G31            |
+| Backup exposure/loss        | Public archive or unusable backup           | Encrypt, checksum, off-server, key custody, 3/1 retention, monthly restore                          | G29–G31            |
 | Existing-service outage     | OmniReach overwrites Caddy/ports            | Read-only inventory, unique projects/networks, validate/additive reload, rollback                   | G18–G19, G30–G31   |
 
 ## 4. Identity and session requirements

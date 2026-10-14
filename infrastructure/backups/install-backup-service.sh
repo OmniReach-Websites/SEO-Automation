@@ -8,9 +8,10 @@ environment_file=$deploy_root/shared/config/production.env
 credentials_file=
 enable=false
 run_now=false
+run_restore=false
 
 usage() {
-  printf '%s\n' 'Usage: install-backup-service.sh --credentials-file PROTECTED_FILE [--enable] [--run-now]'
+  printf '%s\n' 'Usage: install-backup-service.sh --credentials-file PROTECTED_FILE [--enable] [--run-now] [--run-restore]'
 }
 
 fail() {
@@ -31,6 +32,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --run-now)
       run_now=true
+      shift
+      ;;
+    --run-restore)
+      run_restore=true
       shift
       ;;
     --help)
@@ -122,7 +127,7 @@ fi
 environment_tmp=$(mktemp "$deploy_root/shared/config/.production.env.XXXXXX")
 trap 'rm -f "$environment_tmp"' EXIT HUP INT TERM
 awk '
-  !/^(R2_ENDPOINT|R2_BUCKET|R2_REGION|R2_BACKUP_PREFIX|BACKUP_OFFSITE_ENABLED|R2_ACCESS_KEY_ID|R2_SECRET_ACCESS_KEY|R2_API_TOKEN|BACKUP_ENCRYPTION_KEY)=/
+  !/^(R2_ENDPOINT|R2_BUCKET|R2_REGION|R2_BACKUP_PREFIX|BACKUP_OFFSITE_ENABLED|R2_ACCESS_KEY_ID|R2_SECRET_ACCESS_KEY|R2_API_TOKEN|BACKUP_ENCRYPTION_KEY|BACKUP_MAX_SOURCE_BYTES|BACKUP_MAX_ENCRYPTED_BYTES|BACKUP_MAX_ARCHIVE_BYTES|BACKUP_R2_MAX_TOTAL_BYTES|BACKUP_R2_MAX_REQUESTS|BACKUP_R2_MAX_LIST_PAGES|BACKUP_R2_MAX_LIST_OBJECTS|BACKUP_R2_MAX_LIST_RESPONSE_BYTES)=/
 ' "$environment_file" >"$environment_tmp"
 {
   printf 'R2_ENDPOINT=%s\n' "$r2_endpoint"
@@ -130,6 +135,14 @@ awk '
   printf '%s\n' 'R2_REGION=auto'
   printf '%s\n' 'R2_BACKUP_PREFIX=omnireach'
   printf '%s\n' 'BACKUP_OFFSITE_ENABLED=true'
+  printf '%s\n' 'BACKUP_MAX_SOURCE_BYTES=536870912'
+  printf '%s\n' 'BACKUP_MAX_ENCRYPTED_BYTES=536870912'
+  printf '%s\n' 'BACKUP_MAX_ARCHIVE_BYTES=536870912'
+  printf '%s\n' 'BACKUP_R2_MAX_TOTAL_BYTES=8589934592'
+  printf '%s\n' 'BACKUP_R2_MAX_REQUESTS=50'
+  printf '%s\n' 'BACKUP_R2_MAX_LIST_PAGES=5'
+  printf '%s\n' 'BACKUP_R2_MAX_LIST_OBJECTS=50'
+  printf '%s\n' 'BACKUP_R2_MAX_LIST_RESPONSE_BYTES=1048576'
 } >>"$environment_tmp"
 chmod 0640 "$environment_tmp"
 chown root:root "$environment_tmp"
@@ -139,19 +152,36 @@ unset r2_endpoint r2_bucket
 
 unit_source=$release_dir/infrastructure/backups/omnireach-backup.service
 timer_source=$release_dir/infrastructure/backups/omnireach-backup.timer
-[ -f "$unit_source" ] && [ -f "$timer_source" ] || fail 'current release is missing backup systemd units' 72
+failure_source=$release_dir/infrastructure/backups/omnireach-backup-failure.service
+restore_source=$release_dir/infrastructure/backups/omnireach-restore-drill.service
+restore_timer_source=$release_dir/infrastructure/backups/omnireach-restore-drill.timer
+[ -f "$unit_source" ] && [ -f "$timer_source" ] && [ -f "$failure_source" ] &&
+  [ -f "$restore_source" ] && [ -f "$restore_timer_source" ] ||
+  fail 'current release is missing backup systemd units' 72
 install -m 0644 -o root -g root "$unit_source" /etc/systemd/system/omnireach-backup.service
 install -m 0644 -o root -g root "$timer_source" /etc/systemd/system/omnireach-backup.timer
-systemd-analyze verify /etc/systemd/system/omnireach-backup.service /etc/systemd/system/omnireach-backup.timer >/dev/null
+install -m 0644 -o root -g root "$failure_source" /etc/systemd/system/omnireach-backup-failure.service
+install -m 0644 -o root -g root "$restore_source" /etc/systemd/system/omnireach-restore-drill.service
+install -m 0644 -o root -g root "$restore_timer_source" /etc/systemd/system/omnireach-restore-drill.timer
+systemd-analyze verify \
+  /etc/systemd/system/omnireach-backup.service \
+  /etc/systemd/system/omnireach-backup.timer \
+  /etc/systemd/system/omnireach-backup-failure.service \
+  /etc/systemd/system/omnireach-restore-drill.service \
+  /etc/systemd/system/omnireach-restore-drill.timer >/dev/null
 systemctl daemon-reload
 
 if [ "$enable" = true ]; then
-  systemctl enable --now omnireach-backup.timer
+  systemctl enable --now omnireach-backup.timer omnireach-restore-drill.timer
 fi
 if [ "$run_now" = true ]; then
   [ "$enable" = true ] || fail '--run-now requires --enable' 64
   systemctl start omnireach-backup.service
 fi
+if [ "$run_restore" = true ]; then
+  [ "$run_now" = true ] || fail '--run-restore requires --run-now' 64
+  systemctl start omnireach-restore-drill.service
+fi
 
-printf 'install-backup-service: configured; timer_enabled=%s first_backup_requested=%s secret_values_printed=false\n' \
-  "$enable" "$run_now"
+printf 'install-backup-service: configured; timers_enabled=%s first_backup_requested=%s restore_requested=%s secret_values_printed=false\n' \
+  "$enable" "$run_now" "$run_restore"

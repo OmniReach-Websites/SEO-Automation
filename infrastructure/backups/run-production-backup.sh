@@ -39,6 +39,7 @@ R2_SECRET_ACCESS_KEY=$(read_secret r2_secret_access_key)
 
 database_url_file=$runtime_root/database-url
 record_database_url_file=$runtime_root/record-database-url
+restore_database_url_file=$runtime_root/restore-database-url
 inventory_file=$runtime_root/configuration-inventory.json
 result_file=$runtime_root/backup-result.json
 printf 'postgresql://omnireach_db_admin:%s@postgres:5432/omnireach\n' "$admin_password" >"$database_url_file"
@@ -84,8 +85,8 @@ case "${1:-daily}" in
 
     node "$cli" prune \
       --root "$backup_root" \
-      --daily 7 \
-      --weekly 4 \
+      --daily 3 \
+      --weekly 1 \
       --apply \
       --automated-retention \
       --audit-log "$audit_log" \
@@ -93,13 +94,61 @@ case "${1:-daily}" in
 
     node "$cli" prune \
       --offsite \
-      --daily 7 \
-      --weekly 4 \
+      --daily 3 \
+      --weekly 1 \
       --apply \
       --automated-retention \
       --audit-log "$audit_log" \
       --record-database-url-file "$record_database_url_file" >/dev/null
-    printf '{"backup":"complete","offsiteVerified":true,"retention":"7-daily-4-weekly"}\n'
+    printf '{"backup":"complete","offsiteVerified":true,"retention":"3-daily-1-weekly"}\n'
+    ;;
+  restore-drill)
+    restore_password=$(read_secret backup_restore_password)
+    printf 'postgresql://omnireach_restore:%s@restore-postgres:5432/omnireach_restore\n' \
+      "$restore_password" >"$restore_database_url_file"
+    chmod 0600 "$restore_database_url_file"
+    list_file=$runtime_root/offsite-list.json
+    node "$cli" list --offsite >"$list_file"
+    offsite_key=$(node -e '
+      const { readFileSync } = require("node:fs");
+      const value = JSON.parse(readFileSync(process.argv[1], "utf8"));
+      const archive = value.objects
+        .filter((item) => item.key.endsWith(".orbk"))
+        .sort((left, right) => String(right.lastModified).localeCompare(String(left.lastModified)))[0];
+      if (!archive?.key) process.exit(1);
+      process.stdout.write(archive.key);
+    ' "$list_file") || fail 'no off-site backup archive is available for restore' 70
+    restore_root=$runtime_root/restore-output
+    started_at=$(node -e 'process.stdout.write(String(Date.now()))')
+    node "$cli" restore-to-disposable \
+      --offsite-key "$offsite_key" \
+      --destination "$restore_root" \
+      --database-url-file "$restore_database_url_file" \
+      --record-database-url-file "$record_database_url_file" \
+      --key-file /run/secrets/backup_encryption_key \
+      --confirm-isolated RESTORE >"$runtime_root/restore-result.json"
+    finished_at=$(node -e 'process.stdout.write(String(Date.now()))')
+    tenant_count=$(PGPASSWORD="$restore_password" psql --no-psqlrc --tuples-only --no-align \
+      --host restore-postgres --username omnireach_restore --dbname omnireach_restore \
+      --command 'SELECT count(*) FROM tenants')
+    site_count=$(PGPASSWORD="$restore_password" psql --no-psqlrc --tuples-only --no-align \
+      --host restore-postgres --username omnireach_restore --dbname omnireach_restore \
+      --command 'SELECT count(*) FROM sites')
+    policy_count=$(PGPASSWORD="$restore_password" psql --no-psqlrc --tuples-only --no-align \
+      --host restore-postgres --username omnireach_restore --dbname omnireach_restore \
+      --command 'SELECT count(*) FROM pg_policies')
+    unset restore_password
+    case "$tenant_count:$site_count:$policy_count" in
+      *[!0-9:]*) fail 'restored database count verification failed' 70 ;;
+    esac
+    [ "$policy_count" -gt 0 ] || fail 'restored database has no tenant-isolation policies' 70
+    duration_ms=$((finished_at - started_at))
+    printf '{"restore":"complete","database":"isolated-tmpfs","downloadVerified":true,"durationMs":%s,"tenantCount":%s,"siteCount":%s,"policyCount":%s}\n' \
+      "$duration_ms" "$tenant_count" "$site_count" "$policy_count"
+    ;;
+  record-failure)
+    node "$cli" report-failure --record-database-url-file "$record_database_url_file" >/dev/null
+    printf '{"backupFailureAlert":"recorded"}\n'
     ;;
   list)
     node "$cli" list --root "$backup_root"

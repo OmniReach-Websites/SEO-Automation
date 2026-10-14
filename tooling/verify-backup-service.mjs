@@ -7,9 +7,13 @@ const backupRoot = resolve(root, 'infrastructure/backups');
 const files = {
   container: resolve(backupRoot, 'run-production-backup.sh'),
   host: resolve(backupRoot, 'run-host-backup.sh'),
+  restoreHost: resolve(backupRoot, 'run-host-restore-drill.sh'),
   installer: resolve(backupRoot, 'install-backup-service.sh'),
   service: resolve(backupRoot, 'omnireach-backup.service'),
   timer: resolve(backupRoot, 'omnireach-backup.timer'),
+  failureService: resolve(backupRoot, 'omnireach-backup-failure.service'),
+  restoreService: resolve(backupRoot, 'omnireach-restore-drill.service'),
+  restoreTimer: resolve(backupRoot, 'omnireach-restore-drill.timer'),
   provisioner: resolve(root, 'tooling/configure-r2-backup.ps1'),
 };
 
@@ -30,14 +34,29 @@ for (const expected of [
   '--offsite',
   '--offsite-key',
   '--automated-retention',
-  '--daily 7',
-  '--weekly 4',
+  '--daily 3',
+  '--weekly 1',
   '--record-database-url-file',
   '/var/lib/omnireach/assets',
   '/var/lib/omnireach/publications',
+  'restore-to-disposable',
+  'restore-postgres',
+  '.endsWith(".orbk")',
+  'policyCount',
 ]) {
   if (!source.container.includes(expected)) {
     errors.push(`container runner is missing ${expected}`);
+  }
+}
+
+for (const expected of [
+  'restore-postgres',
+  'compose rm --force --stop restore-postgres',
+  'flock -n 9',
+  'CREATE ROLE omnireach_app NOLOGIN',
+]) {
+  if (!source.restoreHost.includes(expected)) {
+    errors.push(`restore host runner is missing ${expected}`);
   }
 }
 if (!source.container.includes('unset admin_password worker_password')) {
@@ -59,8 +78,26 @@ for (const expected of [
   'BACKUP_OFFSITE_ENABLED=true',
   'systemd-analyze verify',
   'systemctl enable --now omnireach-backup.timer',
+  'BACKUP_R2_MAX_TOTAL_BYTES=8589934592',
+  'BACKUP_R2_MAX_REQUESTS=50',
+  '--run-restore',
 ]) {
   if (!source.installer.includes(expected)) errors.push(`installer is missing ${expected}`);
+}
+if (!source.service.includes('OnFailure=omnireach-backup-failure.service')) {
+  errors.push('backup systemd service does not activate the fixed failure-alert handler');
+}
+if (!source.failureService.includes('run-host-backup.sh record-failure')) {
+  errors.push('backup failure service does not record the ORAP alert');
+}
+if (!source.restoreService.includes('run-host-restore-drill.sh')) {
+  errors.push('restore service does not use the isolated host runner');
+}
+if (!source.restoreTimer.includes('OnCalendar=Sun *-*-01..07 03:15:00 America/Chicago')) {
+  errors.push('restore timer is not scheduled monthly in the approved maintenance window');
+}
+if (!source.provisioner.includes('--run-restore')) {
+  errors.push('PowerShell provisioner does not request the first isolated restore drill');
 }
 for (const forbidden of [
   'printf \'%s\\n\' "$r2_secret_access_key"',
@@ -102,6 +139,7 @@ const indexed = execFileSync(
     'infrastructure/backups/run-production-backup.sh',
     'infrastructure/backups/run-host-backup.sh',
     'infrastructure/backups/install-backup-service.sh',
+    'infrastructure/backups/run-host-restore-drill.sh',
   ],
   { cwd: root, encoding: 'utf8' },
 );
@@ -109,6 +147,7 @@ for (const path of [
   'infrastructure/backups/run-production-backup.sh',
   'infrastructure/backups/run-host-backup.sh',
   'infrastructure/backups/install-backup-service.sh',
+  'infrastructure/backups/run-host-restore-drill.sh',
 ]) {
   const line = indexed.split(/\r?\n/u).find((entry) => entry.endsWith(`\t${path}`));
   if (!line?.startsWith('100755 ')) errors.push(`${path} must be executable in Git`);

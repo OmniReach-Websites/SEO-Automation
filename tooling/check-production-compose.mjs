@@ -29,6 +29,7 @@ export function checkProductionCompose() {
     'seo',
     'monitoring',
     'backup',
+    'restore-postgres',
   ];
 
   if (compose.name !== 'omnireach-production') errors.push('unexpected production project name');
@@ -198,6 +199,7 @@ export function checkProductionCompose() {
     'postgres_admin_password',
     'postgres_app_password',
     'backup_encryption_key',
+    'backup_restore_password',
     'r2_access_key_id',
     'r2_secret_access_key',
   ]) {
@@ -215,6 +217,36 @@ export function checkProductionCompose() {
   }
   if (!(backup?.volumes ?? []).some((value) => String(value).endsWith(':/var/backups/omnireach'))) {
     errors.push('backup must mount the dedicated host backup directory');
+  }
+  if (!(backup?.networks ?? []).includes('restore')) {
+    errors.push('backup must join the isolated restore network');
+  }
+
+  const restorePostgres = compose.services?.['restore-postgres'];
+  if (!(restorePostgres?.profiles ?? []).includes('restore-drill')) {
+    errors.push('restore PostgreSQL must be isolated behind the restore-drill profile');
+  }
+  if (!restorePostgres?.image?.includes('@sha256:')) {
+    errors.push('restore PostgreSQL image is not digest-pinned');
+  }
+  if ((restorePostgres?.ports ?? []).length > 0) {
+    errors.push('restore PostgreSQL must not publish a host port');
+  }
+  if (!(restorePostgres?.networks ?? []).includes('restore')) {
+    errors.push('restore PostgreSQL must use only the isolated restore network');
+  }
+  if (!(restorePostgres?.secrets ?? []).includes('backup_restore_password')) {
+    errors.push('restore PostgreSQL is missing its dedicated credential');
+  }
+  if (
+    !(restorePostgres?.tmpfs ?? []).some((value) =>
+      String(value).startsWith('/var/lib/postgresql/data:'),
+    )
+  ) {
+    errors.push('restore PostgreSQL data must use disposable tmpfs storage');
+  }
+  if (compose.networks?.restore?.internal !== true) {
+    errors.push('restore network must be internal');
   }
 
   const declaredVolumes = ['platform-data', 'postgres-data', 'redis-data'];
@@ -277,6 +309,7 @@ export function checkProductionCompose() {
       'infrastructure/backups/run-production-backup.sh',
       'infrastructure/backups/run-host-backup.sh',
       'infrastructure/backups/install-backup-service.sh',
+      'infrastructure/backups/run-host-restore-drill.sh',
     ],
     { cwd: root, encoding: 'utf8' },
   );
@@ -291,6 +324,7 @@ export function checkProductionCompose() {
     '../../backups/run-production-backup.sh',
     '../../backups/run-host-backup.sh',
     '../../backups/install-backup-service.sh',
+    '../../backups/run-host-restore-drill.sh',
   ]) {
     const trackedPath = script.startsWith('../../deploy/')
       ? `infrastructure/deploy/${script.slice('../../deploy/'.length)}`

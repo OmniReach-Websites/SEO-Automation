@@ -28,6 +28,7 @@ export async function runBackupCli(argv, environment = process.env) {
   if (command === 'verify') return verifyBackup(options, environment);
   if (command === 'restore-to-disposable') return restoreBackup(options, environment);
   if (command === 'prune') return pruneBackups(options, environment);
+  if (command === 'report-failure') return reportScheduledFailure(options);
   throw new Error(`Unknown backup command: ${command}`);
 }
 
@@ -221,12 +222,12 @@ async function restoreBackup(options, environment) {
 }
 
 async function pruneBackups(options, environment) {
-  const daily = integerOption(options.daily ?? '7', 'daily');
-  const weekly = integerOption(options.weekly ?? '4', 'weekly');
+  const daily = integerOption(options.daily ?? '3', 'daily');
+  const weekly = integerOption(options.weekly ?? '1', 'weekly');
   const apply = options.apply === true;
   const automated = options['automated-retention'] === true;
-  if (automated && (daily !== 7 || weekly !== 4)) {
-    throw new Error('Automated retention must use the approved 7-daily/4-weekly policy');
+  if (automated && (daily !== 3 || weekly !== 1)) {
+    throw new Error('Automated retention must use the approved 3-daily/1-weekly policy');
   }
   if (apply && !automated && !options['authorization-ref']) {
     throw new Error('Manual pruning requires --authorization-ref');
@@ -234,8 +235,8 @@ async function pruneBackups(options, environment) {
   if (apply && !options['audit-log']) {
     throw new Error('Applied pruning requires --audit-log');
   }
-  if (environment.OMNIREACH_ENV === 'production' && (daily < 7 || weekly < 4)) {
-    throw new Error('Production pruning cannot reduce the approved 7-daily/4-weekly floor');
+  if (environment.OMNIREACH_ENV === 'production' && (daily < 3 || weekly < 1)) {
+    throw new Error('Production pruning cannot reduce the approved 3-daily/1-weekly floor');
   }
   const recorder = apply ? await recorderFromOptions(options) : undefined;
   try {
@@ -274,6 +275,17 @@ async function pruneBackups(options, environment) {
     });
   } finally {
     await recorder?.close();
+  }
+}
+
+async function reportScheduledFailure(options) {
+  const recorder = await recorderFromOptions(options);
+  if (!recorder) throw new Error('--record-database-url-file is required');
+  try {
+    await recorder.reportFailure('backup_failed');
+    return safeResult({ command: 'report-failure', recorded: true });
+  } finally {
+    await recorder.close();
   }
 }
 
@@ -382,6 +394,10 @@ function storeFromEnvironment(environment) {
       environment.BACKUP_MAX_ENCRYPTED_BYTES,
       768 * 1024 * 1024,
     ),
+    maximumTotalBytes: optionalIntegerEnvironment(
+      environment.BACKUP_R2_MAX_TOTAL_BYTES,
+      8 * 1024 * 1024 * 1024,
+    ),
     maximumRequests: optionalIntegerEnvironment(environment.BACKUP_R2_MAX_REQUESTS, 100),
     prefix: environment.R2_BACKUP_PREFIX ?? 'omnireach',
     region: environment.R2_REGION ?? 'auto',
@@ -454,7 +470,7 @@ async function recordDeletion(options, record, source, automated, phase) {
   await mkdir(dirname(auditPath), { recursive: true });
   const entry = {
     authorizationRef: automated
-      ? 'approved-automatic-7-daily-4-weekly'
+      ? 'approved-automatic-3-daily-1-weekly'
       : options['authorization-ref'],
     backupId: record.id,
     envelopeHash: record.envelopeHash,
@@ -554,7 +570,7 @@ function safeResult(result) {
 
 function usage() {
   return safeResult({
-    commands: ['backup', 'list', 'verify', 'restore-to-disposable', 'prune'],
+    commands: ['backup', 'list', 'verify', 'restore-to-disposable', 'prune', 'report-failure'],
     note: 'Secrets are read from files or the environment; prune is a dry run unless --apply is supplied.',
   });
 }
