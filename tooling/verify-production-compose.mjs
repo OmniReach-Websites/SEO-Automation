@@ -38,6 +38,15 @@ const compose = [
   '--profile',
   'application',
 ];
+const expectedHealthyWorkerKinds = [
+  'aio',
+  'crawler',
+  'monitoring',
+  'publisher',
+  'runner',
+  'scheduler',
+  'seo',
+];
 
 function run(executable, arguments_, options = {}) {
   const result = spawnSync(executable, arguments_, {
@@ -57,6 +66,35 @@ function run(executable, arguments_, options = {}) {
 
 function dockerCompose(arguments_, options) {
   return run('docker', [...compose, ...arguments_], options);
+}
+
+function currentHealthyWorkerKinds() {
+  const result = dockerCompose(
+    [
+      'exec',
+      '--no-TTY',
+      'postgres',
+      'sh',
+      '-ceu',
+      `PGPASSWORD="$(cat /run/secrets/postgres_admin_password)" psql -U omnireach_db_admin -d omnireach -Atc "SELECT COALESCE(string_agg(DISTINCT worker_kind, ',' ORDER BY worker_kind), '') FROM worker_heartbeats WHERE state = 'healthy' AND release_sha = '${releaseSha}' AND last_seen_at > now() - interval '2 minutes'"`,
+    ],
+    { capture: true },
+  );
+  return result.stdout.trim().split(',').filter(Boolean);
+}
+
+async function waitForHealthyWorkers() {
+  let actual = [];
+  for (let attempt = 0; attempt < 45; attempt += 1) {
+    actual = currentHealthyWorkerKinds();
+    if (actual.join(',') === expectedHealthyWorkerKinds.join(',')) return;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 1_000));
+  }
+  assert.deepEqual(
+    actual,
+    expectedHealthyWorkerKinds,
+    'all expected workers must recover and publish a current healthy heartbeat',
+  );
 }
 
 async function secretValues() {
@@ -280,18 +318,7 @@ try {
     assert.equal(staticResponse.status, 0);
   }
 
-  const workerHeartbeats = dockerCompose(
-    [
-      'exec',
-      '--no-TTY',
-      'postgres',
-      'sh',
-      '-ceu',
-      `PGPASSWORD="$(cat /run/secrets/postgres_admin_password)" psql -U omnireach_db_admin -d omnireach -Atc "SELECT count(DISTINCT worker_kind) FROM worker_heartbeats WHERE state = 'healthy' AND last_seen_at > now() - interval '2 minutes'"`,
-    ],
-    { capture: true },
-  );
-  assert.equal(workerHeartbeats.stdout.trim(), '7');
+  await waitForHealthyWorkers();
 
   dockerCompose([
     'exec',
