@@ -2,7 +2,7 @@
 
 **Started:** 2026-10-13 (America/Chicago)
 
-**Working branch:** `feature/offsite-backup-readiness`
+**Working branch:** `docs/context-2026-10-14-release`
 **Source goal:** `OMNIREACH_AUTONOMOUS_OVERNIGHT_GOAL.md`
 
 This file is the durable resume point for the autonomous overnight goal. Evidence states
@@ -12,11 +12,11 @@ work, `WAITING_FOR_OWNER` needs a human decision/credential, and
 
 ## Current milestone
 
-- `IN_PROGRESS` — Priorities 1 and 2 are merged and deployed through protected
-  workflows. Priority 3 repository implementation and local/disposable verification are
-  complete on `feature/offsite-backup-readiness`; protected review/release is next.
-- Current focus: release the Priority 3 repository slice without activating production
-  backups, then continue Priority 4 repository-only work.
+- `IN_PROGRESS` — Priorities 1, 2, and the repository-only Priority 3 slice are merged
+  and deployed through protected workflows. Production backup activation remains
+  separately owner-gated and has not occurred.
+- Current focus: continue Priority 4 repository-only work while preserving all recorded
+  production-proof gaps.
 
 ## Priority checklist
 
@@ -48,6 +48,8 @@ work, `WAITING_FOR_OWNER` needs a human decision/credential, and
 ### P3 — Off-site backups
 
 - [x] Complete safe repository-only backup/retention/alert/restore work and tests.
+- [x] Protected PR checks, protected-main merge, production deployment, and independent
+      readiness/public/authorization smoke evidence.
 - [ ] `WAITING_FOR_OWNER` — production secret installation and schedule activation.
 - [ ] `WAITING_FOR_PRODUCTION_PROOF` — timed isolated restore and RPO/RTO evidence.
 
@@ -259,9 +261,22 @@ work, `WAITING_FOR_OWNER` needs a human decision/credential, and
   A real downloaded-copy verification and timed isolated production-volume restore
   remain `WAITING_FOR_PRODUCTION_PROOF`; repository evidence does not satisfy R-005.
 
+### 2026-10-14 UTC — Priority 3 repository release deployed
+
+- PR #64 passed both protected Branch CI runs and was squash-merged as
+  `e7bdb32d877ed58f5989366b3a19924b412dc8cd`.
+- Production deployment run
+  [38530243019](https://github.com/OmniReach-Websites/SEO-Automation/actions/runs/38530243019)
+  rebuilt and tested the exact commit, built immutable images, transferred and activated
+  the release through the restricted ephemeral SSH identity, verified both public sites,
+  and removed the identity.
+- Independent post-deployment checks returned 200 for API readiness, OmniReach home,
+  Terms, and Coop. Unauthenticated `/orap/operations` returned 403 as required.
+- No production backup credentials, schedule, uploads, deletions, or restore actions were
+  activated by this release.
+
 ## Resume point
 
-Review and release `feature/offsite-backup-readiness` through protected CI without
-activating production backups. Then continue Priority 4 repository-only Resend/forms
-and staff UX work. Preserve the authenticated Analytics, exact Google-console, real R2,
-and timed isolated-restore production-proof gaps.
+Continue Priority 4 repository-only Resend/forms and staff UX work without activating
+real delivery. Preserve the authenticated Analytics, exact Google-console, real R2, and
+timed isolated-restore production-proof gaps.
