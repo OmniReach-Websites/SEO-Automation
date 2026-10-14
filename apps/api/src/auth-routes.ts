@@ -8,6 +8,7 @@ import {
   type WebAuthnEnrollmentPreparation,
   type WebAuthnRegistrationResponse,
 } from '@omnireach/auth';
+import { renderAuthPage } from '@omnireach/ui';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 
@@ -246,31 +247,70 @@ export interface AuthEndpointService {
 
 export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpointService): void {
   server.post<{
-    Body: { displayName?: string; password?: string; token?: string };
+    Body: { confirmPassword?: string; displayName?: string; password?: string; token?: string };
   }>(
     '/auth/invitations/accept',
     { config: { rateLimit: { max: 5, timeWindow: '15 minutes' } }, preHandler: requireSameOrigin },
     async (request, reply) => {
       const body = request.body;
+      const form = isFormSubmission(request);
       if (
         typeof body?.displayName !== 'string' ||
         !body.displayName.trim() ||
         body.displayName.length > 160 ||
         typeof body.password !== 'string' ||
-        typeof body.token !== 'string'
+        typeof body.token !== 'string' ||
+        (form &&
+          (typeof body.confirmPassword !== 'string' || body.confirmPassword !== body.password))
       ) {
-        return reply.code(400).send({ error: 'invalid_request' });
+        return form
+          ? reply
+              .header('Cache-Control', 'no-store')
+              .type('text/html; charset=utf-8')
+              .code(400)
+              .send(
+                renderInvitationRetry(
+                  typeof body?.token === 'string' ? body.token : '',
+                  'Check every field and make sure the passwords match.',
+                ),
+              )
+          : reply.code(400).send({ error: 'invalid_request' });
       }
-      const result = await service.acceptInvitation({
-        displayName: body.displayName,
-        host: request.hostname,
-        networkIdentifier: clientNetworkIdentifier(request.ip),
-        password: body.password,
-        token: body.token,
-        traceId: String(request.id),
-      });
+      let result: Awaited<ReturnType<AuthEndpointService['acceptInvitation']>>;
+      try {
+        result = await service.acceptInvitation({
+          displayName: body.displayName,
+          host: request.hostname,
+          networkIdentifier: clientNetworkIdentifier(request.ip),
+          password: body.password,
+          token: body.token,
+          traceId: String(request.id),
+        });
+      } catch (error) {
+        if (!form) throw error;
+        request.log.error(
+          { errorName: error instanceof Error ? error.name : 'UnknownError' },
+          'Invitation acceptance temporarily unavailable',
+        );
+        return reply
+          .header('Cache-Control', 'no-store')
+          .type('text/html; charset=utf-8')
+          .code(503)
+          .send(
+            renderAuthUnavailable(
+              'Invitation temporarily unavailable',
+              'No account or password was changed. Reopen the same invitation link and try again shortly.',
+            ),
+          );
+      }
       if (result.kind === 'invalid') {
-        return reply.code(400).send({ error: 'invalid_or_expired_invitation' });
+        return form
+          ? reply
+              .header('Cache-Control', 'no-store')
+              .type('text/html; charset=utf-8')
+              .code(400)
+              .send(renderInvitationUnavailable())
+          : reply.code(400).send({ error: 'invalid_or_expired_invitation' });
       }
       if (result.kind === 'mfa-required') {
         if (isFormSubmission(request)) {
@@ -430,12 +470,21 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
     },
   );
 
-  server.post<{ Body: { challengeId?: string; code?: string } }>(
+  server.post<{
+    Body: {
+      challengeId?: string;
+      code?: string;
+      emailAvailable?: string;
+      passkeyAvailable?: string;
+    };
+  }>(
     '/auth/mfa/verify',
     { config: { rateLimit: { max: 5, timeWindow: '5 minutes' } }, preHandler: requireSameOrigin },
     async (request, reply) => {
       if (typeof request.body?.challengeId !== 'string' || typeof request.body.code !== 'string') {
-        return reply.code(400).send({ error: 'invalid_request' });
+        return isFormSubmission(request)
+          ? reply.code(303).redirect(mfaFormLocation(request.body, { error: 'invalid' }))
+          : reply.code(400).send({ error: 'invalid_request' });
       }
       const result = await service.verifyMfa({
         challengeId: request.body.challengeId,
@@ -445,7 +494,9 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
         traceId: String(request.id),
       });
       if (result.kind !== 'authenticated') {
-        return reply.code(401).send({ error: 'invalid_challenge' });
+        return isFormSubmission(request)
+          ? reply.code(303).redirect(mfaFormLocation(request.body, { error: 'invalid' }))
+          : reply.code(401).send({ error: 'invalid_challenge' });
       }
       const authenticated = reply.setCookie(
         '__Host-omnireach_session',
@@ -485,18 +536,61 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
         request.body.currentPassword.length > 128 ||
         !recoveryConfirmed
       ) {
-        return reply.code(400).send({ error: 'invalid_request' });
+        return isFormSubmission(request)
+          ? reply
+              .header('Cache-Control', 'no-store')
+              .type('text/html; charset=utf-8')
+              .code(400)
+              .send(
+                renderRestrictedRecoveryFailure(
+                  'Enter your current password and confirm the full recovery impact.',
+                ),
+              )
+          : reply.code(400).send({ error: 'invalid_request' });
       }
-      const result = await service.completeCustomerRecovery({
-        currentPassword: request.body.currentPassword,
-        host: request.hostname,
-        networkIdentifier: clientNetworkIdentifier(request.ip),
-        recoveryConfirmed,
-        sessionToken: sessionToken(request),
-        traceId: String(request.id),
-      });
-      if (!result) return reply.code(403).send({ error: 'recovery_not_allowed' });
-      const cleared = reply.clearCookie('__Host-omnireach_session', sessionCookieOptions());
+      let result: Awaited<ReturnType<NonNullable<AuthEndpointService['completeCustomerRecovery']>>>;
+      try {
+        result = await service.completeCustomerRecovery({
+          currentPassword: request.body.currentPassword,
+          host: request.hostname,
+          networkIdentifier: clientNetworkIdentifier(request.ip),
+          recoveryConfirmed,
+          sessionToken: sessionToken(request),
+          traceId: String(request.id),
+        });
+      } catch (error) {
+        if (!isFormSubmission(request)) throw error;
+        request.log.error(
+          { errorName: error instanceof Error ? error.name : 'UnknownError' },
+          'Restricted recovery temporarily unavailable',
+        );
+        return reply
+          .header('Cache-Control', 'no-store')
+          .type('text/html; charset=utf-8')
+          .code(503)
+          .send(
+            renderRestrictedRecoveryFailure(
+              'Recovery is temporarily unavailable. No account-security setting was changed.',
+            ),
+          );
+      }
+      if (!result) {
+        return isFormSubmission(request)
+          ? reply
+              .header('Cache-Control', 'no-store')
+              .type('text/html; charset=utf-8')
+              .code(403)
+              .send(
+                renderRestrictedRecoveryFailure(
+                  'Recovery was not allowed. Check your password or restart the approved recovery flow.',
+                ),
+              )
+          : reply.code(403).send({ error: 'recovery_not_allowed' });
+      }
+      const cleared = reply
+        .header('Cache-Control', 'no-store')
+        .header('Pragma', 'no-cache')
+        .clearCookie('__Host-omnireach_session', sessionCookieOptions());
       return isFormSubmission(request)
         ? cleared
             .type('text/html; charset=utf-8')
@@ -571,7 +665,9 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
         request.body.currentPassword.length < 1 ||
         request.body.currentPassword.length > 128
       ) {
-        return reply.code(400).send({ error: 'invalid_request' });
+        return isFormSubmission(request)
+          ? reply.code(303).redirect('/security?error=invalid')
+          : reply.code(400).send({ error: 'invalid_request' });
       }
       const result = await service.prepareCustomerTotpEnrollment({
         currentPassword: request.body.currentPassword,
@@ -580,7 +676,11 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
         sessionToken: sessionToken(request),
         traceId: String(request.id),
       });
-      if (!result) return reply.code(403).send({ error: 'totp_enrollment_not_allowed' });
+      if (!result) {
+        return isFormSubmission(request)
+          ? reply.code(303).redirect('/security?error=not-allowed')
+          : reply.code(403).send({ error: 'totp_enrollment_not_allowed' });
+      }
       reply.header('Cache-Control', 'no-store');
       return isFormSubmission(request)
         ? reply.type('text/html; charset=utf-8').send(renderCustomerTotpPreparation(result))
@@ -608,7 +708,9 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
         typeof request.body.setupId !== 'string' ||
         !acknowledged
       ) {
-        return reply.code(400).send({ error: 'invalid_request' });
+        return isFormSubmission(request)
+          ? reply.code(303).redirect('/security?error=invalid')
+          : reply.code(400).send({ error: 'invalid_request' });
       }
       const result = await service.completeCustomerTotpEnrollment({
         code: request.body.code,
@@ -619,7 +721,11 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
         setupId: request.body.setupId,
         traceId: String(request.id),
       });
-      if (!result) return reply.code(403).send({ error: 'totp_enrollment_not_allowed' });
+      if (!result) {
+        return isFormSubmission(request)
+          ? reply.code(303).redirect('/security?error=not-allowed')
+          : reply.code(403).send({ error: 'totp_enrollment_not_allowed' });
+      }
       const cleared = reply.clearCookie('__Host-omnireach_session', sessionCookieOptions());
       return isFormSubmission(request)
         ? cleared.code(303).redirect('/login?security=updated')
@@ -640,7 +746,9 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
         typeof request.body?.currentPassword !== 'string' ||
         !confirmed
       ) {
-        return reply.code(400).send({ error: 'invalid_request' });
+        return isFormSubmission(request)
+          ? reply.code(303).redirect('/security?error=invalid')
+          : reply.code(400).send({ error: 'invalid_request' });
       }
       const result = await service.disableCustomerTotp({
         confirmed,
@@ -649,7 +757,11 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
         sessionToken: sessionToken(request),
         traceId: String(request.id),
       });
-      if (!result) return reply.code(403).send({ error: 'totp_change_not_allowed' });
+      if (!result) {
+        return isFormSubmission(request)
+          ? reply.code(303).redirect('/security?error=not-allowed')
+          : reply.code(403).send({ error: 'totp_change_not_allowed' });
+      }
       const cleared = reply.clearCookie('__Host-omnireach_session', sessionCookieOptions());
       return isFormSubmission(request)
         ? cleared.code(303).redirect('/login?security=updated')
@@ -671,7 +783,9 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
         })
         .safeParse(request.body);
       if (!service.renameWebAuthnCredential || !parsed.success) {
-        return reply.code(400).send({ error: 'invalid_request' });
+        return isFormSubmission(request)
+          ? reply.code(303).redirect('/security?error=invalid')
+          : reply.code(400).send({ error: 'invalid_request' });
       }
       const renamed = await service.renameWebAuthnCredential({
         ...parsed.data,
@@ -679,7 +793,11 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
         sessionToken: sessionToken(request),
         traceId: String(request.id),
       });
-      if (!renamed) return reply.code(403).send({ error: 'webauthn_change_not_allowed' });
+      if (!renamed) {
+        return isFormSubmission(request)
+          ? reply.code(303).redirect('/security?error=not-allowed')
+          : reply.code(403).send({ error: 'webauthn_change_not_allowed' });
+      }
       return isFormSubmission(request)
         ? reply.code(303).redirect('/security?notice=passkey-renamed')
         : reply.code(200).send({ status: 'renamed' });
@@ -703,7 +821,9 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
         })
         .safeParse(request.body);
       if (!service.revokeWebAuthnCredential || !parsed.success || !confirmed) {
-        return reply.code(400).send({ error: 'invalid_request' });
+        return isFormSubmission(request)
+          ? reply.code(303).redirect('/security?error=invalid')
+          : reply.code(400).send({ error: 'invalid_request' });
       }
       const revoked = await service.revokeWebAuthnCredential({
         ...parsed.data,
@@ -712,7 +832,11 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
         sessionToken: sessionToken(request),
         traceId: String(request.id),
       });
-      if (!revoked) return reply.code(403).send({ error: 'webauthn_change_not_allowed' });
+      if (!revoked) {
+        return isFormSubmission(request)
+          ? reply.code(303).redirect('/security?error=not-allowed')
+          : reply.code(403).send({ error: 'webauthn_change_not_allowed' });
+      }
       const cleared = reply.clearCookie('__Host-omnireach_session', sessionCookieOptions());
       return isFormSubmission(request)
         ? cleared.code(303).redirect('/login?security=updated')
@@ -720,12 +844,16 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
     },
   );
 
-  server.post<{ Body: { challengeId?: string } }>(
+  server.post<{
+    Body: { challengeId?: string; emailAvailable?: string; passkeyAvailable?: string };
+  }>(
     '/auth/mfa/email/resend',
     { config: { rateLimit: { max: 3, timeWindow: '15 minutes' } }, preHandler: requireSameOrigin },
     async (request, reply) => {
       if (typeof request.body?.challengeId !== 'string' || !service.resendEmailCode) {
-        return reply.code(400).send({ error: 'invalid_request' });
+        return isFormSubmission(request)
+          ? reply.code(303).redirect(mfaFormLocation(request.body, { error: 'invalid' }))
+          : reply.code(400).send({ error: 'invalid_request' });
       }
       const currentSessionToken = sessionToken(request);
       const result = await service.resendEmailCode({
@@ -734,7 +862,16 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
         networkIdentifier: clientNetworkIdentifier(request.ip),
         ...(currentSessionToken ? { sessionToken: currentSessionToken } : {}),
       });
-      if (result === 'cooldown') return reply.code(429).send({ error: 'resend_limited' });
+      if (result === 'cooldown') {
+        return isFormSubmission(request)
+          ? reply.code(303).redirect(mfaFormLocation(request.body, { error: 'cooldown' }))
+          : reply.code(429).send({ error: 'resend_limited' });
+      }
+      if (isFormSubmission(request)) {
+        return result === 'sent'
+          ? reply.code(303).redirect(mfaFormLocation(request.body, { notice: 'sent' }))
+          : reply.code(303).redirect(mfaFormLocation(request.body, { error: 'invalid' }));
+      }
       return result === 'sent'
         ? reply.code(202).send({ status: 'accepted' })
         : reply.code(400).send({ error: 'invalid_challenge' });
@@ -832,11 +969,15 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
     { config: { rateLimit: { max: 5, timeWindow: '15 minutes' } }, preHandler: requireSameOrigin },
     async (request, reply) => {
       if (!service.prepareCustomerEmailCodePolicyChange) {
-        return reply.code(404).send({ error: 'not_found' });
+        return isFormSubmission(request)
+          ? reply.code(303).redirect('/security?error=not-allowed')
+          : reply.code(404).send({ error: 'not_found' });
       }
       const enabled = parseEmailPolicyChoice(request.body);
       if (enabled === undefined || typeof request.body?.currentPassword !== 'string') {
-        return reply.code(400).send({ error: 'invalid_request' });
+        return isFormSubmission(request)
+          ? reply.code(303).redirect('/security?error=invalid')
+          : reply.code(400).send({ error: 'invalid_request' });
       }
       const prepared = await service.prepareCustomerEmailCodePolicyChange({
         currentPassword: request.body.currentPassword,
@@ -846,7 +987,11 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
         sessionToken: sessionToken(request),
         traceId: String(request.id),
       });
-      if (!prepared) return reply.code(400).send({ error: 'verification_not_started' });
+      if (!prepared) {
+        return isFormSubmission(request)
+          ? reply.code(303).redirect('/security?error=not-allowed')
+          : reply.code(400).send({ error: 'verification_not_started' });
+      }
       if (isFormSubmission(request)) {
         const action = enabled ? 'enable' : 'disable';
         return reply
@@ -869,7 +1014,9 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
         typeof request.body?.challengeId !== 'string' ||
         typeof request.body.code !== 'string'
       ) {
-        return reply.code(400).send({ error: 'invalid_request' });
+        return isFormSubmission(request)
+          ? reply.code(303).redirect('/security?error=invalid')
+          : reply.code(400).send({ error: 'invalid_request' });
       }
       const result = await service.completeCustomerEmailCodePolicyChange({
         challengeId: request.body.challengeId,
@@ -879,8 +1026,14 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
         sessionToken: sessionToken(request),
         traceId: String(request.id),
       });
-      if (!result) return reply.code(400).send({ error: 'invalid_or_expired_verification' });
+      if (!result) {
+        return isFormSubmission(request)
+          ? reply.code(303).redirect('/security?error=not-allowed')
+          : reply.code(400).send({ error: 'invalid_or_expired_verification' });
+      }
       const cleared = reply
+        .header('Cache-Control', 'no-store')
+        .header('Pragma', 'no-cache')
         .clearCookie('__Host-omnireach_session', sessionCookieOptions())
         .clearCookie(challengeCookieName, sessionCookieOptions(300));
       return isFormSubmission(request)
@@ -908,27 +1061,74 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
       } catch {
         // Recovery is deliberately non-enumerating.
       }
-      return reply.code(202).send({ status: 'accepted' });
+      return isFormSubmission(request)
+        ? reply.code(303).redirect('/auth/recovery?sent=1')
+        : reply.code(202).send({ status: 'accepted' });
     },
   );
 
-  server.post<{ Body: { newPassword?: string; token?: string } }>(
+  server.post<{ Body: { confirmPassword?: string; newPassword?: string; token?: string } }>(
     '/auth/recovery/complete',
     { config: { rateLimit: { max: 5, timeWindow: '15 minutes' } }, preHandler: requireSameOrigin },
     async (request, reply) => {
-      if (typeof request.body?.newPassword !== 'string' || typeof request.body.token !== 'string') {
-        return reply.code(400).send({ error: 'invalid_request' });
+      const form = isFormSubmission(request);
+      if (
+        typeof request.body?.newPassword !== 'string' ||
+        typeof request.body.token !== 'string' ||
+        (form &&
+          (typeof request.body.confirmPassword !== 'string' ||
+            request.body.confirmPassword !== request.body.newPassword))
+      ) {
+        return form
+          ? reply
+              .header('Cache-Control', 'no-store')
+              .type('text/html; charset=utf-8')
+              .code(400)
+              .send(
+                renderRecoveryRetry(
+                  typeof request.body?.token === 'string' ? request.body.token : '',
+                  'Check both password fields and make sure they match.',
+                ),
+              )
+          : reply.code(400).send({ error: 'invalid_request' });
       }
-      const completed = await service.completePasswordRecovery({
-        host: request.hostname,
-        networkIdentifier: clientNetworkIdentifier(request.ip),
-        newPassword: request.body.newPassword,
-        token: request.body.token,
-        traceId: String(request.id),
-      });
-      return completed
-        ? reply.code(204).send()
-        : reply.code(400).send({ error: 'invalid_or_expired_recovery' });
+      let completed: boolean;
+      try {
+        completed = await service.completePasswordRecovery({
+          host: request.hostname,
+          networkIdentifier: clientNetworkIdentifier(request.ip),
+          newPassword: request.body.newPassword,
+          token: request.body.token,
+          traceId: String(request.id),
+        });
+      } catch (error) {
+        if (!form) throw error;
+        request.log.error(
+          { errorName: error instanceof Error ? error.name : 'UnknownError' },
+          'Password recovery temporarily unavailable',
+        );
+        return reply
+          .header('Cache-Control', 'no-store')
+          .type('text/html; charset=utf-8')
+          .code(503)
+          .send(
+            renderAuthUnavailable(
+              'Recovery temporarily unavailable',
+              'No password was changed. Request a new recovery link if this problem continues.',
+              '/auth/recovery',
+            ),
+          );
+      }
+      if (!completed) {
+        return form
+          ? reply
+              .header('Cache-Control', 'no-store')
+              .type('text/html; charset=utf-8')
+              .code(400)
+              .send(renderRecoveryUnavailable())
+          : reply.code(400).send({ error: 'invalid_or_expired_recovery' });
+      }
+      return form ? reply.code(303).redirect('/login?recovery=complete') : reply.code(204).send();
     },
   );
 
@@ -959,14 +1159,14 @@ export function registerAuthRoutes(server: FastifyInstance, service: AuthEndpoin
     { preHandler: requireSameOrigin },
     async (request, reply) => {
       const sessionId = z.string().uuid().safeParse(request.params?.sessionId);
-      if (!sessionId.success) return reply.code(400).send({ error: 'invalid_request' });
+      if (!sessionId.success) return reply.code(303).redirect('/security?error=invalid');
       const revoked = await service.revokeSession({
         currentToken: sessionToken(request),
         host: request.hostname,
         sessionId: sessionId.data,
         traceId: String(request.id),
       });
-      if (!revoked) return reply.code(404).send({ error: 'not_found' });
+      if (!revoked) return reply.code(303).redirect('/security?error=not-allowed');
       return reply.code(303).redirect('/security?notice=session-revoked');
     },
   );
@@ -990,6 +1190,18 @@ function mfaLocation(methods: string[] | undefined): string {
   return query ? `/mfa?${query}` : '/mfa';
 }
 
+function mfaFormLocation(
+  body: { emailAvailable?: string; passkeyAvailable?: string } | undefined,
+  outcome: { error?: 'cooldown' | 'invalid'; notice?: 'sent' },
+): string {
+  const parameters = new URLSearchParams();
+  if (body?.emailAvailable === '1') parameters.set('email', '1');
+  if (body?.passkeyAvailable === '1') parameters.set('passkey', '1');
+  if (outcome.error) parameters.set('error', outcome.error);
+  if (outcome.notice) parameters.set('notice', outcome.notice);
+  return `/mfa?${parameters.toString()}`;
+}
+
 function parseEmailPolicyChoice(
   body: { action?: string; enabled?: boolean | string } | undefined,
 ): boolean | undefined {
@@ -1002,13 +1214,25 @@ function parseEmailPolicyChoice(
 
 function renderEmailPolicyChangeCompletion(recoveryCodes: string[]): string {
   const result = recoveryCodes.length
-    ? `<p>Email verification is enabled. Save these recovery codes now. They will not be shown again.</p><ul>${recoveryCodes.map((code) => `<li><code>${escapeHtml(code)}</code></li>`).join('')}</ul>`
+    ? `<p>Email verification is enabled. Save these recovery codes now. They will not be shown again.</p><ul aria-label="New one-time recovery codes">${recoveryCodes.map((code) => `<li><code>${escapeHtml(code)}</code></li>`).join('')}</ul>`
     : '<p>Email verification is disabled. Your other sessions have been signed out.</p>';
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><title>Security updated | OmniReach</title></head><body><main><h1>Security updated</h1>${result}<p><a href="/login">Sign in again</a></p></main></body></html>`;
+  return renderAuthPage({
+    content: `${result}<p class="auth-card-footer"><a href="/login">Sign in again</a></p>`,
+    description: 'The requested account-security change is complete.',
+    eyebrow: 'Account protection',
+    heading: 'Security updated',
+    title: 'Security updated',
+  });
 }
 
 function renderCustomerRecoveryCompletion(recoveryCodes: string[]): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><title>Recovery completed | OmniReach</title></head><body><main><h1>Recovery completed</h1><p>Optional two-step methods and passkeys were disabled, every active session was signed out, and password-reset links were invalidated. Save these replacement recovery codes now. They will not be shown again.</p><ul>${recoveryCodes.map((code) => `<li><code>${escapeHtml(code)}</code></li>`).join('')}</ul><p><a href="/login">Sign in again with your password</a></p></main></body></html>`;
+  return renderAuthPage({
+    content: `<p>Optional two-step methods and passkeys were disabled, every active session was signed out, and password-reset links were invalidated. Save these replacement recovery codes now. They will not be shown again.</p><ul aria-label="Replacement one-time recovery codes">${recoveryCodes.map((code) => `<li><code>${escapeHtml(code)}</code></li>`).join('')}</ul><p class="auth-card-footer"><a href="/login">Sign in again with your password</a></p>`,
+    description: 'Account-security recovery completed and prior access was revoked.',
+    eyebrow: 'Restricted recovery',
+    heading: 'Recovery completed',
+    title: 'Recovery completed',
+  });
 }
 
 function renderCustomerTotpPreparation(input: {
@@ -1019,7 +1243,75 @@ function renderCustomerTotpPreparation(input: {
   const recoveryCodes = input.recoveryCodes
     .map((code) => `<li><code>${escapeHtml(code)}</code></li>`)
     .join('');
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><meta name="theme-color" content="#0b1820"><link rel="icon" type="image/png" href="/assets/omnireach-logo.png"><link rel="stylesheet" href="/assets/admin.css?v=orap-3"><title>Finish authenticator setup | OmniReach</title></head><body><main class="content"><p class="eyebrow">Account protection</p><h1>Finish authenticator setup</h1><p>Add this setup URI to your authenticator app, then enter the current six-digit code.</p><p class="surface-note"><code>${escapeHtml(input.uri)}</code></p><h2>Save these one-time recovery codes</h2><ul>${recoveryCodes}</ul><form method="post" action="/auth/security/totp/complete"><input name="setupId" type="hidden" value="${escapeHtml(input.setupId)}"><label for="code">Authenticator code</label><input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" required autofocus><label class="checkbox-label"><input name="recoveryCodesAcknowledged" type="checkbox" value="true" required><span>I saved every recovery code.</span></label><button type="submit">Enable authenticator app</button></form></main></body></html>`;
+  return renderAuthPage({
+    content: `<p>Add the setup URI to your authenticator app, then enter the current six-digit code.</p><p class="surface-note"><code>${escapeHtml(input.uri)}</code></p><h2>Save these one-time recovery codes</h2><ul aria-label="New one-time recovery codes">${recoveryCodes}</ul><form method="post" action="/auth/security/totp/complete"><input name="setupId" type="hidden" value="${escapeHtml(input.setupId)}"><div class="field"><label for="code">Authenticator code</label><input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" required autofocus></div><label class="checkbox-label"><input name="recoveryCodesAcknowledged" type="checkbox" value="true" required><span>I saved every recovery code.</span></label><button type="submit">Enable authenticator app</button></form>`,
+    description: 'Complete enrollment before leaving this page.',
+    eyebrow: 'Account protection',
+    heading: 'Finish authenticator setup',
+    title: 'Finish authenticator setup',
+  });
+}
+
+function renderInvitationRetry(token: string, message: string): string {
+  return renderAuthPage({
+    content: `<div class="notice error" role="alert">${escapeHtml(message)}</div><form method="post" action="/auth/invitations/accept"><input name="token" type="hidden" value="${escapeHtml(token)}"><div class="field"><label for="displayName">Your name</label><input id="displayName" name="displayName" maxlength="160" autocomplete="name" required autofocus></div><div class="field"><label for="password">Create a password</label><input id="password" name="password" type="password" minlength="12" maxlength="128" autocomplete="new-password" required></div><div class="field"><label for="confirmPassword">Confirm password</label><input id="confirmPassword" name="confirmPassword" type="password" minlength="12" maxlength="128" autocomplete="new-password" required></div><button type="submit">Accept invitation</button></form>`,
+    description: 'Create the secure credentials used for your OmniReach account.',
+    eyebrow: 'Account invitation',
+    heading: 'Accept your invitation',
+    title: 'Accept invitation',
+  });
+}
+
+function renderInvitationUnavailable(): string {
+  return renderAuthPage({
+    content:
+      '<div class="notice error" role="alert">This invitation could not be accepted. It may be invalid, expired, or already used.</div><p class="auth-card-footer">Ask an OmniReach owner to send a new invitation.</p>',
+    description: 'The invitation did not create or change an account.',
+    eyebrow: 'Account invitation',
+    heading: 'Invitation unavailable',
+    title: 'Invitation unavailable',
+  });
+}
+
+function renderRecoveryRetry(token: string, message: string): string {
+  return renderAuthPage({
+    content: `<div class="notice error" role="alert">${escapeHtml(message)}</div><form method="post" action="/auth/recovery/complete"><input name="token" type="hidden" value="${escapeHtml(token)}"><div class="field"><label for="newPassword">New password</label><input id="newPassword" name="newPassword" type="password" minlength="12" maxlength="128" autocomplete="new-password" required autofocus></div><div class="field"><label for="confirmPassword">Confirm new password</label><input id="confirmPassword" name="confirmPassword" type="password" minlength="12" maxlength="128" autocomplete="new-password" required></div><button type="submit">Update password</button></form>`,
+    description: 'Choose a new unique password to regain access safely.',
+    eyebrow: 'Account recovery',
+    heading: 'Choose a new password',
+    title: 'Choose a new password',
+  });
+}
+
+function renderRecoveryUnavailable(): string {
+  return renderAuthPage({
+    content:
+      '<div class="notice error" role="alert">This recovery link could not be used. It may be invalid, expired, or already used.</div><p class="auth-card-footer"><a href="/auth/recovery">Request a new recovery link</a></p>',
+    description: 'No password or verification policy was changed.',
+    eyebrow: 'Account recovery',
+    heading: 'Recovery link unavailable',
+    title: 'Recovery link unavailable',
+  });
+}
+
+function renderRestrictedRecoveryFailure(message: string): string {
+  return renderAuthPage({
+    content: `<div class="notice error" role="alert">${escapeHtml(message)}</div><div class="surface-note">Completing recovery revokes optional verification methods, passkeys, recovery codes, and every active session.</div><form method="post" action="/auth/security/recovery/complete"><div class="field"><label for="currentPassword">Current password</label><input id="currentPassword" name="currentPassword" type="password" minlength="12" maxlength="128" autocomplete="current-password" required autofocus></div><label class="checkbox-label"><input name="recoveryConfirmed" type="checkbox" value="true" required><span>I understand that all verification methods and active sessions will be revoked.</span></label><button type="submit">Reset account security</button></form>`,
+    description: 'Review the impact carefully before resetting account security.',
+    eyebrow: 'Restricted recovery',
+    heading: 'Complete recovery',
+    title: 'Complete account recovery',
+  });
+}
+
+function renderAuthUnavailable(title: string, message: string, href?: string): string {
+  return renderAuthPage({
+    content: `<div class="notice error" role="alert">${escapeHtml(message)}</div>${href ? `<p class="auth-card-footer"><a href="${escapeHtml(href)}">Continue</a></p>` : ''}`,
+    description: 'The request failed safely without changing account access.',
+    eyebrow: 'Account protection',
+    heading: title,
+    title,
+  });
 }
 
 function escapeHtml(value: string): string {

@@ -2,7 +2,7 @@
 
 **Started:** 2026-10-13 (America/Chicago)
 
-**Working branch:** `feature/email-form-operations`
+**Working branch:** `feature/staff-ux-recovery`
 **Source goal:** `OMNIREACH_AUTONOMOUS_OVERNIGHT_GOAL.md`
 
 This file is the durable resume point for the autonomous overnight goal. Evidence states
@@ -15,9 +15,9 @@ work, `WAITING_FOR_OWNER` needs a human decision/credential, and
 - `IN_PROGRESS` — Priorities 1, 2, and the repository-only Priority 3 slice are merged
   and deployed through protected workflows. Production backup activation remains
   separately owner-gated and has not occurred.
-- Current focus: release the verified Priority 4 email/forms operations slice, then
-  continue the employee-facing accessibility and recovery-safe UX review while
-  preserving all recorded production-proof gaps.
+- Current focus: finish the Priority 4 staff accessibility/recovery UX and correct the
+  stale fail-closed inquiry smoke assertion, then release the exact candidate through
+  protected CI while preserving all recorded production-proof gaps.
 
 ## Priority checklist
 
@@ -321,9 +321,40 @@ work, `WAITING_FOR_OWNER` needs a human decision/credential, and
   credentials, current free-tier reconciliation, and activation remain
   `WAITING_FOR_OWNER`. No provider message or external mutation occurred.
 
+### 2026-10-14 UTC — Priority 4 protected merge and release correction
+
+- Committed the verified email/forms slice as `babd84d`, pushed only
+  `feature/email-form-operations`, opened and attached
+  [PR #66](https://github.com/OmniReach-Websites/SEO-Automation/pull/66), and observed both
+  protected Branch CI runs pass. PR #66 was squash-merged as protected-main commit
+  `cd444d23955f3da25439cd6ca23e8014b07322f8`.
+- Production workflow
+  [38535619433](https://github.com/OmniReach-Websites/SEO-Automation/actions/runs/38535619433)
+  built and tested the exact commit, built immutable images, configured the restricted
+  ephemeral SSH identity, activated the release, verified Coop, and removed the identity.
+  Its final OmniReach check failed because the workflow still asserted
+  `{"enabled":true}` for the platform-inquiry endpoint even though Priority 4 deliberately
+  requires explicit activation and the live endpoint correctly returned
+  `{"enabled":false}`. Real delivery remains off; the assertion is being corrected rather
+  than enabling Resend.
+- Created `feature/staff-ux-recovery` from `cd444d2`. The current slice centralizes the
+  branded authentication shell, replaces raw browser JSON failures with safe accessible
+  invitation/MFA/security/recovery feedback, adds browser password confirmation, adds
+  `no-store` handling to sensitive pages, preserves mandatory verification and recovery
+  restrictions, and tests the new behavior.
+- Full repository evidence passed: 69 unit files (373 passed, 1 skipped), 12 integration
+  files (70 passed), 16 security files (75 passed), 2 contract files (10 passed), and 5
+  Playwright tests; typecheck, lint, build, documentation, 60-migration, Compose,
+  production-Compose, workflow, 28-workspace, five-site build/contract, secret scan of
+  595 files, and production audit with zero vulnerabilities. The disposable runtime
+  again proved restricted quota/database/authentication behavior, persistence, private
+  isolation, six healthy worker kinds, and no credential leakage, then removed its
+  resources. Protected release remains pending.
+
 ## Resume point
 
-Release the verified Priority 4 email/forms operations candidate through protected CI
-without enabling provider flags, then continue the employee-facing accessibility and
-recovery-safe UX review. Preserve the authenticated Analytics, exact Google-console,
+Finish and release `feature/staff-ux-recovery` through protected CI without enabling any
+provider flag. Confirm a successful exact-commit production workflow and independent
+public/readiness/authorization smoke, then mark the remaining Priority 4 UX checkbox only
+if the full evidence passes. Preserve the authenticated Analytics, exact Google-console,
 real R2, and timed isolated-restore production-proof gaps.

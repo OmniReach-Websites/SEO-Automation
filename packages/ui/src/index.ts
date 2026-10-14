@@ -1,5 +1,6 @@
 export {
   adminStylesheet,
+  renderAuthPage,
   renderCustomerDashboard,
   renderOrapDashboard,
   renderOrapNotFound,
