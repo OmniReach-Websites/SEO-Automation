@@ -305,6 +305,20 @@ test('served ORAP and customer shells remain accessible and host isolated', asyn
       'Accept your invitation',
     );
     await expect(customerPage.locator('input[name="token"]')).toHaveValue('A'.repeat(43));
+    await expect(customerPage.getByLabel('Confirm password')).toBeVisible();
+
+    await customerPage.goto(`${customerBase}/mfa?email=1&passkey=1&error=invalid`);
+    await expect(customerPage.getByRole('alert')).toContainText(
+      'verification could not be accepted',
+    );
+    await expect(customerPage.getByLabel('Verification or recovery code')).not.toHaveAttribute(
+      'inputmode',
+      'numeric',
+    );
+    await expect(
+      customerPage.getByRole('button', { name: 'Verify with Windows Hello or security key' }),
+    ).toBeVisible();
+    await expect(customerPage.getByRole('button', { name: 'Send a new email code' })).toBeVisible();
 
     const staffPage = await staffContext.newPage();
     await staffPage.goto(staffBase);

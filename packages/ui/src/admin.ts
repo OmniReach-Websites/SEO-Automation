@@ -158,6 +158,16 @@ export function renderOrapShell(input: {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><meta name="theme-color" content="#0b1820"><link rel="icon" type="image/png" href="/assets/omnireach-logo.png"><link rel="stylesheet" href="/assets/admin.css?v=orap-4"><title>${escapeHtml(input.title)} | OmniReach Administration</title></head><body><a class="skip-link" href="#main">Skip to content</a><div class="app-shell"><aside class="sidebar"><a class="brand" href="${home}"><img class="brand-mark" src="/assets/omnireach-logo.png" alt="" width="48" height="48"><span class="brand-copy"><strong>OmniReach</strong><small>Agency operations</small></span></a><nav class="nav" aria-label="Administration">${overviewLink}${siteLink}${analyticsLink}${operationsLink}${staffLink}${securityLink}</nav><div class="sidebar-footer"><form method="post" action="/auth/logout"><button class="link-button" type="submit">Sign out</button></form></div></aside><div class="workspace"><main class="content" id="main"><div class="page-head"><div>${input.eyebrow ? `<p class="eyebrow">${escapeHtml(input.eyebrow)}</p>` : ''}<h1>${escapeHtml(input.heading)}</h1></div>${input.actions ?? ''}</div>${notice}${input.content}</main></div></div></body></html>`;
 }
 
+export function renderAuthPage(input: {
+  content: string;
+  description: string;
+  eyebrow: string;
+  heading: string;
+  title: string;
+}): string {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><meta name="theme-color" content="#0b1820"><link rel="icon" type="image/png" href="/assets/omnireach-logo.png"><link rel="stylesheet" href="/assets/admin.css?v=orap-4"><title>${escapeHtml(input.title)} | OmniReach</title></head><body><a class="skip-link" href="#main">Skip to content</a><div class="auth-page"><aside class="auth-brand-panel" aria-label="OmniReach"><a class="auth-brand" href="/login"><img class="brand-mark" src="/assets/omnireach-logo.png" alt="" width="48" height="48"><span class="brand-copy"><strong>OmniReach</strong><small>Administration platform</small></span></a><div class="auth-brand-copy"><p class="eyebrow">Agency-first website operations</p><h2>Run every customer site with confidence.</h2><p>Securely manage content, automation, publishing, access, and operational health from one staff workspace.</p></div><p class="auth-meta">Protected by host-bound sessions and two-step verification.</p></aside><div class="auth-workspace"><main class="auth-card" id="main"><p class="eyebrow">${escapeHtml(input.eyebrow)}</p><h1>${escapeHtml(input.heading)}</h1><p class="lede">${escapeHtml(input.description)}</p>${input.content}</main></div></div></body></html>`;
+}
+
 export function renderOrapStaffDirectory(
   staff: readonly OrapStaffSummary[],
   navigation?: readonly OrapNavigationItem[],

@@ -1,4 +1,4 @@
-# OmniReach handoff context — October 14, 2026, 08:10 UTC
+# OmniReach handoff context — October 14, 2026, updated through 08:45 UTC
 
 **Purpose:** authoritative first-read snapshot for the next Codex session or developer
 
@@ -6,12 +6,18 @@
 
 **Protected production branch:** `main`
 
-**Current local branch:** `feature/email-form-operations`
+**Current local branch:** `feature/staff-ux-recovery`
 
-**Latest protected-main commit:** `c514e3c92066acca8389ac873ca5ef5aa094d9d2`
+**Latest protected-main commit:** `cd444d23955f3da25439cd6ca23e8014b07322f8`
 
 **Latest verified production workflow:** GitHub Actions run `38531510238`, completed
 successfully for `c514e3c92066acca8389ac873ca5ef5aa094d9d2`
+
+**Latest attempted production workflow:** run `38535619433` activated `cd444d2`, verified
+Coop, then failed its OmniReach check because the workflow still expected the inquiry
+endpoint to report enabled. The deployed fail-closed endpoint correctly reports
+`{"enabled":false}`. Treat this as an incomplete release until a protected corrective
+workflow passes; do not enable Resend merely to satisfy the stale assertion.
 
 This snapshot supersedes the October 13 and earlier October 14 context documents as the
 first handoff document to read. It does not replace the architecture, ADRs, production
@@ -64,10 +70,13 @@ change, health checks, and a rollback path.
 
 ## Current production baseline
 
-The latest protected-main documentation release is `c514e3c`. Production workflow
-`38531510238` completed successfully on October 14, 2026. The latest application-changing
-release is Priority 3 commit `e7bdb32d877ed58f5989366b3a19924b412dc8cd`, delivered by
-PR #64 and production workflow `38530243019`.
+Protected main now contains Priority 4 commit
+`cd444d23955f3da25439cd6ca23e8014b07322f8`, delivered by PR #66 after both protected
+Branch CI runs passed. Production workflow `38535619433` completed activation and Coop
+verification but failed a stale post-deploy assertion that expected the newly
+fail-closed inquiry endpoint to be enabled. The last fully successful production
+workflow remains `38531510238` for `c514e3c`; the Priority 4 release must not be called
+fully verified until a corrective protected workflow passes.
 
 Last independently recorded public checks returned HTTP 200 for:
 
@@ -208,12 +217,14 @@ credential were previously transport-probed. Production R-005 remains incomplete
 No production backup activation, upload, deletion, or restore was performed by the
 Priority 3 release.
 
-## Current in-progress work — Priority 4 email/forms operations
+## Priority 4 email/forms operations
 
-The working tree on `feature/email-form-operations` is intentionally dirty. This section
-describes repository work in progress, not merged or deployed behavior.
+The email/forms operations slice was committed as `babd84d`, passed two protected Branch
+CI runs, and was squash-merged through PR #66 as `cd444d2`. The production workflow
+activated that exact commit but did not complete successfully for the stale endpoint
+expectation described above.
 
-### Implemented in the working tree
+### Implemented and merged
 
 - New migration `20261014110000_email_delivery_operations` introduces a global Resend
   email-delivery policy, UTC monthly periods, and reservation lifecycle.
@@ -241,7 +252,7 @@ describes repository work in progress, not merged or deployed behavior.
   enabled/configured state, monthly limit, sent/reserved/failed counts, safe latest error,
   and channel state. It never displays recipients, keys, message contents, or submissions.
 
-### Working-tree files
+### Principal files
 
 New files:
 
@@ -256,7 +267,7 @@ behavior, Prisma/database exports, all Resend adapters, shared configuration val
 worker alert delivery, focused unit/security tests, and the disposable production
 Compose verifier.
 
-### Verification completed for this working tree
+### Verification completed for the merged candidate
 
 The complete repository candidate passes:
 
@@ -298,6 +309,32 @@ metadata. Its disposable resources were removed.
 All real Resend delivery remains off. Do not verify this work by sending a production
 message until sender-domain verification, credentials, recipient approval, free-tier
 limits, and explicit activation are confirmed.
+
+### Current staff UX and release-correction work
+
+The new `feature/staff-ux-recovery` branch starts at protected-main `cd444d2`. Its current
+working tree:
+
+- corrects the production smoke assertion to require the explicitly disabled,
+  fail-closed platform-inquiry endpoint instead of expecting real delivery;
+- centralizes the branded, no-index authentication shell for invitation, MFA, security,
+  and recovery results;
+- converts browser MFA resend/failure, recovery request/completion, invitation failure,
+  restricted recovery, and supported security-setting errors from raw JSON into bounded,
+  accessible HTML feedback while preserving JSON API behavior;
+- adds password confirmation to browser invitation and recovery forms;
+- preserves email-code, TOTP, WebAuthn, recovery-code, host/session, rate-limit, and
+  same-origin enforcement; password recovery still cannot bypass required verification;
+- marks challenge, invitation, security, and recovery pages `no-store` and keeps secrets
+  out of query notices and rendered errors;
+- adds integration and Playwright coverage for the browser flows and recovery safeguards.
+
+This branch is not yet merged or deployed. Full evidence passes: 373 unit tests (1
+skipped), 70 integration tests, 75 security tests, 10 contract tests, 5 Playwright tests,
+typecheck, lint, build, documentation, migration/Compose/workflow/workspace/site checks,
+the complete disposable production runtime, a 595-file zero-finding secret scan, and a
+zero-vulnerability production dependency audit. Protected release remains to be
+completed.
 
 ## Approved provider and operating policy
 
@@ -376,15 +413,15 @@ These are targets, not proof that every target is currently met.
 
 ## Safe continuation order
 
-1. Review, commit, and release the verified Priority 4 email/forms candidate through
-   protected CI without enabling Resend or changing provider configuration.
-2. Preserve the documented email idempotency/outbox tradeoff or resolve it in a
+1. Finish and fully verify the current `feature/staff-ux-recovery` correction and UX
+   slice, then release it through protected CI without enabling Resend.
+2. Confirm the corrected production workflow passes for the exact protected-main commit
+   and run independent readiness/public/unauthenticated-route smoke checks.
+3. Preserve the documented email idempotency/outbox tradeoff or resolve it in a
    separately reviewed durability slice; do not imply an exactly-once guarantee.
-3. Continue Priority 4 employee-facing accessibility and recovery-safe UX review.
-4. Update final release evidence after protected CI and deployment.
-5. Preserve the open production-proof gaps: authenticated ORAP analytics smoke, exact
+4. Preserve the open production-proof gaps: authenticated ORAP analytics smoke, exact
    Google-console reconciliation, real R2 copy verification, and timed isolated restore.
-6. Continue Priority 5 AI proposal pipeline, then Priority 6 dependency/maintenance
+5. Continue Priority 5 AI proposal pipeline, then Priority 6 dependency/maintenance
    review.
 
 Release safeguards:
@@ -395,10 +432,10 @@ Release safeguards:
 3. Do not weaken authentication, tenant isolation, or direct-table denial to simplify
    the release.
 
-The following continuation items are complete for this candidate: repository
-validation, operations/security/test-matrix documentation, full automated suites,
-disposable production-Compose verification, formatting, secret scan, and dependency
-audit.
+The email/forms candidate's repository validation, operations/security/test-matrix
+documentation, full automated suites, disposable production-Compose verification,
+formatting, secret scan, and dependency audit are complete. The staff UX correction still
+needs full validation and protected release.
 
 ## Useful first commands for the next session
 
@@ -413,8 +450,8 @@ npm run check:migrations
 npm run check:production-compose
 ```
 
-Do not clean, reset, checkout, or overwrite the dirty working tree. Its email/forms work
-is intentional. Inspect it before making additional changes.
+Do not clean, reset, checkout, or overwrite the dirty working tree. Its staff UX and
+release-correction work is intentional. Inspect it before making additional changes.
 
 ## Authoritative references
 

@@ -142,7 +142,7 @@ jobs:
           test "$(curl --silent --show-error --output /dev/null --write-out '%{redirect_url}' \
             --max-time 15 https://www.coopsmobiledetailingaledo.com/)" = "${origin}/"
 
-      - name: Verify OmniReach public site and contact endpoint
+      - name: Verify OmniReach public site and fail-closed inquiry endpoint
         run: |
           origin=https://omnireach.cloud
           attempts=0
@@ -161,7 +161,7 @@ jobs:
             grep -Fq '<loc>https://omnireach.cloud/</loc>'
           curl --fail --silent --show-error --max-time 15 \
             "${origin}/v1/public/platform-inquiry/config" |
-            grep -Fq '"enabled":true'
+            grep -Fq '"enabled":false'
           test "$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
             --max-time 15 "${origin}/definitely-not-a-real-page")" = 404
           test "$(curl --silent --show-error --output /dev/null --write-out '%{redirect_url}' \

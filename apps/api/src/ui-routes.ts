@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import {
   adminStylesheet,
   analyticsStylesheet,
+  renderAuthPage,
   renderCustomerDashboard,
   renderOperationsCenter,
   renderOrapAnalyticsDashboard,
@@ -78,25 +79,38 @@ export function registerUiRoutes(
       .header('Cache-Control', 'public, max-age=86400, immutable')
       .send(omnireachLogo),
   );
-  server.get<{ Querystring: { error?: string; security?: string } }>(
+  server.get<{ Querystring: { error?: string; recovery?: string; security?: string } }>(
     '/login',
     async (request, reply) =>
       reply
-        .type('text/html; charset=utf-8')
-        .send(renderLogin(request.hostname, request.query?.error, request.query?.security)),
-  );
-  server.get<{ Querystring: { email?: string; passkey?: string } }>(
-    '/mfa',
-    async (request, reply) =>
-      reply
+        .header('Cache-Control', 'no-store')
+        .header('Pragma', 'no-cache')
         .type('text/html; charset=utf-8')
         .send(
-          renderMfa(
-            readCookie(request, '__Host-omnireach_challenge') ?? '',
-            request.query?.email === '1',
-            request.query?.passkey === '1',
+          renderLogin(
+            request.hostname,
+            request.query?.error,
+            request.query?.security,
+            request.query?.recovery,
           ),
         ),
+  );
+  server.get<{
+    Querystring: { email?: string; error?: string; notice?: string; passkey?: string };
+  }>('/mfa', async (request, reply) =>
+    reply
+      .header('Cache-Control', 'no-store')
+      .header('Pragma', 'no-cache')
+      .type('text/html; charset=utf-8')
+      .send(
+        renderMfa(
+          readCookie(request, '__Host-omnireach_challenge') ?? '',
+          request.query?.email === '1',
+          request.query?.passkey === '1',
+          request.query?.error,
+          request.query?.notice,
+        ),
+      ),
   );
   server.get('/mfa/passkey.js', async (_request, reply) =>
     reply
@@ -107,16 +121,24 @@ export function registerUiRoutes(
   server.get<{ Querystring: { token?: string } }>(
     '/auth/invitations/accept',
     async (request, reply) =>
-      reply.type('text/html; charset=utf-8').send(renderInvitation(request.query?.token ?? '')),
+      reply
+        .header('Cache-Control', 'no-store')
+        .header('Pragma', 'no-cache')
+        .type('text/html; charset=utf-8')
+        .send(renderInvitation(request.query?.token ?? '')),
   );
-  server.get<{ Querystring: { token?: string } }>('/auth/recovery', async (request, reply) =>
-    reply
-      .type('text/html; charset=utf-8')
-      .send(
-        request.query?.token
-          ? renderRecoveryCompletion(request.query.token)
-          : renderRecoveryRequest(),
-      ),
+  server.get<{ Querystring: { sent?: string; token?: string } }>(
+    '/auth/recovery',
+    async (request, reply) =>
+      reply
+        .header('Cache-Control', 'no-store')
+        .header('Pragma', 'no-cache')
+        .type('text/html; charset=utf-8')
+        .send(
+          request.query?.token
+            ? renderRecoveryCompletion(request.query.token)
+            : renderRecoveryRequest(request.query?.sent === '1'),
+        ),
   );
 
   if (options.authService?.securitySettings) {
@@ -131,32 +153,38 @@ export function registerUiRoutes(
           .send(webAuthnEnrollmentBrowserScript),
       );
     }
-    server.get('/security', async (request, reply) => {
-      const currentToken = readCookie(request, '__Host-omnireach_session');
-      const [settings, sessions] = await Promise.all([
-        options.authService?.securitySettings?.(currentToken, request.hostname),
-        options.authService?.listSessions(currentToken, request.hostname) ?? [],
-      ]);
-      if (!settings) return reply.code(303).redirect('/login');
-      const platformActor = await options.resolvePlatformActor?.(request);
-      const platformView = platformActor !== undefined;
-      if (settings.webauthnEnrollmentAvailable) {
-        reply.header(
-          'Content-Security-Policy',
-          "default-src 'none'; img-src 'self'; script-src 'self'; connect-src 'self'; style-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
-        );
-      }
-      return reply
-        .type('text/html; charset=utf-8')
-        .send(
-          renderSecuritySettings(
-            settings,
-            platformView,
-            platformActor ? orapNavigation(platformActor) : undefined,
-            sessions,
-          ),
-        );
-    });
+    server.get<{ Querystring: { error?: string; notice?: string } }>(
+      '/security',
+      async (request, reply) => {
+        const currentToken = readCookie(request, '__Host-omnireach_session');
+        const [settings, sessions] = await Promise.all([
+          options.authService?.securitySettings?.(currentToken, request.hostname),
+          options.authService?.listSessions(currentToken, request.hostname) ?? [],
+        ]);
+        if (!settings) return reply.code(303).redirect('/login');
+        const platformActor = await options.resolvePlatformActor?.(request);
+        const platformView = platformActor !== undefined;
+        if (settings.webauthnEnrollmentAvailable) {
+          reply.header(
+            'Content-Security-Policy',
+            "default-src 'none'; img-src 'self'; script-src 'self'; connect-src 'self'; style-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+          );
+        }
+        return reply
+          .header('Cache-Control', 'no-store')
+          .header('Pragma', 'no-cache')
+          .type('text/html; charset=utf-8')
+          .send(
+            renderSecuritySettings(
+              settings,
+              platformView,
+              platformActor ? orapNavigation(platformActor) : undefined,
+              sessions,
+              securitySettingsNotice(request.query),
+            ),
+          );
+      },
+    );
     server.get<{ Querystring: { action?: string } }>('/security/email', async (request, reply) => {
       const settings = await options.authService?.securitySettings?.(
         readCookie(request, '__Host-omnireach_session'),
@@ -165,6 +193,8 @@ export function registerUiRoutes(
       if (!settings) return reply.code(303).redirect('/login');
       const action = request.query?.action === 'disable' ? 'disable' : 'enable';
       return reply
+        .header('Cache-Control', 'no-store')
+        .header('Pragma', 'no-cache')
         .type('text/html; charset=utf-8')
         .send(
           renderEmailPolicyVerification(
@@ -878,7 +908,12 @@ export function registerUiRoutes(
   });
 }
 
-function renderLogin(hostname: string, error?: string, security?: string): string {
+function renderLogin(
+  hostname: string,
+  error?: string,
+  security?: string,
+  recovery?: string,
+): string {
   const errorNotice =
     error === 'credentials'
       ? '<div class="notice error" role="alert">The email address or password was not accepted. Check your details and try again.</div>'
@@ -887,8 +922,12 @@ function renderLogin(hostname: string, error?: string, security?: string): strin
     security === 'updated'
       ? '<div class="notice" role="status">Your security settings were updated. Sign in again to continue.</div>'
       : '';
+  const recoveryNotice =
+    recovery === 'complete'
+      ? '<div class="notice" role="status">Your password was updated. Sign in with the new password; any required second verification step still applies.</div>'
+      : '';
   return renderAuthPage({
-    content: `${errorNotice}${securityNotice}<form method="post" action="/auth/login"><div class="field"><label for="email">Email address</label><input id="email" name="email" type="email" autocomplete="username" required autofocus></div><div class="field"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required></div><button type="submit">Sign in securely</button></form><p class="auth-card-footer"><a href="/auth/recovery">Forgot your password?</a></p>`,
+    content: `${errorNotice}${securityNotice}${recoveryNotice}<form method="post" action="/auth/login"><div class="field"><label for="email">Email address</label><input id="email" name="email" type="email" autocomplete="username" required autofocus></div><div class="field"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required></div><button type="submit">Sign in securely</button></form><p class="auth-card-footer"><a href="/auth/recovery">Forgot your password?</a></p>`,
     description: `Continue to the secure administration workspace for ${escapeHtml(hostname)}.`,
     eyebrow: 'Staff access',
     heading: 'Welcome back',
@@ -900,15 +939,28 @@ function renderMfa(
   challengeId: string,
   emailAvailable: boolean,
   passkeyAvailable: boolean,
+  error?: string,
+  notice?: string,
 ): string {
+  const methodState = `<input name="emailAvailable" type="hidden" value="${emailAvailable ? '1' : '0'}"><input name="passkeyAvailable" type="hidden" value="${passkeyAvailable ? '1' : '0'}">`;
+  const errorNotice =
+    error === 'invalid'
+      ? '<div class="notice error" role="alert">That verification could not be accepted. Check the code and try again before the challenge expires.</div>'
+      : error === 'cooldown'
+        ? '<div class="notice error" role="alert">A new code cannot be sent yet. Wait briefly, then try again.</div>'
+        : '';
+  const statusNotice =
+    notice === 'sent'
+      ? '<div class="notice" role="status">A new verification code was requested. Only the newest unexpired code can be used.</div>'
+      : '';
   const resend = emailAvailable
-    ? `<form method="post" action="/auth/mfa/email/resend"><input name="challengeId" type="hidden" value="${escapeHtml(challengeId)}"><button class="secondary" type="submit">Send a new email code</button></form>`
+    ? `<form method="post" action="/auth/mfa/email/resend"><input name="challengeId" type="hidden" value="${escapeHtml(challengeId)}">${methodState}<button class="secondary" type="submit">Send a new email code</button><p class="help">Email codes expire after five minutes. Resends and attempts are limited.</p></form>`
     : '';
   const passkey = passkeyAvailable
-    ? `<input id="webauthn-challenge-id" type="hidden" value="${escapeHtml(challengeId)}"><button class="secondary" id="passkey-sign-in" type="button">Use a passkey</button><p id="passkey-sign-in-status" role="status" aria-live="polite"></p><script src="/mfa/passkey.js" defer></script>`
+    ? `<input id="webauthn-challenge-id" type="hidden" value="${escapeHtml(challengeId)}"><button class="secondary" id="passkey-sign-in" type="button">Verify with Windows Hello or security key</button><p id="passkey-sign-in-status" role="status" aria-live="polite"></p><script src="/mfa/passkey.js" defer></script>`
     : '';
   return renderAuthPage({
-    content: `<form method="post" action="/auth/mfa/verify"><input name="challengeId" type="hidden" value="${escapeHtml(challengeId)}"><div class="field"><label for="code">Verification or recovery code</label><input id="code" name="code" autocomplete="one-time-code" inputmode="numeric" required${passkeyAvailable ? '' : ' autofocus'}></div><button type="submit">Verify and continue</button></form>${passkey}${resend}`,
+    content: `${errorNotice}${statusNotice}<form method="post" action="/auth/mfa/verify"><input name="challengeId" type="hidden" value="${escapeHtml(challengeId)}">${methodState}<div class="field"><label for="code">Verification or recovery code</label><input id="code" name="code" autocomplete="one-time-code" autocapitalize="characters" maxlength="32" spellcheck="false" aria-describedby="code-help" required${passkeyAvailable ? '' : ' autofocus'}><p class="help" id="code-help">Enter an 8-digit email code, 6-digit authenticator code, or one unused recovery code.</p></div><button type="submit">Verify and continue</button></form>${passkey}${resend}`,
     description:
       'Enter your 8-digit email code, 6-digit authenticator code, or alphanumeric recovery code.',
     eyebrow: 'Two-step verification',
@@ -937,6 +989,7 @@ function renderSecuritySettings(
   platformView = false,
   navigation?: readonly OrapNavigationItem[],
   rawSessions: unknown[] = [],
+  notice?: { kind?: 'error' | 'success'; message: string },
 ): string {
   const action = settings.emailCodeEnabled ? 'disable' : 'enable';
   const verb = settings.emailCodeEnabled ? 'Disable' : 'Enable';
@@ -996,10 +1049,14 @@ function renderSecuritySettings(
       eyebrow: 'Account protection',
       heading: 'Security settings',
       ...(navigation ? { navigation } : {}),
+      ...(notice ? { notice } : {}),
       title: 'Security settings',
     });
   }
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><meta name="theme-color" content="#0b1820"><link rel="icon" type="image/png" href="/assets/omnireach-logo.png"><link rel="stylesheet" href="/assets/admin.css?v=orap-3"><title>Security settings | OmniReach</title></head><body><a class="skip-link" href="#main">Skip to content</a><main class="content" id="main"><div class="page-head"><div><p class="eyebrow">Account protection</p><h1>Security settings</h1></div></div>${content}<p><a class="button secondary" href="/">Return to dashboard</a></p></main></body></html>`;
+  const noticeMarkup = notice
+    ? `<div class="notice${notice.kind === 'error' ? ' error' : ''}" role="${notice.kind === 'error' ? 'alert' : 'status'}">${escapeHtml(notice.message)}</div>`
+    : '';
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><meta name="theme-color" content="#0b1820"><link rel="icon" type="image/png" href="/assets/omnireach-logo.png"><link rel="stylesheet" href="/assets/admin.css?v=orap-4"><title>Security settings | OmniReach</title></head><body><a class="skip-link" href="#main">Skip to content</a><main class="content" id="main"><div class="page-head"><div><p class="eyebrow">Account protection</p><h1>Security settings</h1></div></div>${noticeMarkup}${content}<p><a class="button secondary" href="/">Return to dashboard</a></p></main></body></html>`;
 }
 
 function renderEmailPolicyVerification(challengeId: string, action: 'disable' | 'enable'): string {
@@ -1025,7 +1082,7 @@ function renderRestrictedRecovery(): string {
 
 function renderInvitation(token: string): string {
   return renderAuthPage({
-    content: `<form method="post" action="/auth/invitations/accept"><input name="token" type="hidden" value="${escapeHtml(token)}"><div class="field"><label for="displayName">Your name</label><input id="displayName" name="displayName" maxlength="160" autocomplete="name" required autofocus></div><div class="field"><label for="password">Create a password</label><input id="password" name="password" type="password" minlength="12" autocomplete="new-password" required><p class="help">Use at least 12 characters and a unique password.</p></div><button type="submit">Accept invitation</button></form>`,
+    content: `<form method="post" action="/auth/invitations/accept"><input name="token" type="hidden" value="${escapeHtml(token)}"><div class="field"><label for="displayName">Your name</label><input id="displayName" name="displayName" maxlength="160" autocomplete="name" required autofocus></div><div class="field"><label for="password">Create a password</label><input id="password" name="password" type="password" minlength="12" maxlength="128" autocomplete="new-password" required aria-describedby="invitation-password-help"><p class="help" id="invitation-password-help">Use at least 12 characters and a unique password.</p></div><div class="field"><label for="confirmPassword">Confirm password</label><input id="confirmPassword" name="confirmPassword" type="password" minlength="12" maxlength="128" autocomplete="new-password" required></div><button type="submit">Accept invitation</button></form>`,
     description: 'Create the secure credentials used for your OmniReach account.',
     eyebrow: 'Account invitation',
     heading: 'Accept your invitation',
@@ -1033,10 +1090,12 @@ function renderInvitation(token: string): string {
   });
 }
 
-function renderRecoveryRequest(): string {
+function renderRecoveryRequest(sent = false): string {
+  const notice = sent
+    ? '<div class="notice" role="status">If that address belongs to an active account, recovery instructions will arrive shortly.</div>'
+    : '';
   return renderAuthPage({
-    content:
-      '<form method="post" action="/auth/recovery"><div class="field"><label for="email">Email address</label><input id="email" name="email" type="email" autocomplete="email" required autofocus></div><button type="submit">Send recovery link</button></form><p class="auth-card-footer"><a href="/login">Return to sign in</a></p>',
+    content: `${notice}<form method="post" action="/auth/recovery"><div class="field"><label for="email">Email address</label><input id="email" name="email" type="email" autocomplete="email" required autofocus></div><button type="submit">Send recovery link</button></form><p class="auth-card-footer"><a href="/login">Return to sign in</a></p>`,
     description:
       'If the address belongs to an active account, we will send a time-limited recovery link.',
     eyebrow: 'Account recovery',
@@ -1047,8 +1106,8 @@ function renderRecoveryRequest(): string {
 
 function renderRecoveryCompletion(token: string): string {
   return renderAuthPage({
-    content: `<form method="post" action="/auth/recovery/complete"><input name="token" type="hidden" value="${escapeHtml(token)}"><div class="field"><label for="newPassword">New password</label><input id="newPassword" name="newPassword" type="password" minlength="12" autocomplete="new-password" required autofocus><p class="help">Use at least 12 characters and a password you have not used here before.</p></div><button type="submit">Update password</button></form>`,
-    description: 'Choose a new unique password to regain access to your account.',
+    content: `<div class="surface-note">Changing your password revokes existing sessions and password-reset links. It does not bypass any required second verification step.</div><form method="post" action="/auth/recovery/complete"><input name="token" type="hidden" value="${escapeHtml(token)}"><div class="field"><label for="newPassword">New password</label><input id="newPassword" name="newPassword" type="password" minlength="12" maxlength="128" autocomplete="new-password" required autofocus aria-describedby="recovery-password-help"><p class="help" id="recovery-password-help">Use at least 12 characters and a password you have not used here before.</p></div><div class="field"><label for="confirmPassword">Confirm new password</label><input id="confirmPassword" name="confirmPassword" type="password" minlength="12" maxlength="128" autocomplete="new-password" required></div><button type="submit">Update password</button></form>`,
+    description: 'Choose a new unique password to regain access safely.',
     eyebrow: 'Account recovery',
     heading: 'Choose a new password',
     title: 'Choose a new password',
@@ -1066,14 +1125,30 @@ function renderForbidden(): string {
   });
 }
 
-function renderAuthPage(input: {
-  content: string;
-  description: string;
-  eyebrow: string;
-  heading: string;
-  title: string;
-}): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><meta name="theme-color" content="#0b1820"><link rel="icon" type="image/png" href="/assets/omnireach-logo.png"><link rel="stylesheet" href="/assets/admin.css?v=orap-3"><title>${escapeHtml(input.title)} | OmniReach</title></head><body><a class="skip-link" href="#main">Skip to content</a><div class="auth-page"><aside class="auth-brand-panel" aria-label="OmniReach"><a class="auth-brand" href="/login"><img class="brand-mark" src="/assets/omnireach-logo.png" alt="" width="48" height="48"><span class="brand-copy"><strong>OmniReach</strong><small>Administration platform</small></span></a><div class="auth-brand-copy"><p class="eyebrow">Agency-first website operations</p><h2>Run every customer site with confidence.</h2><p>Securely manage content, automation, publishing, access, and operational health from one staff workspace.</p></div><p class="auth-meta">Protected by host-bound sessions and two-step verification.</p></aside><div class="auth-workspace"><main class="auth-card" id="main"><p class="eyebrow">${escapeHtml(input.eyebrow)}</p><h1>${escapeHtml(input.heading)}</h1><p class="lede">${input.description}</p>${input.content}</main></div></div></body></html>`;
+function securitySettingsNotice(query: {
+  error?: string;
+  notice?: string;
+}): { kind?: 'error' | 'success'; message: string } | undefined {
+  if (query.error === 'not-allowed') {
+    return {
+      kind: 'error',
+      message:
+        'That security change was not allowed. Check your password and account safeguards, then try again.',
+    };
+  }
+  if (query.error === 'invalid') {
+    return {
+      kind: 'error',
+      message: 'Check every required security field and try again.',
+    };
+  }
+  if (query.notice === 'passkey-renamed') {
+    return { message: 'The passkey name was updated.' };
+  }
+  if (query.notice === 'session-revoked') {
+    return { message: 'The selected session was revoked.' };
+  }
+  return undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
