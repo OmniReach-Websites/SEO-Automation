@@ -4,7 +4,7 @@
 
 The encrypted archive contains a PostgreSQL custom-format dump, customer uploads/media, published artifact manifests and the non-secret configuration inventory needed to map a release. Git retains code/templates/manifests. Caches, dependencies, container layers, plaintext secrets and provider credentials are excluded.
 
-`backup-cli.mjs` supports `backup`, `list`, `verify`, `restore-to-disposable` and `prune`. Archives use AES-256-GCM plus member/envelope hashes before S3-compatible transfer. The S3 adapter supports a dedicated endpoint/bucket/prefix and scoped credentials. Verification downloads and authenticates ciphertext; restore refuses a production target and performs path-containment checks. Pruning is dry-run by default and production retention cannot be configured below 7 daily and 4 weekly points.
+`backup-cli.mjs` supports `backup`, `list`, `verify`, `restore-to-disposable`, `prune`, and a fixed-purpose failure-report command. Archives use AES-256-GCM plus member/envelope hashes before S3-compatible transfer. The S3 adapter supports a dedicated endpoint/bucket/prefix and scoped credentials. Verification downloads and authenticates ciphertext; restore refuses a production target and performs path-containment checks. Pruning is dry-run by default and production retention cannot be configured below 3 daily and 1 weekly recovery point.
 
 Example operator sequence (secret values stay in the approved environment/secret mounts):
 
@@ -53,14 +53,14 @@ streaming archive format before raising limits beyond safe host headroom.
 Retention is dry-run unless `--apply` is supplied. Every applied run requires
 `--audit-log <protected-jsonl>`. Manual runs additionally require the owner's non-secret
 `--authorization-ref`; automatic runs use `--automated-retention` and refuse anything
-other than 7 daily and 4 weekly copies. Holds and active recovery points are preserved
+other than 3 daily and 1 weekly recovery point. Holds and active recovery points are preserved
 even when they fall outside the ordinary count. Local and off-site deletion timestamps
 are separate; the database marks a recovery point pruned only when all recorded copies
 have been deleted.
 
 ## Retention, freshness and alerts
 
-Target cadence is daily, 7 daily plus 4 weekly recovery points, daily integrity verification and monthly full isolated restore. The 24-hour RPO and 8-hour RTO are planning targets until measured by a timed production-data-volume drill. Backup failure, off-site upload/verification failure, stale latest recovery point and restore failure create operational alerts without secret/object contents.
+Target cadence is daily, 3 daily plus 1 weekly recovery point, daily integrity verification and a monthly full isolated restore. The 24-hour RPO and 8-hour RTO are planning targets until measured by a timed production-data-volume drill. Backup failure, off-site upload/verification failure, stale latest recovery point and restore failure create deduplicated ORAP operational alerts without secret/object contents. Critical email delivery remains independently fail-safe and must never affect website availability.
 
 ## Production service installation
 
@@ -81,10 +81,12 @@ pwsh -File tooling/configure-r2-backup.ps1
 
 The provisioner transfers only those four settings over the authenticated SSH session.
 The VPS installer writes the R2 pair into root-owned secret files, generates the
-independent AES-256 backup key directly on the VPS when absent, strips any backup-secret
-keys from `production.env`, installs the systemd service/timer, and requests the first
-backup. It never prints secret values. Use `-SkipFirstBackup` only when installing the
-timer before a separately scheduled first run.
+independent AES-256 backup key and disposable-restore database password directly on the
+VPS when absent, strips backup-secret keys from `production.env`, installs the systemd
+backup and restore-drill services/timers, requests the first backup, and then restores
+that downloaded R2 object into an isolated temporary database. It never prints secret
+values. Use `-SkipFirstBackup` only when installing the timers before a separately
+scheduled first run.
 
 The timer runs daily at 02:30 America/Chicago with up to 15 minutes of jitter and
 catch-up after downtime. Each successful run:
@@ -94,16 +96,23 @@ catch-up after downtime. Each successful run:
 2. encrypts and verifies the local archive;
 3. uploads archive and manifest to the private R2 prefix;
 4. downloads and authenticates the uploaded archive as a separate-copy check; and
-5. applies only the approved automated 7-daily/4-weekly retention selector locally and
+5. applies only the approved automated 3-daily/1-weekly retention selector locally and
    off-site, with a protected deletion audit log.
+
+The restore drill runs on the first Sunday of each month at 03:15 America/Chicago, within
+the approved maintenance window, with up to 15 minutes of jitter. It starts a dedicated
+PostgreSQL 16 container on an internal-only Docker network, downloads the newest archive
+from R2, authenticates and restores it into tmpfs, verifies representative table and RLS
+policy counts, records elapsed milliseconds, and removes the container. It never targets
+the production database or persistent production volume.
 
 Inspect status without reading any secret file:
 
 ```text
 systemctl status omnireach-backup.timer --no-pager
 systemctl status omnireach-backup.service --no-pager
-systemctl list-timers omnireach-backup.timer --no-pager
-journalctl -u omnireach-backup.service --since today --no-pager
+systemctl list-timers omnireach-backup.timer omnireach-restore-drill.timer --no-pager
+journalctl -u omnireach-backup.service -u omnireach-restore-drill.service --since today --no-pager
 ```
 
 The service output is intentionally limited to non-secret completion metadata. Do not
@@ -112,19 +121,19 @@ into tickets, chat, logs, or Git.
 
 ## Cost worksheet
 
-Record compressed encrypted database size, media/artifact size, daily change rate, 7+4 retained bytes, monthly requests/egress and provider price at approval time. Add a safety margin and compare against the proposed $5 monthly ceiling. The owner authorized and created the dedicated R2 bucket and credential on 2026-10-13; this does not authorize paid overages, a production schedule, or manual backup deletion.
+Record compressed encrypted database size, media/artifact size, daily change rate, 3+1 retained bytes, monthly requests/egress and provider price at approval time. The runtime fails closed at an 8 GiB total-prefix ceiling, 512 MiB per archive/source tier, 50 R2 requests per operation, 5 listing pages, 50 listed objects, and 1 MiB of listing metadata. These conservative application caps reduce free-tier overrun risk but are not a billing guarantee. The owner authorized and created the dedicated R2 bucket and credential on 2026-10-13; manual deletion still requires owner authorization.
 
 ## Production activation evidence
 
 - [x] dedicated private R2 bucket and least-privilege object-list/get/put/delete credential scoped to that bucket; application-side key validation restricts operations to `omnireach/`;
 - [x] one non-backup transport probe uploaded, downloaded and checksum-verified, listed, and removed successfully;
 - [ ] encryption key and R2 credential are installed as separate host-only secret files;
-- [ ] the host-only systemd timer is enabled and a failure is observable in ORAP;
-- first upload verifies from a separate download;
-- a monthly disposable restore verifies migrations, tenant isolation, counts, media links and a known published artifact;
-- measured RPO/RTO and cost are recorded before the capability is called Live.
+- [ ] both host-only systemd timers are enabled and a failure is observable in ORAP;
+- [ ] first upload verifies from a separate download;
+- [ ] a disposable restore verifies database contents and tenant-isolation policies;
+- [ ] measured restoration time and retained storage are recorded before the capability is called Live.
 
 The bucket uses Standard storage in Cloudflare's provider-selected WNAM location. It has
 no public `r2.dev` exposure, custom domain, or CORS policy. Do not add a blanket
-age-based deletion lifecycle: the application retention selector must preserve seven
-daily and four weekly recovery points before any automated deletion is enabled.
+age-based deletion lifecycle: the application retention selector must preserve three
+daily and one weekly recovery point before any automated deletion is enabled.

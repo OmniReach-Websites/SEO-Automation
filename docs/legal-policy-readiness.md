@@ -11,7 +11,7 @@ This is an operational mapping for owner/legal review, not legal advice and not 
 | AI provider            | disabled by default, approved facts only, sanitized evaluation metadata, proposal review                                          | provider terms/DPA, disclosure, retention and approved content categories     |
 | Customer media/content | tenant/site-scoped, versioned publishing and isolated storage paths                                                               | ownership/license, export, deletion and post-cancellation retention           |
 | Logs/audits            | redacted operational logs; immutable security/change evidence                                                                     | final retention and legal/security hold rules                                 |
-| Backups                | encrypted 7-daily/4-weekly target; destructive pruning guarded                                                                    | approved retention, deletion propagation and incident/legal holds             |
+| Backups                | encrypted 3-daily/1-weekly target; destructive pruning guarded                                                                    | approved retention, deletion propagation and incident/legal holds             |
 
 Drafts requiring professional review: privacy notice, website/customer terms, service commitments/SLA wording, acceptable-use/content rights, form consent, Google permission notice, AI processing disclosure, deletion/export procedure, incident notice and cancellation/handoff terms.
 

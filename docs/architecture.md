@@ -121,7 +121,7 @@ Trust boundaries:
 | Build artifacts                 | Versioned artifact store                         | Immutable checksums and active pointer                   | Atomic activation/rollback                        |
 | Jobs/operational logs           | PostgreSQL/Redis as appropriate                  | 90-day detailed jobs; 30-day operational logs by default | Never source of published truth                   |
 | Audit records                   | PostgreSQL append-oriented records               | 12-month default, configurable holds                     | Never silently rewritten                          |
-| Backups                         | Local plus encrypted off-server store            | 7 daily, 4 weekly; monthly restore test                  | Recovery only; never committed                    |
+| Backups                         | Local plus encrypted off-server store            | 3 daily, 1 weekly; monthly restore test                  | Recovery only; never committed                    |
 
 Lifecycle:
 

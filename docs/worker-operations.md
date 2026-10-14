@@ -21,6 +21,7 @@ static site. Investigate failed/stuck jobs in ORAP/DB before authorized replayâ€
 Redis or job rows manually. For publisher failure, preserve the pointer, fix the input,
 and replay; restore the prior revision/artifact if needed.
 
-AIO/OpenAI remains disabled. Backup/metrics jobs are cancelled because no approved
-production handler is configured. External alert email remains `Waiting`; ORAP/database
-alerts are authoritative until delivery is proven.
+AIO/OpenAI remains disabled. Backups run through the separately locked systemd/Compose
+operation rather than the tenant job queues; production activation was authorized on
+2026-10-14 and remains evidence-based. External alert email remains fail-safe and
+separately gated; ORAP/database alerts are authoritative until delivery is proven.

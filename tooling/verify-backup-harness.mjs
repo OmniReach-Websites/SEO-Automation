@@ -154,7 +154,7 @@ try {
     !corruptRejected ||
     !truncatedRejected ||
     !nonemptyRestoreRejected ||
-    retention.keep.length !== 13 ||
+    retention.keep.length !== 6 ||
     customRetention.keep.length !== 7 ||
     !sourceLimitRejected ||
     !archiveLimitRejected ||

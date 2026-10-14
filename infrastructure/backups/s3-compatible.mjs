@@ -12,6 +12,7 @@ export class S3CompatibleBackupStore {
   #maximumListResponseBytes;
   #maximumObjectBytes;
   #maximumRequests;
+  #maximumTotalBytes;
   #prefix;
   #region;
   #requestCount = 0;
@@ -55,12 +56,24 @@ export class S3CompatibleBackupStore {
       5 * 1024 * 1024 * 1024,
     );
     this.#maximumRequests = boundedInteger(options.maximumRequests ?? 100, 1, 1_000);
+    this.#maximumTotalBytes = boundedInteger(
+      options.maximumTotalBytes ?? 8 * 1024 * 1024 * 1024,
+      1,
+      1024 * 1024 * 1024 * 1024,
+    );
   }
 
   async upload(localPath) {
     const metadata = await stat(localPath);
     if (!metadata.isFile() || metadata.size > this.#maximumObjectBytes) {
       throw new Error('Off-site backup object exceeds the configured size limit');
+    }
+    const retainedBytes = (await this.list()).reduce((total, object) => total + object.size, 0);
+    if (
+      !Number.isSafeInteger(retainedBytes) ||
+      retainedBytes + metadata.size > this.#maximumTotalBytes
+    ) {
+      throw new Error('Off-site backup storage budget would be exceeded');
     }
     const body = await readFile(localPath);
     const key = this.keyFor(basename(localPath));

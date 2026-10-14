@@ -102,7 +102,22 @@ try {
   } catch {
     requestBudgetRejected = true;
   }
-  if (!objectBudgetRejected || !requestBudgetRejected) {
+  let totalStorageBudgetRejected = false;
+  try {
+    await new S3CompatibleBackupStore({
+      accessKeyId: 'fixture-access-key',
+      bucket: 'fixture-bucket',
+      endpoint: 'https://fixture.r2.example',
+      fetchImpl,
+      maximumTotalBytes: 4,
+      prefix: 'omnireach/production',
+      region: 'auto',
+      secretAccessKey: 'fixture-secret-key',
+    }).upload(source);
+  } catch {
+    totalStorageBudgetRejected = true;
+  }
+  if (!objectBudgetRejected || !requestBudgetRejected || !totalStorageBudgetRejected) {
     throw new Error('Off-site backup budgets did not fail closed');
   }
   objects.set('omnireach/production/oversized.orbk', Buffer.from('oversized'));
@@ -151,6 +166,7 @@ try {
       ok: true,
       requestBudgetRejected,
       streamedDownloadBudgetRejected,
+      totalStorageBudgetRejected,
       uploadVerified: true,
     }),
   );

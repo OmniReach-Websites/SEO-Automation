@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the OmniReach isolated restore drill monthly
+
+[Timer]
+OnCalendar=Sun *-*-01..07 03:15:00 America/Chicago
+Persistent=true
+RandomizedDelaySec=15m
+Unit=omnireach-restore-drill.service
+
+[Install]
+WantedBy=timers.target

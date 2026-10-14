@@ -241,8 +241,8 @@ work, `WAITING_FOR_OWNER` needs a human decision/credential, and
   object/list-response work, repeated-token detection, and streaming response limits
   even when a provider omits `Content-Length`.
 - Retention is dry-run by default. Manual application requires an owner authorization
-  reference and protected JSONL audit; automatic application is fixed to 7 daily and 4
-  weekly points. Active/held points survive outside those counts, and archive data is
+  reference and protected JSONL audit; automatic application is fixed to 3 daily and 1
+  weekly point. Active/held points survive outside those counts, and archive data is
   removed before its manifest.
 - Added restricted PostgreSQL status recording for completed backups, integrity checks,
   copy-specific prune state, and restore drills. Local and off-site deletion timestamps

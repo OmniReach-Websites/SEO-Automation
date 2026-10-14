@@ -15,10 +15,11 @@ The initial VPS can host persistent media, but storage must remain portable, iso
 - Validate MIME/signature, decoded dimensions, size, filename/path, and SVG policy. Originals are private unless explicitly published.
 - Runtime uploads, originals, backups, and unsanitized exports never enter Git.
 - Back up PostgreSQL/content/media/manifests and necessary platform configuration daily,
-  encrypted; retain 7 daily and 4 weekly recovery points; maintain an encrypted off-server
+  encrypted; retain 3 daily and 1 weekly recovery points; maintain an encrypted off-server
   copy; perform a full isolated restore monthly.
-- Use Cloudflare R2 as the proposed production off-server target under a proposed $5 USD
-  monthly storage budget. Encrypt before upload, use least-privilege credentials, and keep
+- Use Cloudflare R2 as the selected production off-server target under a $5 USD monthly
+  ceiling, while enforcing conservative controls intended to remain within the Standard
+  free tier. Encrypt before upload, use least-privilege credentials, and keep
   encryption keys separate from storage credentials.
 - Use a distinct least-privilege R2 API token with the configured Cloudflare account ID;
   do not broaden or reuse the zone DNS token. The bucket name is
@@ -34,18 +35,16 @@ The initial VPS can host persistent media, but storage must remain portable, iso
 
 ## Consequences
 
-- R-005 supplies Cloudflare R2 as the proposed off-server provider and $5 USD as the
-  proposed monthly storage budget, plus owner key custody and deletion authority. The
-  proposal does not authorize account creation or spending.
-- During development only, R-005 permits a future separately authorized local profile at
-  `/opt/backups/omnireach/`: daily compressed encrypted archives, 3 daily and 2 weekly
-  recovery points, integrity validation, monthly restore support, and a manual weekly
-  owner download over SFTP/SCP. This is not a production exception: it does not satisfy
-  the 24-hour RPO or automated encrypted off-server-copy requirement.
+- R-005 supplies Cloudflare R2 as the selected off-server provider and $5 USD as the
+  monthly ceiling, plus owner key custody and deletion authority. The 2026-10-14
+  activation authorizes configuration but not paid overages.
+- The earlier development-only local profile is superseded by the authorized production
+  activation. Host-local encrypted archives remain at `/opt/backups/omnireach/`, but the
+  same 3-daily/1-weekly policy is enforced on local and automated off-server copies.
 - The owner is the sole encryption-key custodian and manual-deletion approver. Manual
   deletions require an audit record. Automated deletion is allowed only when enforcing
-  the approved production retention set of 7 daily and 4 weekly recovery points; the
-  development 3-daily/2-weekly profile therefore cannot prune automatically.
+  the owner-approved production retention set of 3 daily and 1 weekly recovery points.
+  This supersedes the earlier 7-daily/4-weekly proposal as of 2026-10-14.
 - Reference-aware delayed garbage collection is required.
 - Backup status and restore-test date are operational health signals.
 - Production completion requires automated upload satisfying the 24-hour RPO and evidence

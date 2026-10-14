@@ -3,6 +3,7 @@ Description=OmniReach encrypted PostgreSQL and content backup
 Requires=docker.service
 After=docker.service network-online.target
 Wants=network-online.target
+OnFailure=omnireach-backup-failure.service
 
 [Service]
 Type=oneshot

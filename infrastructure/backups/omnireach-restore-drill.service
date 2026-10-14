@@ -1,0 +1,33 @@
+[Unit]
+Description=OmniReach isolated backup restoration drill
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+OnFailure=omnireach-backup-failure.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+ExecStart=/opt/servers/omnireach/current/infrastructure/backups/run-host-restore-drill.sh
+TimeoutStartSec=2h
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+ReadWritePaths=/opt/backups/omnireach /run/lock
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictRealtime=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

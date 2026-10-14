@@ -746,7 +746,7 @@ Enforce separate personal accounts, no shared platform credentials; two-person r
 
 ### 19.1 Minimum initial plan
 
-- Nightly compressed PostgreSQL logical backup, tested for completeness; keep seven daily versions locally subject to disk headroom.
+- Nightly compressed PostgreSQL logical backup, tested for completeness; retain three daily and one weekly recovery point locally and off-server, subject to verified capacity.
 - Backup original customer uploads and site asset manifests (incremental/versioned if possible).
 - GitHub provides code history, **not** customer runtime data recovery.
 - Record backup times, checksums, sizes and alert on failure or missing backups.

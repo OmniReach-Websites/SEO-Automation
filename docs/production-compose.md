@@ -248,8 +248,8 @@ its AOF and recovery behavior must still be validated. Include the non-secret pr
 configuration and release/schema identifiers. Never include build caches or credentials
 in the data archive.
 
-Encrypt before off-server transfer, record checksums and required members, retain 7 daily
-and 4 weekly recovery points, and keep encryption-key custody separate from R2 storage
+Encrypt before off-server transfer, record checksums and required members, retain 3 daily
+and 1 weekly recovery point, and keep encryption-key custody separate from R2 storage
 credentials. R-005 remains incomplete until automated off-server transfer and a real
 isolated restore have passed. Manual deletion still requires owner authorization.
 
