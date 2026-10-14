@@ -62,6 +62,7 @@
     "verify:offsite-backup": "node tooling/verify-offsite-backup.mjs",
     "verify:queue-runtime": "node --experimental-transform-types tooling/verify-queue-runtime.ts",
     "verify:ai-budget": "node --experimental-transform-types tooling/verify-ai-budget.ts",
+    "verify:ai-proposal-benchmark": "node --experimental-transform-types tooling/verify-ai-proposal-benchmark.ts",
     "verify:plan-quota": "node --experimental-transform-types tooling/verify-plan-quota.ts",
     "verify:caddy": "node tooling/verify-caddy.mjs",
     "verify:g30-observer": "node tooling/verify-g30-observer.mjs",

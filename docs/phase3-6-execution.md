@@ -10,12 +10,12 @@ Status vocabulary is strict: **Implemented** means code and local evidence exist
 
 ## Outcome
 
-| Phase                     | Repository result                                       | Production state                                                                                                   | Evidence                                                                                                                       |
-| ------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
-| 3 — security/recovery     | Implemented and locally verified                        | Private R2 transport is verified; VPS secret installation, schedule, retention, alerts, and restore drill are TODO | `npm test`, `npm run test:security`, `npm run verify:offsite-backup`; `security-test-matrix.md`; `key-rotation-break-glass.md` |
-| 4 — Google/reporting      | Implemented and locally verified with provider fixtures | Credentials/callback approved; live property connection and comparison are TODO                                    | `google-integration-runbook.md`; Google unit/schema/route tests; customer report tests                                         |
-| 5 — controlled AI         | Implemented and locally verified; provider defaults off | Model and $5/site ceiling selected; live job wiring, price record, benchmark and activation are TODO               | `ai-automation-readiness.md`; AI evaluation, policy, budget and proposal tests                                                 |
-| 6 — commercial/onboarding | Implemented controls and generic tooling                | Final pricing/legal decisions and an approved real second customer are TODO                                        | `commercial-readiness.md`; `legal-policy-readiness.md`; `onboarding-runbook.md`                                                |
+| Phase                     | Repository result                                                            | Production state                                                                                                   | Evidence                                                                                                                       |
+| ------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| 3 — security/recovery     | Implemented and locally verified                                             | Private R2 transport is verified; VPS secret installation, schedule, retention, alerts, and restore drill are TODO | `npm test`, `npm run test:security`, `npm run verify:offsite-backup`; `security-test-matrix.md`; `key-rotation-break-glass.md` |
+| 4 — Google/reporting      | Implemented and locally verified with provider fixtures                      | Credentials/callback approved; live property connection and comparison are TODO                                    | `google-integration-runbook.md`; Google unit/schema/route tests; customer report tests                                         |
+| 5 — controlled AI         | Durable path and synthetic benchmark locally verified; provider defaults off | Model and $5/site ceiling selected; paid-provider benchmark, explicit activation and production smoke are TODO     | `ai-automation-readiness.md`; AI runtime, evaluation, policy, budget and proposal tests                                        |
+| 6 — commercial/onboarding | Implemented controls and generic tooling                                     | Final pricing/legal decisions and an approved real second customer are TODO                                        | `commercial-readiness.md`; `legal-policy-readiness.md`; `onboarding-runbook.md`                                                |
 
 ## Phase 3 checklist
 
@@ -53,7 +53,9 @@ Status vocabulary is strict: **Implemented** means code and local evidence exist
 - [x] Proposal UI shows current/proposed text, evidence, rationale, model/mode and stale state; approval/edit creates a versioned draft; rejection is audited.
 - [x] Publication still requires the ordinary preview/validation/publish path and retains rollback history.
 - [x] Owner selected the quality-first `content-review-balanced` alias (`gpt-6.1-sol`) and a $5/site/month hard ceiling on 2026-10-13; the ceiling remains editable only through audited ORAP controls.
-- [ ] **TODO:** add the production `aio_proposal` job-material rehydration/handler, a dated price record, and a representative paid-provider benchmark before enabling `OPENAI_PROVIDER_ENABLED`. The current runner intentionally cancels this category, so changing the flag alone would be misleading.
+- [x] Tenant-scoped durable proposal material, atomic job admission, worker-side source/policy revalidation, dedicated `aio_proposal` worker, dated model-price records, immutable result linkage, and synthetic safety benchmark.
+- [x] The provider flag is checked before database, quota, budget, or provider access; the API returns a stable disabled response while the flag is off.
+- [ ] **TODO:** run and approve a representative paid-provider quality/cost benchmark, explicitly authorize activation, and capture production smoke evidence before enabling `OPENAI_PROVIDER_ENABLED`.
 
 ## Phase 6 checklist
 
