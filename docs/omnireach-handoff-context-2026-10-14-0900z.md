@@ -1,5 +1,8 @@
 # OmniReach handoff context — October 14, 2026, updated through 09:00 UTC
 
+> Historical snapshot. Superseded by
+> `docs/omnireach-handoff-context-2026-10-14-1430z.md`.
+
 **Purpose:** authoritative first-read snapshot for the next Codex session or developer
 
 **Repository:** `OmniReach-Websites/SEO-Automation`

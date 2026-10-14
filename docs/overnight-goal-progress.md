@@ -2,7 +2,7 @@
 
 **Started:** 2026-10-13 (America/Chicago)
 
-**Working branch:** `feature/ai-proposal-pipeline`
+**Working branch:** `feature/maintenance-review-20261014`
 **Source goal:** `OMNIREACH_AUTONOMOUS_OVERNIGHT_GOAL.md`
 
 This file is the durable resume point for the autonomous overnight goal. Evidence states
@@ -12,11 +12,11 @@ work, `WAITING_FOR_OWNER` needs a human decision/credential, and
 
 ## Current milestone
 
-- `IN_PROGRESS` — Priorities 1 through 4 are merged and deployed through protected
+- `IN_PROGRESS` — Priorities 1 through 5 are merged and deployed through protected
   workflows. Production backup and provider activation remain separately owner-gated
   and have not occurred.
-- Current focus: complete the Priority 5 durable disabled-by-default AI proposal path
-  and synthetic benchmark while preserving all recorded production-proof gaps.
+- Current focus: complete Priority 6 dependency review and repair the bounded
+  production-Compose worker-recovery check discovered by that review.
 
 ## Priority checklist
 
@@ -66,13 +66,16 @@ work, `WAITING_FOR_OWNER` needs a human decision/credential, and
 
 - [x] Complete durable disabled-by-default proposal job/material/result path and tests.
 - [x] Add synthetic benchmark harness and preserve protected-fact/budget gates.
+- [x] Protected PR checks, protected-main merge, exact-commit production deployment,
+      readiness/public/authorization smoke, and disabled-provider evidence.
 - [ ] `WAITING_FOR_OWNER` — paid production activation remains disabled.
 
 ### P6 — Maintenance
 
-- [ ] Review the six historical Dependabot PRs individually; do not blindly merge.
-- [ ] Repair documentation, observability, and failing routine-operation checks found
-      during the work.
+- [x] Review the six historical Dependabot PRs individually; do not blindly merge.
+- [x] Refresh the authoritative handoff and record exact dependency dispositions.
+- [ ] Merge and verify the bounded production-Compose worker-recovery check; then
+      refresh and re-evaluate the two safe workflow-action PRs.
 
 ## Evidence log
 
@@ -397,8 +400,48 @@ work, `WAITING_FOR_OWNER` needs a human decision/credential, and
 - Paid-provider benchmarking, explicit activation, and production smoke remain
   `WAITING_FOR_OWNER`; `OPENAI_PROVIDER_ENABLED=false` remains required.
 
+### 2026-10-14 UTC — Priority 5 protected release
+
+- Committed the verified proposal slice as `5db4782`, pushed only
+  `feature/ai-proposal-pipeline`, opened and attached
+  [PR #68](https://github.com/OmniReach-Websites/SEO-Automation/pull/68), and observed both
+  protected Branch CI runs pass.
+- PR #68 was squash-merged as protected-main commit
+  `d73ab70f62b3eebf15df958e2161e755f64855c7`. Main CI run `38542647400` and production
+  deployment run
+  [38542647373](https://github.com/OmniReach-Websites/SEO-Automation/actions/runs/38542647373)
+  passed for that exact commit. Deployment rebuilt and tested the commit, produced
+  immutable artifacts, activated through the restricted ephemeral SSH identity,
+  verified Coop and OmniReach, and removed the identity.
+- Independent checks returned 200 for API readiness, OmniReach home, Terms, and Coop;
+  unauthenticated ORAP Operations returned 403; and the public inquiry configuration
+  returned exactly `{"enabled":false}`.
+- `OPENAI_PROVIDER_ENABLED=false` remains required. No paid provider call was made, and
+  proposal admission remains fail-closed with `503 ai_provider_disabled`.
+
+### 2026-10-14 UTC — Priority 6 dependency and routine-maintenance review
+
+- Created `feature/maintenance-review-20261014` from deployed protected main and reviewed
+  all six historical Dependabot PRs individually against current main.
+- PR #1 (`actions/setup-node` 7.1.0) contains only pinned action-SHA updates and passed
+  both refreshed checks. PR #2 (`actions/checkout` 7.0.1) preserves exact-ref and
+  `persist-credentials: false` controls; one check passed while the duplicate check
+  exposed a routine verifier race after PostgreSQL/Redis restart.
+- PR #3 cannot install because TypeScript 7 is outside the installed
+  `typescript-eslint` peer range. PR #4 makes the disposable `publisher` worker
+  unhealthy. PRs #5 and #6 pass independently but must not split the Prisma adapter,
+  client, CLI, generator, and migration toolchain across major versions.
+- Added `docs/dependency-maintenance-review-2026-10-14.md` with exact evidence and
+  dispositions. Refreshed the first-read handoff without recording any secret value.
+- Replaced the immediate seven-worker count with a bounded 45-second exact-set poll
+  scoped to the disposable release SHA and current heartbeat window. Static Compose,
+  formatting, ESLint, documentation, and diff checks pass locally. The local Docker
+  daemon is unavailable, so protected Linux CI is required to prove the full disposable
+  runtime repair before merge.
+
 ## Resume point
 
-Finish full repository verification for the Priority 5 candidate, then use the
-protected feature-branch/PR workflow. Do not activate paid OpenAI calls during release.
-Afterward begin Priority 6 by reviewing historical Dependabot PRs individually.
+Commit and open the focused Priority 6 maintenance PR, require both protected checks,
+and verify its exact protected-main deployment. Then refresh PRs #1 and #2 onto that
+main commit and re-evaluate them individually. Do not merge PRs #3 through #6 as routine
+updates, and do not activate paid OpenAI calls, Resend, contact delivery, or backups.
