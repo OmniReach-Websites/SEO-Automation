@@ -402,6 +402,19 @@ export function checkProductionCompose() {
   if (!productionDockerfile.includes('npm run build --workspace @omnireach/site-omnireach')) {
     errors.push('production runtime image does not build the OmniReach public site');
   }
+  if (!productionDockerfile.includes('postgresql-client-16')) {
+    errors.push('production migrator image must install the PostgreSQL 16 client explicitly');
+  }
+  if (
+    !productionDockerfile.includes("pg_dump --version | grep -Eq '^pg_dump \\(PostgreSQL\\) 16\\.'")
+  ) {
+    errors.push('production migrator image must verify that pg_dump remains on PostgreSQL 16');
+  }
+  if (/install --yes --no-install-recommends postgresql-client\s/u.test(productionDockerfile)) {
+    errors.push(
+      'production migrator image must not use the rolling PostgreSQL client meta-package',
+    );
+  }
 
   if (/POSTGRES_PASSWORD:\s*(?!FILE)/u.test(source)) {
     errors.push('production Compose contains a literal PostgreSQL password setting');
