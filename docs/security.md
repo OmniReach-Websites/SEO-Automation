@@ -253,6 +253,19 @@ AND current resource belongs to resolved site
 - Authentication email delivery remains inactive until the approved sender domain,
   provider account, credentials, quotas, and explicit production activation are
   verified. Provider failure never falls back to password-only ORAP access.
+- Resend credentials do not imply activation. Authentication, contact/platform inquiry,
+  and urgent-alert delivery have independent explicit flags, all disabled by default.
+  Contact activation also fails startup unless both Turnstile keys are present.
+- Every enabled email channel passes through one atomic PostgreSQL monthly admission
+  boundary. Application and worker roles can execute only the security-definer
+  reserve/finalize functions; only the platform role can inspect or administer the
+  underlying global policy and counters. The NOINHERIT runtime login must explicitly
+  assume its bounded role in a transaction and has no direct quota-table access.
+- Email quota records exclude recipients, subjects, bodies, authentication material,
+  form content, credentials, and provider responses. They retain only channel,
+  lifecycle, provider reference, and an allowlisted safe failure code. The reservation
+  UUID is the provider idempotency key. Failure to deliver or record status fails the
+  operation closed and never changes static-site availability.
 - OAuth uses state/nonce and PKCE where appropriate, exact callbacks, exact site/property mapping, encrypted refresh-token storage, and audited disconnect.
 - Contact forms validate declared fields and consent metadata, reject attachments by default, minimize retention, and isolate destination configuration from browsers.
 - Production contact submissions use a verified site-specific business recipient and a
@@ -302,6 +315,9 @@ Before G31 production activation, evidence must show:
 - [ ] Email-code risk is explicitly accepted as non-phishing-resistant and
       provider/mailbox dependent; provider outage fails closed and never degrades to
       password-only ORAP access.
+- [ ] Email activation flags, Turnstile prerequisites, atomic monthly quota, restricted
+      role switching, direct-table denial, safe diagnostics, bounded retry, and provider
+      idempotency pass against migrated production-equivalent PostgreSQL.
 - [ ] Customer password-only defaults, voluntary method enrollment/revocation, security
       settings, and exact-site administrator session revocation pass without weakening
       platform policy or tenant isolation.

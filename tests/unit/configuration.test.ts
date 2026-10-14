@@ -97,6 +97,13 @@ describe('configuration and logging safety', () => {
     expect(() => parseConfig({ ...validConfig, CONTACT_DELIVERY_ENABLED: 'true' })).toThrow(
       'RESEND_API_KEY',
     );
+    expect(() =>
+      parseConfig({
+        ...validConfig,
+        CONTACT_DELIVERY_ENABLED: 'true',
+        RESEND_API_KEY: 'fictional-key',
+      }),
+    ).toThrow('TURNSTILE_SECRET_KEY');
     expect(() => parseConfig({ ...validConfig, TURNSTILE_SECRET_KEY: 'secret-only' })).toThrow(
       'TURNSTILE_SITE_KEY',
     );

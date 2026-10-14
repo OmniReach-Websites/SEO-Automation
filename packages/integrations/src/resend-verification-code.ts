@@ -1,3 +1,10 @@
+import {
+  EmailProviderError,
+  providerFailureCode,
+  withEmailDeliveryQuota,
+  type EmailDeliveryQuota,
+} from './email-quota.ts';
+
 export interface VerificationCodeEmailInput {
   readonly code: string;
   readonly normalizedEmail: string;
@@ -7,6 +14,7 @@ export interface ResendVerificationCodeOptions {
   readonly apiKey: string;
   readonly fetchImplementation?: typeof fetch;
   readonly from: string;
+  readonly quota?: EmailDeliveryQuota;
   readonly timeoutMs?: number;
 }
 
@@ -29,38 +37,54 @@ export class ResendVerificationCodeNotifier {
       throw new Error('Verification code is invalid');
     }
 
-    let response: Response;
-    try {
-      response = await this.fetchImplementation('https://api.resend.com/emails', {
-        body: JSON.stringify({
-          from: this.options.from,
-          subject: 'Verify your OmniReach sign-in',
-          text: `Your OmniReach verification code is:\n\n${input.code}\n\nThis code expires in 5 minutes. If you did not try to sign in, you can ignore this email.`,
-          to: [input.normalizedEmail],
-        }),
-        headers: {
-          Authorization: `Bearer ${this.options.apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        method: 'POST',
-        signal: AbortSignal.timeout(this.timeoutMs),
-      });
-    } catch {
-      throw new Error('Resend verification-code delivery failed (network)');
-    }
+    await withEmailDeliveryQuota(this.options.quota, 'authentication', async (idempotencyKey) => {
+      let response: Response;
+      try {
+        response = await this.fetchImplementation('https://api.resend.com/emails', {
+          body: JSON.stringify({
+            from: this.options.from,
+            subject: 'Verify your OmniReach sign-in',
+            text: `Your OmniReach verification code is:\n\n${input.code}\n\nThis code expires in 5 minutes. If you did not try to sign in, you can ignore this email.`,
+            to: [input.normalizedEmail],
+          }),
+          headers: {
+            Authorization: `Bearer ${this.options.apiKey}`,
+            'Content-Type': 'application/json',
+            ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
+          },
+          method: 'POST',
+          signal: AbortSignal.timeout(this.timeoutMs),
+        });
+      } catch {
+        throw new EmailProviderError(
+          'Resend verification-code delivery failed (network)',
+          'network_failure',
+        );
+      }
 
-    if (!response.ok) {
-      throw new Error(`Resend verification-code delivery failed (${response.status})`);
-    }
-    let body: { id?: unknown };
-    try {
-      body = (await response.json()) as { id?: unknown };
-    } catch {
-      throw new Error('Resend verification-code delivery returned no reference');
-    }
-    if (typeof body.id !== 'string' || !body.id) {
-      throw new Error('Resend verification-code delivery returned no reference');
-    }
+      if (!response.ok) {
+        throw new EmailProviderError(
+          `Resend verification-code delivery failed (${response.status})`,
+          providerFailureCode(response.status),
+        );
+      }
+      let body: { id?: unknown };
+      try {
+        body = (await response.json()) as { id?: unknown };
+      } catch {
+        throw new EmailProviderError(
+          'Resend verification-code delivery returned no reference',
+          'provider_invalid_response',
+        );
+      }
+      if (typeof body.id !== 'string' || !body.id) {
+        throw new EmailProviderError(
+          'Resend verification-code delivery returned no reference',
+          'provider_invalid_response',
+        );
+      }
+      return { providerReference: body.id };
+    });
   }
 }
 

@@ -1497,6 +1497,14 @@ functions. The in-memory ledger is limited to unit tests; it is not a production
 **Dependencies:** G20, G21  
 **Decision basis / remaining inputs:** D-021 and D-023 are approved. R-008 plans Resend's $0 free tier using `updates.omnireach.cloud`, confirmed sender `alerts@updates.omnireach.cloud`, up to three exponential-backoff retries, deduplication, and ORAP failure history. Sender/domain verification, recipient confirmation, provider setup, credentials, and explicit activation remain before production delivery. Free-tier monthly and daily limits must be reverified at activation; no paid overage is authorized.
 
+**Current repository evidence:** The Priority 4 hardening candidate adds independent
+disabled-by-default activation flags, Turnstile-gated contact activation, a shared atomic
+3,000-message UTC monthly PostgreSQL admission boundary, restricted app/worker function
+execution with direct-table denial, provider idempotency keys, bounded retry, safe ORAP
+status, and production-equivalent Compose verification. This is implementation evidence,
+not sender/domain verification, live delivery, free-tier confirmation, or permission to
+activate Resend.
+
 **Requirements**
 
 - Schedule deduped work by site timezone and expose operational job/health/alert state in ORAP.

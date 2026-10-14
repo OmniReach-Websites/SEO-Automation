@@ -3,6 +3,8 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 import { validateSiteContract } from '@omnireach/contracts';
+import { PostgresEmailDeliveryQuota, type EmailDeliveryQuotaPool } from '@omnireach/database';
+import { ResendUrgentEmailAdapter } from '@omnireach/integrations';
 import { JobExecutionError, type JobEnvelope } from '@omnireach/queue';
 import { auditSite, type AuditPage } from '@omnireach/seo-core';
 import {
@@ -321,6 +323,7 @@ async function runHealthCheck(envelope: JobEnvelope, context: JobHandlerContext)
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
   } catch {
+    const email = alertEmailAdapter(context);
     await new PostgresAlertCenter(context.pool).report(
       {
         jobId: context.execution.jobId,
@@ -334,9 +337,25 @@ async function runHealthCheck(envelope: JobEnvelope, context: JobHandlerContext)
         severity: 'critical',
         source: 'monitoring.public-site',
       },
+      email,
     );
     throw new JobExecutionError('Public site health check failed', 'retryable');
   }
+}
+
+function alertEmailAdapter(context: JobHandlerContext) {
+  if (context.environment.ALERT_EMAIL_DELIVERY_ENABLED !== 'true') return undefined;
+  const apiKey = context.environment.RESEND_API_KEY?.trim();
+  const from = context.environment.RESEND_ALERT_FROM?.trim();
+  const recipient = context.environment.ALERT_EMAIL_RECIPIENT?.trim();
+  if (!apiKey || !from || !recipient) {
+    throw new JobExecutionError('Alert email configuration is incomplete', 'permanent');
+  }
+  const quota = new PostgresEmailDeliveryQuota(
+    context.pool as unknown as EmailDeliveryQuotaPool,
+    'omnireach_worker',
+  );
+  return new ResendUrgentEmailAdapter({ apiKey, from, quota, recipient });
 }
 
 function auditPage(evidence: Record<string, unknown>): AuditPage {

@@ -1,10 +1,18 @@
 import type { UrgentEmail, UrgentEmailAdapter } from '@omnireach/observability';
 
+import {
+  EmailProviderError,
+  providerFailureCode,
+  withEmailDeliveryQuota,
+  type EmailDeliveryQuota,
+} from './email-quota.ts';
+
 export interface ResendUrgentEmailOptions {
   readonly apiKey: string;
   readonly fetchImplementation?: typeof fetch;
   readonly from: string;
   readonly maxAttempts?: number;
+  readonly quota?: EmailDeliveryQuota;
   readonly recipient: string;
   readonly sleep?: (milliseconds: number) => Promise<void>;
   readonly timeoutMs?: number;
@@ -37,47 +45,59 @@ export class ResendUrgentEmailAdapter implements UrgentEmailAdapter {
     if (!message.subject || /token|password|secret=/iu.test(message.safeBody)) {
       throw new Error('Invalid or sensitive urgent email');
     }
-    let lastStatus = 0;
-    for (let attempt = 1; attempt <= this.maxAttempts; attempt += 1) {
-      let response: Response;
-      try {
-        response = await this.fetchImplementation('https://api.resend.com/emails', {
-          body: JSON.stringify({
-            from: this.options.from,
-            headers: { 'X-Entity-Ref-ID': message.alertFingerprint },
-            subject: message.subject,
-            text: message.safeBody,
-            to: [this.options.recipient],
-          }),
-          headers: {
-            Authorization: `Bearer ${this.options.apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          method: 'POST',
-          signal: AbortSignal.timeout(this.timeoutMs),
-        });
-      } catch {
-        if (attempt < this.maxAttempts) {
+    return withEmailDeliveryQuota(this.options.quota, 'alert', async (idempotencyKey) => {
+      let lastStatus = 0;
+      for (let attempt = 1; attempt <= this.maxAttempts; attempt += 1) {
+        let response: Response;
+        try {
+          response = await this.fetchImplementation('https://api.resend.com/emails', {
+            body: JSON.stringify({
+              from: this.options.from,
+              headers: { 'X-Entity-Ref-ID': message.alertFingerprint },
+              subject: message.subject,
+              text: message.safeBody,
+              to: [this.options.recipient],
+            }),
+            headers: {
+              Authorization: `Bearer ${this.options.apiKey}`,
+              'Content-Type': 'application/json',
+              ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
+            },
+            method: 'POST',
+            signal: AbortSignal.timeout(this.timeoutMs),
+          });
+        } catch {
+          if (attempt < this.maxAttempts) {
+            await this.sleep(250 * 2 ** (attempt - 1));
+            continue;
+          }
+          throw new EmailProviderError('Resend alert delivery failed (network)', 'network_failure');
+        }
+        lastStatus = response.status;
+        if (response.ok) {
+          const body = (await response.json()) as { id?: unknown };
+          if (typeof body.id !== 'string' || !body.id) {
+            throw new EmailProviderError(
+              'Resend alert delivery returned no reference',
+              'provider_invalid_response',
+            );
+          }
+          return { providerReference: body.id };
+        }
+        if (attempt < this.maxAttempts && (response.status === 429 || response.status >= 500)) {
           await this.sleep(250 * 2 ** (attempt - 1));
           continue;
         }
-        throw new Error('Resend alert delivery failed (network)');
+        throw new EmailProviderError(
+          `Resend alert delivery failed (${response.status})`,
+          providerFailureCode(response.status),
+        );
       }
-      lastStatus = response.status;
-      if (response.ok) {
-        const body = (await response.json()) as { id?: unknown };
-        if (typeof body.id !== 'string' || !body.id) {
-          throw new Error('Resend alert delivery returned no reference');
-        }
-        return { providerReference: body.id };
-      }
-      if (attempt < this.maxAttempts && (response.status === 429 || response.status >= 500)) {
-        await this.sleep(250 * 2 ** (attempt - 1));
-        continue;
-      }
-      break;
-    }
-    throw new Error(`Resend alert delivery failed (${lastStatus || 'network'})`);
+      throw new EmailProviderError(
+        `Resend alert delivery failed (${lastStatus || 'network'})`,
+        lastStatus ? providerFailureCode(lastStatus) : 'network_failure',
+      );
+    });
   }
 }
 

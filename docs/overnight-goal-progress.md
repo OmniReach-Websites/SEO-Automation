@@ -2,7 +2,7 @@
 
 **Started:** 2026-10-13 (America/Chicago)
 
-**Working branch:** `docs/context-2026-10-14-release`
+**Working branch:** `feature/email-form-operations`
 **Source goal:** `OMNIREACH_AUTONOMOUS_OVERNIGHT_GOAL.md`
 
 This file is the durable resume point for the autonomous overnight goal. Evidence states
@@ -15,8 +15,9 @@ work, `WAITING_FOR_OWNER` needs a human decision/credential, and
 - `IN_PROGRESS` — Priorities 1, 2, and the repository-only Priority 3 slice are merged
   and deployed through protected workflows. Production backup activation remains
   separately owner-gated and has not occurred.
-- Current focus: continue Priority 4 repository-only work while preserving all recorded
-  production-proof gaps.
+- Current focus: release the verified Priority 4 email/forms operations slice, then
+  continue the employee-facing accessibility and recovery-safe UX review while
+  preserving all recorded production-proof gaps.
 
 ## Priority checklist
 
@@ -55,7 +56,8 @@ work, `WAITING_FOR_OWNER` needs a human decision/credential, and
 
 ### P4 — Email/forms and staff UX
 
-- [ ] Audit repository-side Resend/form flags, quotas, retries, diagnostics, and tests.
+- [x] Audit and harden repository-side Resend/form flags, quotas, retries, diagnostics,
+      role boundaries, and tests without activating real delivery.
 - [ ] Improve remaining employee-facing accessibility and recovery-safe affordances.
 - [ ] `WAITING_FOR_OWNER` — activate or send real provider messages only with the
       recorded provider/sender/recipient authorization.
@@ -275,8 +277,53 @@ work, `WAITING_FOR_OWNER` needs a human decision/credential, and
 - No production backup credentials, schedule, uploads, deletions, or restore actions were
   activated by this release.
 
+### 2026-10-14 UTC — Priority 4 email/forms operations candidate complete
+
+- Added a PostgreSQL-authoritative UTC monthly email policy and reservation lifecycle
+  shared by alert, authentication, contact, and platform-inquiry delivery. The initial
+  no-spend cap is 3,000 messages. Restricted application/worker transactions call only
+  security-definer reserve/finalize functions; the NOINHERIT runtime login cannot read
+  the underlying tables directly.
+- Quota state excludes recipients, subjects, bodies, form values, verification codes,
+  credentials, and provider responses. It retains channel, lifecycle, provider
+  reference, timestamps, and allowlisted safe failure codes. Reservation UUIDs are sent
+  as Resend idempotency keys.
+- Closed credential-implies-activation paths: contact/platform inquiry delivery now
+  requires the explicit contact flag, contact activation fails startup without both
+  Turnstile keys, and urgent alerts require their own explicit flag. All production
+  examples remain disabled.
+- Contact delivery now performs one initial attempt plus at most three bounded
+  exponential-backoff retries for retryable network/429/5xx failures. Optional
+  confirmation delivery is separately admitted and remains disabled by default.
+- Wired health-check critical incidents to the Resend alert adapter behind the explicit
+  alert flag while preserving the deduplicated ORAP alert as authoritative. Delivery
+  failure is recorded and cannot affect public static-site availability.
+- Added a nonsecret ORAP Operations panel showing activation/configuration state,
+  monthly cap and counts, channel state, latest attempt, and safe failure class without
+  recipients, credentials, or message/submission content.
+- The first disposable production-Compose run exposed that a direct runtime query could
+  not execute the quota function. The implementation was corrected to preserve the
+  NOINHERIT model by explicitly assuming only `omnireach_app` or `omnireach_worker`
+  inside each transaction. A second run proved the function path and correctly failed
+  the verifier's attempted private-table read; the verifier moved that assertion to the
+  platform inspection role and retained an explicit application-login denial check.
+- Final disposable production-Compose verification passed all 60 migrations, restricted
+  quota admission/finalization, direct-table denial, API readiness, authentication,
+  PostgreSQL/Redis persistence and isolation, static availability during control-plane
+  restart, analytics query, backup status/alert lifecycle, all six worker kinds, and
+  credential-leak checks. Disposable resources were removed.
+- Full evidence passed: 69 unit files (373 passed, 1 skipped), 12 integration files (70
+  passed), 16 security files (75 passed), 2 contract files (10 passed), and 5 Playwright
+  tests. Typecheck, lint, build, docs, 60-migration, Compose, production-Compose,
+  workflow, 28-workspace, five-site build/contract, changed-file formatting, secret scan
+  of 595 files, and production dependency audit with zero vulnerabilities all passed.
+- Real Resend delivery, sender/domain verification, recipient confirmation, provider
+  credentials, current free-tier reconciliation, and activation remain
+  `WAITING_FOR_OWNER`. No provider message or external mutation occurred.
+
 ## Resume point
 
-Continue Priority 4 repository-only Resend/forms and staff UX work without activating
-real delivery. Preserve the authenticated Analytics, exact Google-console, real R2, and
-timed isolated-restore production-proof gaps.
+Release the verified Priority 4 email/forms operations candidate through protected CI
+without enabling provider flags, then continue the employee-facing accessibility and
+recovery-safe UX review. Preserve the authenticated Analytics, exact Google-console,
+real R2, and timed isolated-restore production-proof gaps.
