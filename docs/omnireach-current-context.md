@@ -1,5 +1,8 @@
 # OmniReach current context
 
+> Historical snapshot. The current first-read handoff is
+> `docs/omnireach-handoff-context-2026-10-14-1430z.md`.
+
 **Snapshot:** October 13, 2026 (America/Chicago; latest deployment completed October 14 UTC)  
 **Repository:** `OmniReach-Websites/SEO-Automation`  
 **Latest application-changing release:** `ef35878b258845fd8e88ef6fcc340a72d84fef27`
