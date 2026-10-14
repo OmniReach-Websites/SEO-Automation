@@ -2,7 +2,7 @@
 
 **Snapshot:** October 13, 2026 (America/Chicago; latest deployment completed October 14 UTC)  
 **Repository:** `OmniReach-Websites/SEO-Automation`  
-**Latest application-changing release:** `ef35878b258845fd8e88ef6fcc340a72d84fef27`  
+**Latest application-changing release:** `ef35878b258845fd8e88ef6fcc340a72d84fef27`
 **Audience:** Codex agents, developers, and authorized OmniReach operators
 
 This is the current handoff document for ongoing OmniReach work. It supersedes
