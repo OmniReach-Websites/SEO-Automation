@@ -99,6 +99,12 @@ if (!source.restoreTimer.includes('OnCalendar=Sun *-*-01..07 03:15:00 America/Ch
 if (!source.provisioner.includes('--run-restore')) {
   errors.push('PowerShell provisioner does not request the first isolated restore drill');
 }
+if (!source.provisioner.includes('.Replace("`r`n", "`n").Replace("`r", "`n")')) {
+  errors.push('PowerShell provisioner does not normalize the remote shell payload to LF');
+}
+if (!source.provisioner.includes("tr -d '\\r'")) {
+  errors.push('PowerShell provisioner does not strip transport carriage returns from credentials');
+}
 for (const forbidden of [
   'printf \'%s\\n\' "$r2_secret_access_key"',
   'echo "$r2_secret_access_key"',

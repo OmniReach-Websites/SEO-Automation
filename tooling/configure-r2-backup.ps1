@@ -35,7 +35,7 @@ set -eu
 umask 077
 credential_file=$(mktemp /opt/servers/omnireach/shared/config/.r2-credentials.XXXXXX)
 trap 'rm -f "$credential_file"' EXIT HUP INT TERM
-cat >"$credential_file"
+tr -d '\r' >"$credential_file"
 chmod 0600 "$credential_file"
 installer=/opt/servers/omnireach/current/infrastructure/backups/install-backup-service.sh
 [ -x "$installer" ]
@@ -46,6 +46,7 @@ if ($SkipFirstBackup) {
 } else {
   $remoteCommand += "`n`"`$installer`" --credentials-file `"`$credential_file`" --enable --run-now --run-restore"
 }
+$remoteCommand = $remoteCommand.Replace("`r`n", "`n").Replace("`r", "`n")
 
 $payload | & ssh -o StrictHostKeyChecking=yes "$TargetUser@$TargetHost" $remoteCommand
 if ($LASTEXITCODE -ne 0) {
