@@ -201,8 +201,14 @@ approved production set of 7 daily and 4 weekly recovery points.
   `OPENAI_PROVIDER_ENABLED=false` remains the activation control until cost/quality tests
   pass and paid calls are explicitly authorized.
 
-- Google OAuth setup is deferred. Search Console and GA4 remain in the not-connected
-  state and do not block the core G31 infrastructure activation.
+- Google OAuth is configured and the owner reported completing the intended Search
+  Console and GA4 connections on 2026-10-13. A successful connection enables one
+  site-scoped `metrics_sync` schedule, admits the first run immediately, and then runs
+  daily at 04:00 UTC with up to 30 minutes of deterministic per-site jitter. The last
+  disconnect disables that site's schedule. Jobs remain concurrency-one, use opaque
+  queue envelopes, rehydrate tenant/site scope under the worker role, and never affect
+  static-site availability. First-sync evidence and live source-console comparison
+  remain required before treating the reporting data as production-verified.
 
 These directions do not authorize provider connection, credential creation, email,
 deployment, data deletion, or any other external mutation. Remaining concrete values are

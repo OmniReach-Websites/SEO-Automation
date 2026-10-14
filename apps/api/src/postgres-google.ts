@@ -369,6 +369,21 @@ export class PostgresGoogleIntegrationService implements IntegrationEndpointServ
           WHERE id = $1`,
           [row.id, now],
         );
+        await client.query(
+          `UPDATE schedules schedule
+              SET enabled = false, updated_at = $3
+            WHERE schedule.tenant_id = $1 AND schedule.site_id = $2
+              AND schedule.category = 'metrics_sync'
+              AND NOT EXISTS (
+                SELECT 1 FROM integration_connections connection
+                 WHERE connection.tenant_id = schedule.tenant_id
+                   AND connection.site_id = schedule.site_id
+                   AND connection.provider = 'google'
+                   AND connection.status = 'connected'
+                   AND connection.collection_stopped_at IS NULL
+              )`,
+          [row.tenant_id, row.site_id, now],
+        );
         await audit(client, actor, {
           action: 'integration.google.disconnected',
           metadata: { propertyKind: row.property_kind, reason: input.reason.trim() },
@@ -601,6 +616,17 @@ export class PostgresGoogleIntegrationService implements IntegrationEndpointServ
           )
         ).rows,
         'Google connection could not be saved',
+      );
+      await client.query(
+        `INSERT INTO schedules
+           (tenant_id, site_id, category, timezone, local_hour, local_minute,
+            jitter_minutes, enabled, next_attempt_at)
+         VALUES ($1, $2, 'metrics_sync', 'Etc/UTC', 4, 0, 30, true, $3)
+         ON CONFLICT (tenant_id, site_id, category) DO UPDATE
+           SET enabled = true,
+               next_attempt_at = LEAST(schedules.next_attempt_at, EXCLUDED.next_attempt_at),
+               updated_at = EXCLUDED.next_attempt_at`,
+        [input.tenantId, input.siteId, now],
       );
       await audit(client, actor, {
         action: 'integration.google.connected',

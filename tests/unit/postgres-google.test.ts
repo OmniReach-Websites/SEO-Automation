@@ -11,11 +11,12 @@ const actor: AdminActor = {
 
 describe('PostgreSQL Google connection persistence', () => {
   it('binds a credential identifier as UUID before storing its text reference', async () => {
-    const query = vi.fn(async (sql: string) =>
-      sql.includes('INSERT INTO integration_connections')
+    const query = vi.fn(async (sql: string, values?: unknown[]) => {
+      void values;
+      return sql.includes('INSERT INTO integration_connections')
         ? { rows: [{ id: '70000000-0000-4000-8000-000000000001' }] }
-        : { rows: [] },
-    );
+        : { rows: [] };
+    });
     const client = { query } as unknown as TenantTransactionClient;
     const pool = { connect: vi.fn() } as unknown as TenantTransactionPool;
     const provider = {} as GoogleProviderClient;
@@ -63,5 +64,14 @@ describe('PostgreSQL Google connection persistence', () => {
       '(SELECT id::text FROM integration_credentials WHERE id = $6::uuid)',
     );
     expect(connectionSql).not.toMatch(/property_mapping,\s*credential_ref[\s\S]*\$5,\s*\$6,/u);
+    const scheduleCall = query.mock.calls.find(([sql]) => sql.includes('INSERT INTO schedules'));
+    expect(scheduleCall?.[0]).toContain("'metrics_sync'");
+    expect(scheduleCall?.[0]).toContain("'Etc/UTC', 4, 0, 30");
+    expect(scheduleCall?.[0]).toContain('SET enabled = true');
+    expect(scheduleCall?.[1]).toEqual([
+      '10000000-0000-4000-8000-000000000001',
+      '20000000-0000-4000-8000-000000000001',
+      expect.any(Date),
+    ]);
   });
 });
