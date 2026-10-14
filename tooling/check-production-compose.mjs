@@ -292,6 +292,9 @@ export function checkProductionCompose() {
   if (!bootstrap.includes('backup_encryption_key')) {
     errors.push('bootstrap does not generate the host-only backup encryption key');
   }
+  if (!bootstrap.includes('generate_secret backup_encryption_key 0400')) {
+    errors.push('bootstrap must keep the backup encryption key owner-readable only');
+  }
   if (/set\s+-x/u.test(bootstrap)) errors.push('bootstrap may echo secret-bearing commands');
 
   const indexedModes = execFileSync(
@@ -401,6 +404,14 @@ export function checkProductionCompose() {
   }
   if (!productionDockerfile.includes('npm run build --workspace @omnireach/site-omnireach')) {
     errors.push('production runtime image does not build the OmniReach public site');
+  }
+
+  const backupService = compose.services?.backup;
+  if (
+    !Array.isArray(backupService?.cap_add) ||
+    backupService.cap_add.join(',') !== 'DAC_READ_SEARCH'
+  ) {
+    errors.push('backup service must receive only DAC_READ_SEARCH for protected read-only volumes');
   }
   if (!productionDockerfile.includes('postgresql-client-16')) {
     errors.push('production migrator image must install the PostgreSQL 16 client explicitly');
