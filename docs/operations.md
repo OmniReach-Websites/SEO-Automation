@@ -326,6 +326,37 @@ Approved policy:
 
 Every backup records start/end, schema/release version, scope, checksum, encrypted size, destination status, and error. Pruning operates only on explicit backup manifests and never uses broad Docker/filesystem cleanup.
 
+Scheduled backup, applied retention, and database restore-drill commands provide the
+restricted status connection through `--record-database-url-file`; a literal database
+URL is forbidden. The recorder assumes `omnireach_worker`, uses the envelope checksum
+as an idempotency key, and updates `backup_records` only after the corresponding action
+succeeds. ORAP reads bounded status fields from those records and never exposes storage
+references, manifests, checksums, credentials, archive contents, or customer filenames.
+The persisted status manifest contains only format version, file count, and source-byte
+total. An empty status panel means no repository-verifiable production evidence exists,
+not that backups are healthy.
+
+Backup/integrity/off-site failures use a narrowly granted database function to upsert a
+single deduplicated platform alert with a fixed safe error class; recorded success
+resolves it. Raw subprocess/provider messages are not stored in ORAP. This does not
+activate email: critical-email transport remains governed by the alert-provider feature
+flag and production sender/recipient approval.
+
+Repository tooling bounds source/encrypted/decompressed bytes, member count, R2 requests,
+listing pages, response bytes, and listed objects. Remote responses are byte-counted while
+streaming even without `Content-Length`. A limit failure means the backup is incomplete and pruning
+must stop; inputs must never be silently skipped. Applied pruning writes requested and
+completed JSONL audit events. Manual pruning requires the owner's authorization
+reference; authorization-free automatic pruning is hard-bound to 7 daily and 4 weekly
+recovery points. Active and held points are preserved in addition to those counts.
+Local and off-site deletion timestamps remain distinct, and a recovery point is marked
+pruned only when all recorded copies are gone.
+
+Disposable database restore accepts its connection URL only through a permission-
+restricted file. In production mode it fails closed until filesystem roots and
+non-secret `host:port/database` production identities are configured, then rejects any
+overlapping target before `pg_restore --exit-on-error` runs.
+
 Monthly restore proof uses a new isolated database/storage namespace and verifies schema, row/reference counts, tenant boundaries, media links, one previously published artifact, and application compatibility. Production restoration requires declared incident scope, owner authorization, key custody, a fresh preservation backup where safe, and post-restore security/health checks.
 
 R-005 remains incomplete for production until the authorized automated off-server path

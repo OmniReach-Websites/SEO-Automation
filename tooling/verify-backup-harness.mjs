@@ -105,6 +105,39 @@ try {
     daily: 3,
     weekly: 2,
   });
+  let sourceLimitRejected = false;
+  try {
+    await createEncryptedBackup({
+      createdAt: new Date('2026-10-10T00:00:00Z'),
+      destinationRoot: join(root, 'over-limit'),
+      encryptionKeyHex: 'cd'.repeat(32),
+      inputPaths: [db],
+      kind: 'daily',
+      maximumSourceBytes: 1,
+    });
+  } catch {
+    sourceLimitRejected = true;
+  }
+  let archiveLimitRejected = false;
+  try {
+    await verifyEncryptedBackup({
+      backupPath: offServer,
+      encryptionKeyHex: 'cd'.repeat(32),
+      maximumArchiveBytes: 1,
+    });
+  } catch {
+    archiveLimitRejected = true;
+  }
+  let restoredSourceLimitRejected = false;
+  try {
+    await verifyEncryptedBackup({
+      backupPath: offServer,
+      encryptionKeyHex: 'cd'.repeat(32),
+      maximumSourceBytes: 1,
+    });
+  } catch {
+    restoredSourceLimitRejected = true;
+  }
   let nonemptyRestoreRejected = false;
   try {
     await restoreEncryptedBackup({
@@ -121,8 +154,11 @@ try {
     !corruptRejected ||
     !truncatedRejected ||
     !nonemptyRestoreRejected ||
-    retention.keep.length !== 11 ||
-    customRetention.keep.length !== 5 ||
+    retention.keep.length !== 13 ||
+    customRetention.keep.length !== 7 ||
+    !sourceLimitRejected ||
+    !archiveLimitRejected ||
+    !restoredSourceLimitRejected ||
     retention.prune.includes('daily-11') ||
     retention.prune.includes('daily-10')
   )
@@ -130,6 +166,7 @@ try {
   console.log(
     JSON.stringify({
       check: 'backup-harness',
+      archiveLimitRejected,
       dailyWeeklyPoints: retention.keep.length,
       corruptRejected,
       encrypted: true,
@@ -138,6 +175,8 @@ try {
       nonemptyRestoreRejected,
       offServer: true,
       ok: true,
+      sourceLimitRejected,
+      restoredSourceLimitRejected,
       truncatedRejected,
       wrongKeyRejected,
     }),

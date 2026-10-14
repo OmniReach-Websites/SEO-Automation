@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { gzip, gunzip } from 'node:zlib';
 import { promisify } from 'node:util';
@@ -9,17 +9,7 @@ const gzipAsync = promisify(gzip);
 const gunzipAsync = promisify(gunzip);
 const execFileAsync = promisify(execFile);
 export async function runLogicalDump(databaseUrl, targetPath) {
-  const parsed = new URL(databaseUrl);
-  if (
-    !['postgres:', 'postgresql:'].includes(parsed.protocol) ||
-    !parsed.hostname ||
-    !parsed.pathname
-  ) {
-    throw new Error('Invalid PostgreSQL backup connection URL');
-  }
-  const databaseName = decodeURIComponent(parsed.pathname.replace(/^\//u, ''));
-  if (!databaseName || databaseName.includes('/'))
-    throw new Error('Invalid PostgreSQL database name');
+  const { databaseName, parsed } = parsePostgresUrl(databaseUrl, 'backup');
   await execFileAsync(
     'pg_dump',
     [
@@ -44,12 +34,63 @@ export async function runLogicalDump(databaseUrl, targetPath) {
     },
   );
 }
+
+export async function runLogicalRestore(databaseUrl, dumpPath) {
+  const { databaseName, parsed } = parsePostgresUrl(databaseUrl, 'restore');
+  const connectionArguments = [
+    '--host',
+    parsed.hostname,
+    '--port',
+    parsed.port || '5432',
+    '--username',
+    decodeURIComponent(parsed.username),
+    '--dbname',
+    databaseName,
+  ];
+  const processOptions = {
+    env: { ...process.env, PGPASSWORD: decodeURIComponent(parsed.password) },
+    timeout: 600_000,
+    windowsHide: true,
+  };
+  const { stdout } = await execFileAsync(
+    'psql',
+    [
+      '--no-psqlrc',
+      '--tuples-only',
+      '--no-align',
+      ...connectionArguments,
+      '--command',
+      "SELECT count(*) FROM pg_catalog.pg_class WHERE relnamespace NOT IN ('pg_catalog'::regnamespace, 'information_schema'::regnamespace) AND relkind IN ('r','p','v','m','S','f')",
+    ],
+    processOptions,
+  );
+  if (stdout.trim() !== '0') {
+    throw new Error('Restore database must be empty');
+  }
+  await execFileAsync(
+    'pg_restore',
+    ['--exit-on-error', '--no-owner', '--no-privileges', ...connectionArguments, dumpPath],
+    processOptions,
+  );
+}
 export async function createEncryptedBackup(options) {
-  const key = parseKey(options.encryptionKeyHex);
+  if (!['daily', 'weekly'].includes(options.kind)) {
+    throw new Error('Backup kind must be daily or weekly');
+  }
+  if (!(options.createdAt instanceof Date) || Number.isNaN(options.createdAt.getTime())) {
+    throw new Error('Backup creation time is invalid');
+  }
   const files = [];
+  const maximumFiles = validatePositiveLimit(options.maximumFiles ?? 100_000, 'file count');
+  const maximumSourceBytes = validatePositiveLimit(
+    options.maximumSourceBytes ?? 512 * 1024 * 1024,
+    'source byte',
+  );
+  let sourceBytes = 0;
   for (const inputPath of [...options.inputPaths].sort()) {
     const absolute = resolve(inputPath);
-    const sourceStat = await stat(absolute);
+    const sourceStat = await lstat(absolute);
+    if (sourceStat.isSymbolicLink()) throw new Error('Backup input cannot be a symbolic link');
     const members = sourceStat.isDirectory()
       ? await walkFiles(absolute)
       : sourceStat.isFile()
@@ -57,6 +98,7 @@ export async function createEncryptedBackup(options) {
         : [];
     if (members.length === 0) throw new Error(`Backup input has no files: ${basename(absolute)}`);
     for (const member of members) {
+      if (files.length >= maximumFiles) throw new Error('Backup exceeds the configured file limit');
       const name = sourceStat.isDirectory()
         ? join(basename(absolute), relative(absolute, member)).replaceAll('\\', '/')
         : basename(absolute);
@@ -64,7 +106,15 @@ export async function createEncryptedBackup(options) {
       if (files.some((entry) => entry.name === name)) {
         throw new Error(`Duplicate backup member: ${name}`);
       }
+      const memberStat = await lstat(member);
+      if (!memberStat.isFile() || memberStat.isSymbolicLink()) {
+        throw new Error('Backup member must be a regular non-symbolic file');
+      }
       const data = await readFile(member);
+      sourceBytes += data.byteLength;
+      if (!Number.isSafeInteger(sourceBytes) || sourceBytes > maximumSourceBytes) {
+        throw new Error('Backup exceeds the configured source-byte limit');
+      }
       files.push({
         data: data.toString('base64'),
         name,
@@ -77,23 +127,29 @@ export async function createEncryptedBackup(options) {
     files: files.map((entry) => ({ name: entry.name, sha256: entry.sha256 })),
     formatVersion: 1,
     kind: options.kind,
+    sourceBytes,
   };
-  const archive = await gzipAsync(Buffer.from(JSON.stringify({ files, manifest })));
-  const iv = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', key, iv);
-  const encrypted = Buffer.concat([cipher.update(archive), cipher.final()]);
-  const envelope = Buffer.concat([Buffer.from('ORBK1'), iv, cipher.getAuthTag(), encrypted]);
-  await mkdir(options.destinationRoot, { recursive: true });
-  const id = `${options.createdAt.toISOString().replace(/[:.]/gu, '-')}-${options.kind}`;
-  const backupPath = join(resolve(options.destinationRoot), `${id}.orbk`);
-  await writeFile(backupPath, envelope, { flag: 'wx', mode: 0o600 });
-  const envelopeHash = createHash('sha256').update(envelope).digest('hex');
-  await writeFile(
-    `${backupPath}.manifest.json`,
-    `${JSON.stringify({ ...manifest, envelopeHash, id })}\n`,
-    { flag: 'wx', mode: 0o600 },
-  );
-  return { backupPath, envelopeHash, id, manifest };
+  const key = parseKey(options.encryptionKeyHex);
+  try {
+    const archive = await gzipAsync(Buffer.from(JSON.stringify({ files, manifest })));
+    const iv = randomBytes(12);
+    const cipher = createCipheriv('aes-256-gcm', key, iv);
+    const encrypted = Buffer.concat([cipher.update(archive), cipher.final()]);
+    const envelope = Buffer.concat([Buffer.from('ORBK1'), iv, cipher.getAuthTag(), encrypted]);
+    await mkdir(options.destinationRoot, { recursive: true });
+    const id = `${options.createdAt.toISOString().replace(/[:.]/gu, '-')}-${options.kind}`;
+    const backupPath = join(resolve(options.destinationRoot), `${id}.orbk`);
+    await writeFile(backupPath, envelope, { flag: 'wx', mode: 0o600 });
+    const envelopeHash = createHash('sha256').update(envelope).digest('hex');
+    await writeFile(
+      `${backupPath}.manifest.json`,
+      `${JSON.stringify({ ...manifest, byteSize: envelope.byteLength, envelopeHash, id })}\n`,
+      { flag: 'wx', mode: 0o600 },
+    );
+    return { backupPath, byteSize: envelope.byteLength, envelopeHash, id, manifest };
+  } finally {
+    key.fill(0);
+  }
 }
 export async function restoreEncryptedBackup(options) {
   const destination = resolve(options.destinationRoot);
@@ -126,50 +182,88 @@ export async function verifyEncryptedBackup(options) {
   return parsed.manifest;
 }
 
+export async function envelopeHashForFile(path) {
+  return createHash('sha256')
+    .update(await readFile(path))
+    .digest('hex');
+}
+
 async function readAndVerifyEncryptedBackup(options) {
   const envelope = await readFile(options.backupPath);
+  const maximumEncryptedBytes = validatePositiveLimit(
+    options.maximumEncryptedBytes ?? 768 * 1024 * 1024,
+    'encrypted byte',
+  );
+  if (envelope.byteLength > maximumEncryptedBytes) {
+    throw new Error('Encrypted backup exceeds the configured verification limit');
+  }
+  const maximumArchiveBytes = validatePositiveLimit(
+    options.maximumArchiveBytes ?? 768 * 1024 * 1024,
+    'decompressed archive byte',
+  );
+  const maximumFiles = validatePositiveLimit(options.maximumFiles ?? 100_000, 'file count');
+  const maximumSourceBytes = validatePositiveLimit(
+    options.maximumSourceBytes ?? 512 * 1024 * 1024,
+    'source byte',
+  );
   if (envelope.subarray(0, 5).toString() !== 'ORBK1')
     throw new Error('Unknown or corrupt backup format');
-  const decipher = createDecipheriv(
-    'aes-256-gcm',
-    parseKey(options.encryptionKeyHex),
-    envelope.subarray(5, 17),
-  );
+  const key = parseKey(options.encryptionKeyHex);
+  const decipher = createDecipheriv('aes-256-gcm', key, envelope.subarray(5, 17));
   decipher.setAuthTag(envelope.subarray(17, 33));
   let archive;
   try {
     archive = Buffer.concat([decipher.update(envelope.subarray(33)), decipher.final()]);
   } catch (error) {
     throw new Error('Backup authentication failed', { cause: error });
+  } finally {
+    key.fill(0);
   }
   let parsed;
   try {
-    parsed = JSON.parse((await gunzipAsync(archive)).toString('utf8'));
+    parsed = JSON.parse(
+      (await gunzipAsync(archive, { maxOutputLength: maximumArchiveBytes })).toString('utf8'),
+    );
   } catch (error) {
     throw new Error('Backup archive is not valid compressed JSON', { cause: error });
   }
   if (
     parsed?.manifest?.formatVersion !== 1 ||
     !Array.isArray(parsed.manifest.files) ||
-    !Array.isArray(parsed.files)
+    !Array.isArray(parsed.files) ||
+    parsed.manifest.files.length > maximumFiles ||
+    parsed.files.length > maximumFiles ||
+    !Number.isSafeInteger(parsed.manifest.sourceBytes) ||
+    parsed.manifest.sourceBytes < 0 ||
+    parsed.manifest.sourceBytes > maximumSourceBytes
   ) {
     throw new Error('Unsupported or incomplete backup archive');
   }
   const expected = new Map(parsed.manifest.files.map((file) => [file.name, file.sha256]));
   if (expected.size !== parsed.files.length) throw new Error('Backup manifest member mismatch');
   const verifiedFiles = [];
+  let sourceBytes = 0;
   for (const file of parsed.files) {
     assertSafeMemberName(file.name);
     if (
       typeof file.data !== 'string' ||
+      !isCanonicalBase64(file.data) ||
       typeof file.sha256 !== 'string' ||
+      !/^[a-f0-9]{64}$/u.test(file.sha256) ||
       expected.get(file.name) !== file.sha256
     )
       throw new Error('Backup manifest checksum mismatch');
     const data = Buffer.from(file.data, 'base64');
+    sourceBytes += data.byteLength;
+    if (!Number.isSafeInteger(sourceBytes) || sourceBytes > maximumSourceBytes) {
+      throw new Error('Backup exceeds the configured source-byte limit');
+    }
     if (createHash('sha256').update(data).digest('hex') !== file.sha256)
       throw new Error('Backup member checksum mismatch');
     verifiedFiles.push({ data, name: file.name });
+  }
+  if (sourceBytes !== parsed.manifest.sourceBytes) {
+    throw new Error('Backup source-byte total mismatch');
   }
   return { files: verifiedFiles, manifest: parsed.manifest };
 }
@@ -195,6 +289,7 @@ export function selectRetention(manifests, now, policy = {}) {
     .filter((item) => item.complete)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const keep = new Set();
+  for (const item of sorted.filter((entry) => entry.hold || entry.active)) keep.add(item.id);
   for (const item of sorted.filter((entry) => entry.kind === 'daily').slice(0, daily))
     keep.add(item.id);
   for (const item of sorted.filter((entry) => entry.kind === 'weekly').slice(0, weekly))
@@ -228,13 +323,30 @@ export async function readBackupManifest(path) {
   if (
     parsed?.formatVersion !== 1 ||
     typeof parsed.id !== 'string' ||
+    !/^[A-Za-z0-9._-]{1,180}$/u.test(parsed.id) ||
     typeof parsed.createdAt !== 'string' ||
+    Number.isNaN(Date.parse(parsed.createdAt)) ||
     !['daily', 'weekly'].includes(parsed.kind) ||
     typeof parsed.envelopeHash !== 'string' ||
-    !Array.isArray(parsed.files)
+    !/^[a-f0-9]{64}$/u.test(parsed.envelopeHash) ||
+    !Number.isSafeInteger(parsed.byteSize) ||
+    parsed.byteSize < 0 ||
+    !Number.isSafeInteger(parsed.sourceBytes) ||
+    parsed.sourceBytes < 0 ||
+    !Array.isArray(parsed.files) ||
+    parsed.files.length > 100_000 ||
+    parsed.files.some(
+      (file) =>
+        !file ||
+        typeof file !== 'object' ||
+        typeof file.name !== 'string' ||
+        typeof file.sha256 !== 'string' ||
+        !/^[a-f0-9]{64}$/u.test(file.sha256),
+    )
   ) {
     throw new Error('Invalid backup manifest');
   }
+  for (const file of parsed.files) assertSafeMemberName(file.name);
   return parsed;
 }
 function parseKey(value) {
@@ -242,11 +354,48 @@ function parseKey(value) {
   return Buffer.from(value, 'hex');
 }
 
+function isCanonicalBase64(value) {
+  if (
+    value.length % 4 !== 0 ||
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(value)
+  ) {
+    return false;
+  }
+  return Buffer.from(value, 'base64').toString('base64') === value;
+}
+
 function validateRetentionCount(value, label) {
   if (!Number.isInteger(value) || value < 0 || value > 366) {
     throw new Error(`Invalid ${label} retention count`);
   }
   return value;
+}
+
+function validatePositiveLimit(value, label) {
+  if (!Number.isSafeInteger(value) || value < 1) throw new Error(`Invalid backup ${label} limit`);
+  return value;
+}
+
+function parsePostgresUrl(databaseUrl, purpose) {
+  let parsed;
+  try {
+    parsed = new URL(databaseUrl);
+  } catch {
+    throw new Error(`Invalid PostgreSQL ${purpose} connection URL`);
+  }
+  if (
+    !['postgres:', 'postgresql:'].includes(parsed.protocol) ||
+    !parsed.hostname ||
+    !parsed.username ||
+    !parsed.pathname
+  ) {
+    throw new Error(`Invalid PostgreSQL ${purpose} connection URL`);
+  }
+  const databaseName = decodeURIComponent(parsed.pathname.replace(/^\//u, ''));
+  if (!databaseName || databaseName.includes('/')) {
+    throw new Error('Invalid PostgreSQL database name');
+  }
+  return { databaseName, parsed };
 }
 
 async function walkFiles(root) {

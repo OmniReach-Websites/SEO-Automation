@@ -2,7 +2,7 @@
 
 **Started:** 2026-10-13 (America/Chicago)
 
-**Working branch:** `feature/google-ingestion-hardening`
+**Working branch:** `feature/offsite-backup-readiness`
 **Source goal:** `OMNIREACH_AUTONOMOUS_OVERNIGHT_GOAL.md`
 
 This file is the durable resume point for the autonomous overnight goal. Evidence states
@@ -12,12 +12,11 @@ work, `WAITING_FOR_OWNER` needs a human decision/credential, and
 
 ## Current milestone
 
-- `IN_PROGRESS` — Priority 2 repository work is complete and fully verified on
-  `feature/google-ingestion-hardening`; protected PR/release evidence is next. Priority
-  1 is merged and deployed. An authenticated employee-session dashboard smoke and exact
-  source-console reconciliation remain separate live-proof gaps.
-- Current focus: publish the reviewed Google ingestion hardening through the protected
-  workflow, then continue Priority 3 repository-side off-site backup readiness.
+- `IN_PROGRESS` — Priorities 1 and 2 are merged and deployed through protected
+  workflows. Priority 3 repository implementation and local/disposable verification are
+  complete on `feature/offsite-backup-readiness`; protected review/release is next.
+- Current focus: release the Priority 3 repository slice without activating production
+  backups, then continue Priority 4 repository-only work.
 
 ## Priority checklist
 
@@ -48,7 +47,7 @@ work, `WAITING_FOR_OWNER` needs a human decision/credential, and
 
 ### P3 — Off-site backups
 
-- [ ] Complete safe repository-only backup/retention/alert/restore work and tests.
+- [x] Complete safe repository-only backup/retention/alert/restore work and tests.
 - [ ] `WAITING_FOR_OWNER` — production secret installation and schedule activation.
 - [ ] `WAITING_FOR_PRODUCTION_PROOF` — timed isolated restore and RPO/RTO evidence.
 
@@ -209,9 +208,60 @@ work, `WAITING_FOR_OWNER` needs a human decision/credential, and
   `WAITING_FOR_PRODUCTION_PROOF`; no claim of provider-value correctness has been made
   from OAuth success alone.
 
+### 2026-10-14 UTC — Priority 2 protected release
+
+- Committed the coherent slice as `78bdd38`, pushed only
+  `feature/google-ingestion-hardening`, opened and attached
+  [PR #63](https://github.com/OmniReach-Websites/SEO-Automation/pull/63), and observed both
+  protected Branch CI runs pass.
+- Squash-merged through GitHub as protected-main commit
+  `9fea6a0d40a3fc9484895ef179888f07892b0ccb`. Production deployment run
+  [38524868938](https://github.com/OmniReach-Websites/SEO-Automation/actions/runs/38524868938)
+  passed exact-commit build/tests, immutable image/package creation, ephemeral restricted
+  SSH activation, Coop and OmniReach/SEO verification, and identity removal.
+- Independent post-deployment checks returned 200 for API readiness, OmniReach home,
+  Terms, and Coop. An unauthenticated `/orap/analytics` request returned 403. The normal
+  authenticated employee-session smoke and exact provider-console reconciliation remain
+  `WAITING_FOR_PRODUCTION_PROOF` without weakening authentication.
+
+### 2026-10-14 UTC — Priority 3 repository candidate complete
+
+- Hardened encrypted backup creation and restore with safe path/manifest validation,
+  logical PostgreSQL empty-target restore, immutable checksums, separate key-version
+  metadata, and fail-closed source/encrypted/decompressed/member limits.
+- Hardened the R2 adapter with prefix ownership, signed requests, bounded request/page/
+  object/list-response work, repeated-token detection, and streaming response limits
+  even when a provider omits `Content-Length`.
+- Retention is dry-run by default. Manual application requires an owner authorization
+  reference and protected JSONL audit; automatic application is fixed to 7 daily and 4
+  weekly points. Active/held points survive outside those counts, and archive data is
+  removed before its manifest.
+- Added restricted PostgreSQL status recording for completed backups, integrity checks,
+  copy-specific prune state, and restore drills. Local and off-site deletion timestamps
+  are distinct. Added a narrowly granted security-definer function that opens/resolves
+  one deduplicated platform backup alert using only fixed non-secret error classes.
+- Added an authorization-gated ORAP Backup & Recovery panel with honest no-evidence,
+  stale, local-only, failed, and healthy states. It never selects or renders storage
+  references, manifests, hashes, credentials, or archive content.
+- Full evidence passed: 68 unit files (366 passed, 1 skipped), 12 integration files (70
+  passed), 15 security files (72 passed), 2 contract files (10 passed), 5 Playwright
+  tests, typecheck, lint, build, docs/Compose/workflow checks, 59 migrations, Prisma
+  validation, changed-file formatting, secret scan of 589 files with zero findings, and
+  production dependency audit with zero vulnerabilities.
+- Synthetic backup/R2 harnesses passed corruption, wrong-key, truncation, non-empty
+  target, production-target, resource-limit, request-budget, listing-budget, and
+  streaming-download negative cases. The disposable production Compose verifier applied
+  all 59 migrations and proved restricted backup writes, independent copy lifecycle,
+  platform alert transitions, PostgreSQL/Redis authentication, private networks,
+  persistence, API readiness, static availability, analytics, six worker kinds, and no
+  credential exposure in rendered config/container metadata; it removed all resources.
+- Production secret installation and schedule activation remain `WAITING_FOR_OWNER`.
+  A real downloaded-copy verification and timed isolated production-volume restore
+  remain `WAITING_FOR_PRODUCTION_PROOF`; repository evidence does not satisfy R-005.
+
 ## Resume point
 
-Publish `feature/google-ingestion-hardening` through a separate PR and protected `main`,
-observe the deployment, and record smoke evidence. Then begin Priority 3 safe
-repository-only off-site backup readiness. Preserve the two explicit production-proof
-gaps: authenticated Analytics rendering and exact Google-console reconciliation.
+Review and release `feature/offsite-backup-readiness` through protected CI without
+activating production backups. Then continue Priority 4 repository-only Resend/forms
+and staff UX work. Preserve the authenticated Analytics, exact Google-console, real R2,
+and timed isolated-restore production-proof gaps.

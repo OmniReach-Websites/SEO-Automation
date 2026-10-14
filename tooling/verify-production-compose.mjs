@@ -335,6 +335,57 @@ try {
     'analytics queries must execute against migrated PostgreSQL',
   );
 
+  const backupStatusQuery = dockerCompose(
+    [
+      'exec',
+      '--no-TTY',
+      'api',
+      '/opt/omnireach/infrastructure/compose/scripts/runtime-entrypoint.sh',
+      'node',
+      '--input-type=module',
+      '--eval',
+      `import pg from 'pg';
+       import { PostgresBackupRecords } from './infrastructure/backups/postgres-records.mjs';
+       const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+       const records = new PostgresBackupRecords({ pool });
+       const envelopeHash = 'ab'.repeat(32);
+       await records.recordComplete({
+         byteSize: 1024, createdAt: new Date('2026-10-14T00:00:00Z'), envelopeHash,
+         keyVersion: 1, kind: 'daily', manifest: { fileCount: 1, formatVersion: 1, sourceBytes: 20 },
+         offServerCopiedAt: new Date('2026-10-14T00:05:00Z'),
+         offServerRef: 'omnireach/fixture.orbk', storageRef: '/fixture/backup.orbk',
+         verifiedAt: new Date('2026-10-14T00:02:00Z')
+       });
+       await records.reportFailure('integrity_verification_failed');
+       const client = await pool.connect();
+       const read = async () => {
+         await client.query('BEGIN');
+         await client.query('SET LOCAL ROLE omnireach_platform');
+         const backup = await client.query('SELECT state, local_pruned_at, off_server_pruned_at FROM backup_records WHERE envelope_hash = $1', [envelopeHash]);
+         const alert = await client.query("SELECT state FROM alerts WHERE tenant_id IS NULL AND source = 'backup.production'");
+         await client.query('COMMIT');
+         return { backup: backup.rows[0], alert: alert.rows[0] };
+       };
+       let state = await read();
+       if (state.alert?.state !== 'open') process.exitCode = 1;
+       await records.resolveFailureAlert();
+       await records.recordPruned(envelopeHash, 'local');
+       state = await read();
+       if (state.backup?.state !== 'complete' || !state.backup.local_pruned_at) process.exitCode = 1;
+       await records.recordPruned(envelopeHash, 'offsite');
+       state = await read();
+       if (state.backup?.state !== 'pruned' || !state.backup.off_server_pruned_at || state.alert?.state !== 'resolved') process.exitCode = 1;
+       client.release();
+       await pool.end();`,
+    ],
+    { capture: true },
+  );
+  assert.equal(
+    backupStatusQuery.status,
+    0,
+    'restricted backup status, copy lifecycle, and platform alerts must execute against migrated PostgreSQL',
+  );
+
   let readiness;
   for (let attempt = 0; attempt < 10; attempt += 1) {
     try {
@@ -367,6 +418,7 @@ try {
       apiReadiness: 'verified',
       analyticsQuery: 'verified against migrated PostgreSQL',
       authentication: 'verified',
+      backupStatus: 'restricted recording, copy lifecycle, and alert transition verified',
       check: 'production-compose-runtime',
       credentialLeakage: 'not detected in rendered config or container metadata',
       isolation: 'verified',

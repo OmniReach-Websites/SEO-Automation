@@ -33,6 +33,16 @@ describe('ORAP operations views', () => {
         reservedUsdMicros: 500_000,
         usedUsdMicros: 1_000_000,
       },
+      backup: {
+        byteSize: 1_572_864,
+        createdAt: '2026-10-14T00:00:00.000Z',
+        id: 'backup-1',
+        kind: 'daily',
+        lastRestoreTestedAt: '2026-10-01T00:00:00.000Z',
+        offServerCopiedAt: '2026-10-14T00:10:00.000Z',
+        state: 'healthy',
+        verifiedAt: '2026-10-14T00:05:00.000Z',
+      },
       jobs: [
         {
           category: 'crawl',
@@ -65,6 +75,14 @@ describe('ORAP operations views', () => {
     expect(html).toContain('/resolve');
     expect(html).toContain('/replay');
     expect(html).toContain('/cancel');
+    expect(html).toContain('Backup &amp; recovery');
+    expect(html).toContain('Off-site copy verified');
+    expect(html).toContain('1.5 MiB');
+  });
+  it('states honestly when no verified backup record exists', () => {
+    const html = renderOperationsCenter({ alerts: [], backup: null, budget: null, jobs: [] });
+    expect(html).toContain('No verified backup evidence');
+    expect(html).toContain('RPO and restore readiness remain unverified');
   });
   it('shows explicit disconnected and stale integration health', () => {
     expect(renderIntegrationHealth([])).toContain('Not connected');

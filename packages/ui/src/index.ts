@@ -39,6 +39,7 @@ export {
   renderIntegrationHealth,
   renderOperationsCenter,
   type AlertRow,
+  type BackupStatusView,
   type BudgetView,
   type DomainRow,
   type IntegrationRow,

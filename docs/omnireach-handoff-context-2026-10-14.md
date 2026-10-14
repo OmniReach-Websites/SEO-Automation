@@ -6,9 +6,9 @@
 
 **Production branch:** protected `main`
 
-**Active branch:** `feature/google-ingestion-hardening`
+**Active branch:** `feature/offsite-backup-readiness`
 
-**Production baseline observed:** `3ded900d2320e892026be36f6a7785098989aae8`
+**Production baseline observed:** `9fea6a0d40a3fc9484895ef179888f07892b0ccb`
 
 This snapshot supersedes `docs/omnireach-handoff-context-2026-10-13.md` as the first
 handoff document to read. Architecture decisions, ADRs, runbooks, production inputs,
@@ -152,10 +152,9 @@ deduplicates prior rows, adds the bounded query index, and grants the platform r
 least-privilege reads needed for analytics evidence while preserving tenant/site RLS for
 application and worker roles.
 
-## Priority 2 release candidate: Google ingestion hardening
+## Deployed Priority 2: Google ingestion hardening
 
-The active branch is `feature/google-ingestion-hardening`, created from the deployed
-Priority 1 commit. It replaces the single Search Console detailed request with separate
+The deployed slice replaced the single Search Console detailed request with separate
 date-only property totals, date/query detail, and date/page detail. This prevents KPI
 totals from being inferred by summing privacy-filtered query/page/country/device rows.
 The branch adds bounded Search Console `startRow` and GA4 `offset` pagination, stable GA4
@@ -168,8 +167,38 @@ It also records the last collection attempt independently from the last successf
 stored result, clears old scoped observations atomically when a connection is remapped
 to a different provider property, and exposes bounded sync-window diagnostics without
 provider response bodies. Repository and disposable production-Compose verification are
-complete; the work remains repository-only until its own PR, protected checks, merge,
-and deployment complete.
+complete. PR #63 passed both protected checks and was squash-merged as
+`9fea6a0d40a3fc9484895ef179888f07892b0ccb`. Production deployment run `38524868938`
+successfully built, tested, packaged, transferred, activated, and verified that exact
+commit before removing its ephemeral SSH identity.
+
+## Priority 3 release candidate: backup operational readiness
+
+The active `feature/offsite-backup-readiness` branch contains repository-only backup
+hardening. It does not install production secrets, create a schedule, upload production
+data, delete a real backup, activate email, or perform a live restore. The candidate:
+
+- creates bounded authenticated AES-256-GCM archives from PostgreSQL custom dumps,
+  content/media, and selected configuration inputs;
+- rejects symbolic links, unsafe paths, invalid manifests, wrong keys, corrupt or
+  truncated data, non-empty restore targets, and configured production filesystem or
+  database targets;
+- bounds source, encrypted, decompressed, member-count, R2 request/list/response/object
+  work, including streaming byte enforcement when `Content-Length` is absent;
+- enforces dry-run retention by default, owner authorization plus JSONL audit for manual
+  deletion, and exactly 7 daily/4 weekly points for automatic deletion;
+- tracks host-local and off-site copy deletion independently so a record becomes pruned
+  only after all recorded copies are gone, while preserving active and held points;
+- records non-secret recovery, verification, off-site, and restore-drill status through
+  the restricted worker role, using protected file-based database URLs;
+- opens a deduplicated ORAP platform alert with only a fixed safe error class when a
+  recorded backup/integrity/off-site operation fails, and resolves it on success;
+- renders an authorization-gated ORAP Backup & Recovery panel without storage paths,
+  object keys, manifests, checksums, archive contents, or credentials.
+
+Production status remains unverified until separately authorized secrets are installed,
+the host-only daily schedule runs, a separate downloaded R2 copy verifies, and a timed
+isolated production-volume restore proves the 24-hour RPO and 8-hour RTO.
 
 ## Verification evidence
 
@@ -215,6 +244,21 @@ workflow, 58-migration, Prisma-schema, changed-file formatting, full secret-scan
 production dependency-audit gates. The disposable production Compose verifier applied
 all 58 migrations and repeated the restricted-role analytics, authentication, isolation,
 persistence, availability, six-worker, and credential-metadata checks successfully.
+Independent post-deployment checks returned 200 for API readiness, OmniReach home,
+Terms, and the Coop site. An unauthenticated Analytics request returned 403 as required.
+
+The Priority 3 release candidate passes 68 unit files (366 passed, 1 skipped), 12
+integration files (70 passed), 15 security files (72 passed), 2 contract files (10
+passed), and 5 Playwright tests. Typecheck, lint, build, documentation, Compose,
+workflow, 59-migration, Prisma-schema, changed-file formatting, secret scan of 589 files,
+and production dependency audit all pass. The synthetic backup harness verifies
+encryption, integrity, isolated restore, retention, hold/active preservation, and
+source/encrypted/decompressed limits. The R2 harness verifies signing, scoped prefixes,
+upload/download/list/delete, streamed download limits, listing-response/object/page, and
+request budgets. The disposable production Compose verifier applied all 59 migrations
+and exercised restricted backup status writes, separate local/off-site prune lifecycle,
+and backup alert open/resolve transitions, in addition to the existing isolation,
+authentication, persistence, static availability, analytics, and six-worker checks.
 
 ## Production/provider readiness
 
@@ -223,7 +267,7 @@ persistence, availability, six-worker, and credential-metadata checks successful
 | Domains and ORAP host | Live                                              | Explicit authorization for each future DNS change                                              |
 | Cloudflare            | Zone-scoped access approved                       | Do not mutate DNS without explicit authorization                                               |
 | Google                | Connected, owner-reported                         | Reconcile stored metrics with exact Search Console and GA4 properties                          |
-| Backups               | Partially prepared                                | Install separate secrets, enable daily off-site R2, prove retention/alerts, pass timed restore |
+| Backups               | Repository-ready; production inactive             | Install separate secrets, enable host schedule, verify real R2 copy/alerts, pass timed restore |
 | Resend                | Planned/not activated                             | Verify domain, senders, recipient, key installation, quota, and live delivery                  |
 | Contact forms         | Foundation implemented                            | Complete security/deployment testing, recipient/Turnstile setup, retention, legal consent text |
 | OpenAI                | Ledger/policy implemented; provider disabled      | Benchmark models and obtain explicit paid-call authorization                                   |
@@ -260,15 +304,15 @@ access, or modify shared Caddy/Christians Reunite outside an explicitly reviewed
 
 Next steps:
 
-1. Publish `feature/google-ingestion-hardening` through a separate PR, protected CI, and
-   protected-main deployment.
-2. Perform the authenticated Analytics smoke only with a normal verified employee
+1. Review and release `feature/offsite-backup-readiness` through protected CI; this
+   repository release does not authorize production backup activation.
+2. Continue Priority 4 repository-only Resend/forms and staff UX review after that
+   release; keep real delivery disabled.
+3. Perform the authenticated Analytics smoke only with a normal verified employee
    session or purpose-built non-secret smoke credential; do not weaken MFA.
-3. Keep production metrics unreconciled until stored results are compared with the exact
+4. Keep production metrics unreconciled until stored results are compared with the exact
    Google source consoles, including date window, property time zone, lag, filters, and
    metric semantics.
-4. Continue Priority 3 repository-side off-site backup readiness after the Priority 2
-   release gate.
 
 ## Authoritative references
 

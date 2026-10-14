@@ -2225,6 +2225,7 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
     const jobAllowed = canOrap(actor, 'automation.jobs.view');
     const jobScope = orapVisibleScope(actor, 'automation.jobs.view');
     const budgetAllowed = canOrap(actor, 'ai_budget.platform.view');
+    const backupAllowed = canOrap(actor, 'backups.status.view');
     return this.transaction(actor, async (client) => {
       const alerts = alertAllowed
         ? await query<{
@@ -2289,8 +2290,67 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
             'Platform AI budget is not configured',
           )
         : null;
+      const backup = backupAllowed
+        ? (
+            await query<{
+              byte_size: string;
+              created_at: Date;
+              error_code: string | null;
+              id: string;
+              kind: string;
+              last_restore_tested_at: Date | null;
+              off_server_copied_at: Date | null;
+              state: 'failed' | 'healthy' | 'local_only' | 'stale';
+              verified_at: Date | null;
+            }>(
+              client,
+              `SELECT record.id, record.kind, record.byte_size::text,
+                      record.created_at, record.verified_at,
+                      CASE WHEN record.off_server_pruned_at IS NULL
+                           THEN record.off_server_copied_at END AS off_server_copied_at,
+                      record.error_code,
+                      (SELECT max(restore_tested_at) FROM backup_records
+                        WHERE restore_tested_at IS NOT NULL) AS last_restore_tested_at,
+                      CASE
+                        WHEN record.state <> 'complete' OR record.verified_at IS NULL THEN 'failed'
+                        WHEN record.created_at < now() - interval '26 hours' THEN 'stale'
+                        WHEN record.off_server_copied_at IS NULL
+                          OR record.off_server_pruned_at IS NOT NULL THEN 'local_only'
+                        ELSE 'healthy'
+                      END AS state
+                 FROM backup_records record
+                WHERE record.state <> 'pruned'
+                ORDER BY record.created_at DESC
+                LIMIT 1`,
+              [],
+            )
+          ).rows[0]
+        : undefined;
       return {
         alerts: alerts.rows,
+        ...(backupAllowed
+          ? {
+              backup: backup
+                ? {
+                    byteSize: Number(backup.byte_size),
+                    createdAt: backup.created_at.toISOString(),
+                    ...(backup.error_code
+                      ? { errorCode: safeBackupErrorCode(backup.error_code) }
+                      : {}),
+                    id: backup.id,
+                    kind: backup.kind,
+                    ...(backup.last_restore_tested_at
+                      ? { lastRestoreTestedAt: backup.last_restore_tested_at.toISOString() }
+                      : {}),
+                    ...(backup.off_server_copied_at
+                      ? { offServerCopiedAt: backup.off_server_copied_at.toISOString() }
+                      : {}),
+                    state: backup.state,
+                    ...(backup.verified_at ? { verifiedAt: backup.verified_at.toISOString() } : {}),
+                  }
+                : null,
+            }
+          : {}),
         budget: budget
           ? {
               capUsdMicros: Number(budget.cap_usd_micros),
@@ -3294,6 +3354,18 @@ async function query<T extends Record<string, unknown>>(
 function required<T>(value: T | undefined, message: string): T {
   if (value === undefined) throw new Error(message);
   return value;
+}
+
+function safeBackupErrorCode(value: string): string {
+  return new Set([
+    'backup_failed',
+    'backup_resource_limit',
+    'database_dump_failed',
+    'integrity_verification_failed',
+    'offsite_transfer_failed',
+  ]).has(value)
+    ? value
+    : 'backup_failed';
 }
 
 function redactContactRecipient(
