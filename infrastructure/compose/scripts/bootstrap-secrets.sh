@@ -37,6 +37,7 @@ install -d -m 0700 "$secrets_dir"
 
 generate_secret() {
   name=$1
+  mode=${2:-0444}
   target=$secrets_dir/$name
   if [ -e "$target" ]; then
     [ -f "$target" ] && [ ! -L "$target" ] || {
@@ -47,7 +48,7 @@ generate_secret() {
       printf 'Existing secret has an invalid format: %s\n' "$name" >&2
       exit 65
     fi
-    chmod 0444 "$target"
+    chmod "$mode" "$target"
     printf 'kept %s\n' "$name"
     return
   fi
@@ -59,7 +60,7 @@ generate_secret() {
     printf 'Generated secret failed validation: %s\n' "$name" >&2
     exit 70
   }
-  chmod 0444 "$temporary"
+  chmod "$mode" "$temporary"
   mv "$temporary" "$target"
   trap - EXIT HUP INT TERM
   printf 'created %s\n' "$name"
@@ -73,12 +74,15 @@ for secret_name in \
   mfa_encryption_key \
   preview_signing_key \
   contact_encryption_key \
-  google_token_encryption_key \
-  backup_encryption_key \
-  backup_restore_password
+  google_token_encryption_key
 do
   generate_secret "$secret_name"
 done
+
+# This key is consumed only by the root-run backup container. Unlike application
+# secrets, it never needs to be readable by an unprivileged runtime user.
+generate_secret backup_encryption_key 0400
+generate_secret backup_restore_password 0444
 
 keyring_target=$secrets_dir/mfa_encryption_keyring
 keyring_pattern='^\{"activeVersion":[1-9][0-9]*,"keys":\{"[1-9][0-9]*":"[a-f0-9]{64}"(,"[1-9][0-9]*":"[a-f0-9]{64}")*\}\}$'
