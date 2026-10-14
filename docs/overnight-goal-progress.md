@@ -2,7 +2,7 @@
 
 **Started:** 2026-10-13 (America/Chicago)
 
-**Working branch:** `feature/staff-ux-recovery`
+**Working branch:** `docs/context-update-20261014-0853z`
 **Source goal:** `OMNIREACH_AUTONOMOUS_OVERNIGHT_GOAL.md`
 
 This file is the durable resume point for the autonomous overnight goal. Evidence states
@@ -12,12 +12,11 @@ work, `WAITING_FOR_OWNER` needs a human decision/credential, and
 
 ## Current milestone
 
-- `IN_PROGRESS` — Priorities 1, 2, and the repository-only Priority 3 slice are merged
-  and deployed through protected workflows. Production backup activation remains
-  separately owner-gated and has not occurred.
-- Current focus: finish the Priority 4 staff accessibility/recovery UX and correct the
-  stale fail-closed inquiry smoke assertion, then release the exact candidate through
-  protected CI while preserving all recorded production-proof gaps.
+- `IN_PROGRESS` — Priorities 1 through 4 are merged and deployed through protected
+  workflows. Production backup and provider activation remain separately owner-gated
+  and have not occurred.
+- Current focus: complete the Priority 5 durable disabled-by-default AI proposal path
+  and synthetic benchmark while preserving all recorded production-proof gaps.
 
 ## Priority checklist
 
@@ -58,7 +57,8 @@ work, `WAITING_FOR_OWNER` needs a human decision/credential, and
 
 - [x] Audit and harden repository-side Resend/form flags, quotas, retries, diagnostics,
       role boundaries, and tests without activating real delivery.
-- [ ] Improve remaining employee-facing accessibility and recovery-safe affordances.
+- [x] Improve remaining employee-facing accessibility and recovery-safe affordances;
+      merge, deploy, and independently smoke the exact protected-main release.
 - [ ] `WAITING_FOR_OWNER` — activate or send real provider messages only with the
       recorded provider/sender/recipient authorization.
 
@@ -349,12 +349,32 @@ work, `WAITING_FOR_OWNER` needs a human decision/credential, and
   595 files, and production audit with zero vulnerabilities. The disposable runtime
   again proved restricted quota/database/authentication behavior, persistence, private
   isolation, six healthy worker kinds, and no credential leakage, then removed its
-  resources. Protected release remains pending.
+  resources. Protected release remained pending at this point in the evidence log.
+
+### 2026-10-14 UTC — Priority 4 corrective release completed
+
+- Committed the staff authentication UX and corrected production assertion as `b8d3c1e`,
+  pushed only `feature/staff-ux-recovery`, opened and attached
+  [PR #67](https://github.com/OmniReach-Websites/SEO-Automation/pull/67), and observed both
+  protected Branch CI runs pass. PR #67 was squash-merged as protected-main commit
+  `b06756bee636da166ed80122714c60600f231197`.
+- Main Branch CI run `38538086305` and production deployment run
+  [38538086374](https://github.com/OmniReach-Websites/SEO-Automation/actions/runs/38538086374)
+  passed for that exact commit. The deployment rebuilt and tested the source, created
+  immutable images/package, activated through the restricted ephemeral SSH identity,
+  verified Coop and OmniReach including the fail-closed inquiry endpoint, and removed
+  the identity.
+- Independent checks returned 200 for API readiness, OmniReach home, Terms, Coop,
+  login, recovery, and the MFA error state. The inquiry configuration returned exactly
+  `{"enabled":false}`; unauthenticated ORAP Operations returned 403; and login,
+  recovery, and MFA returned HTML with `Cache-Control: no-store`.
+- Real Resend/contact/alert delivery remains disabled. No provider message, DNS change,
+  backup activation, or paid OpenAI call was made by this release.
 
 ## Resume point
 
-Finish and release `feature/staff-ux-recovery` through protected CI without enabling any
-provider flag. Confirm a successful exact-commit production workflow and independent
-public/readiness/authorization smoke, then mark the remaining Priority 4 UX checkbox only
-if the full evidence passes. Preserve the authenticated Analytics, exact Google-console,
-real R2, and timed isolated-restore production-proof gaps.
+Begin Priority 5 from a fresh branch based on `origin/main`. Complete and verify the
+durable disabled-by-default AI proposal job/material/result path and synthetic benchmark
+without enabling paid production calls. Preserve protected-fact, per-field mode,
+per-site budget, platform budget, authenticated Analytics, exact Google-console, real
+R2, and timed isolated-restore requirements.
