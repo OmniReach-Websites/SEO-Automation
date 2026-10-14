@@ -44,7 +44,7 @@ ADRs record approved architecture decisions. Accepted ADRs are not reopened casu
 | D-013 | Approved                              | OmniReach owner/operations | 0006             | G18–G19, G29–G32      | R-003                                   |
 | D-014 | Approved; provider authority supplied | OmniReach owner/operations | 0006             | G17–G18, G31–G32      | Per-change DNS authorization            |
 | D-015 | Approved                              | OmniReach owner            | 0007             | G21, G25–G26          | R-012 for provider account/spend        |
-| D-016 | Approved; R2 activation proof pending | OmniReach owner/operations | 0008             | G29, G31–G32          | R-005                                   |
+| D-016 | Approved; initial activation verified | OmniReach owner/operations | 0008             | G29, G31–G32          | R-005 ongoing operations                |
 | D-017 | Approved                              | Security architecture      | 0001, 0008       | G02, G09, G12, G19    | None                                    |
 | D-018 | Approved; legal text pending          | OmniReach owner/legal      | 0009             | G27–G29, G32          | R-006                                   |
 | D-019 | Approved; account permissions pending | Architecture/operations    | 0009             | G27–G28               | R-007                                   |

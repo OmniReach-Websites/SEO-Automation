@@ -413,6 +413,17 @@ export function checkProductionCompose() {
   ) {
     errors.push('backup service must receive only DAC_READ_SEARCH for protected read-only volumes');
   }
+  if (
+    backupService?.environment?.OMNIREACH_PRODUCTION_ROOTS !==
+    '/var/lib/omnireach:/var/backups/omnireach'
+  ) {
+    errors.push('backup restore drill must deny all production filesystem roots');
+  }
+  if (
+    backupService?.environment?.OMNIREACH_PRODUCTION_DATABASE_TARGETS !== 'postgres:5432/omnireach'
+  ) {
+    errors.push('backup restore drill must deny the production database target');
+  }
   if (!productionDockerfile.includes('postgresql-client-16')) {
     errors.push('production migrator image must install the PostgreSQL 16 client explicitly');
   }

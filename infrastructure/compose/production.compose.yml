@@ -340,6 +340,8 @@ services:
         required: true
     environment:
       SOURCE_COMMIT_SHA: ${OMNIREACH_RELEASE_SHA}
+      OMNIREACH_PRODUCTION_ROOTS: /var/lib/omnireach:/var/backups/omnireach
+      OMNIREACH_PRODUCTION_DATABASE_TARGETS: postgres:5432/omnireach
     init: true
     networks:
       - backend

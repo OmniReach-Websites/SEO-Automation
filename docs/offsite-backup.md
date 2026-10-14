@@ -127,11 +127,17 @@ Record compressed encrypted database size, media/artifact size, daily change rat
 
 - [x] dedicated private R2 bucket and least-privilege object-list/get/put/delete credential scoped to that bucket; application-side key validation restricts operations to `omnireach/`;
 - [x] one non-backup transport probe uploaded, downloaded and checksum-verified, listed, and removed successfully;
-- [ ] encryption key and R2 credential are installed as separate host-only secret files;
-- [ ] both host-only systemd timers are enabled and a failure is observable in ORAP;
-- [ ] first upload verifies from a separate download;
-- [ ] a disposable restore verifies database contents and tenant-isolation policies;
-- [ ] measured restoration time and retained storage are recorded before the capability is called Live.
+- [x] encryption key and R2 credential are installed as separate host-only secret files;
+- [x] both host-only systemd timers are enabled and a failure is observable in ORAP;
+- [x] first upload verifies from a separate download;
+- [x] a disposable restore verifies database contents and tenant-isolation policies;
+- [x] measured restoration time and retained storage are recorded: 155,720 encrypted bytes and a 2.989-second restore on 2026-10-14.
+
+The first live drill verified 1 tenant, 1 site, and 86 PostgreSQL row-level-security
+policies. The temporary restore container and tmpfs database were removed after the
+drill. A deliberately triggered failure alert accumulated through deduplication and was
+automatically resolved after the successful backup. No object key, envelope hash,
+credential, database row, or archive content is recorded in this evidence.
 
 The bucket uses Standard storage in Cloudflare's provider-selected WNAM location. It has
 no public `r2.dev` exposure, custom domain, or CORS policy. Do not add a blanket
