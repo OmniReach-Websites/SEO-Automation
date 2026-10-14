@@ -18,6 +18,31 @@ afterEach(async () => {
 });
 
 describe('backup operational safety', () => {
+  it('resolves multiple CLI input paths without leaking Array callback arguments', async () => {
+    const fixture = await backupFixture(1);
+    const keyPath = join(fixture.root, 'backup.key');
+    const extraPath = join(fixture.root, 'extra.txt');
+    await writeFile(keyPath, 'ab'.repeat(32), { mode: 0o600 });
+    await writeFile(extraPath, 'second input');
+    vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+
+    await expect(
+      runBackupCli([
+        'backup',
+        '--destination',
+        fixture.backups,
+        '--key-file',
+        keyPath,
+        '--kind',
+        'daily',
+        '--input',
+        fixture.source,
+        '--input',
+        extraPath,
+      ]),
+    ).resolves.toMatchObject({ command: 'backup', files: 2, verified: true });
+  });
+
   it('maps raw failures to fixed non-secret alert classes', () => {
     expect(backupErrorCode(new Error('pg_dump exited 2 with credentials redacted'), 'backup')).toBe(
       'database_dump_failed',
@@ -188,5 +213,5 @@ async function backupFixture(count: number, sourceName = 'content.txt') {
     });
     ids.push(backup.id);
   }
-  return { audit, backups, ids, key, root };
+  return { audit, backups, ids, key, root, source };
 }

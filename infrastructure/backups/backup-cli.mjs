@@ -37,7 +37,7 @@ async function createBackup(options, environment) {
   const key = await readSecretFile(requiredOption(options, 'key-file'));
   const kind = options.kind ?? 'daily';
   if (!['daily', 'weekly'].includes(kind)) throw new Error('Backup kind must be daily or weekly');
-  const inputs = arrayOption(options, 'input').map(resolve);
+  const inputs = arrayOption(options, 'input').map((input) => resolve(input));
   const recorder = await recorderFromOptions(options);
   let temporary;
   try {
