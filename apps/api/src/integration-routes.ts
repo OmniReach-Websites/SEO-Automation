@@ -1,9 +1,16 @@
 import { canOrap, type OrapCapabilityKey, type OrapResourceTarget } from '@omnireach/auth';
 import type { AdminActor } from '@omnireach/tenant';
+import { renderOrapShell } from '@omnireach/ui';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import {
+  googleOAuthCallbackCookieName,
+  googleOAuthCallbackCookieOptions,
+} from './google-oauth-cookie.ts';
+import { GoogleIntegrationCallbackError } from './postgres-google.ts';
 import type { ResolvePlatformActor } from './orap-routes.ts';
 import { assertOrapRoutePolicyRegistry } from './orap-route-policy.ts';
+import { readCookie } from './request-auth.ts';
 import { requireSameOrigin } from './request-security.ts';
 
 export interface IntegrationEndpointService {
@@ -16,7 +23,6 @@ export interface IntegrationEndpointService {
     input: {
       readonly code: string;
       readonly propertyId?: string;
-      readonly siteId: string;
       readonly state: string;
     },
   ): Promise<unknown>;
@@ -44,6 +50,7 @@ export function registerIntegrationRoutes(
   server: FastifyInstance,
   service: IntegrationEndpointService,
   resolveActor: ResolvePlatformActor,
+  resolveCallbackActor: ResolvePlatformActor = resolveActor,
 ): void {
   assertOrapRoutePolicyRegistry();
   server.get('/v1/orap/sites/:siteId/integrations', async (request, reply) => {
@@ -71,32 +78,81 @@ export function registerIntegrationRoutes(
       );
       if (!params || !body) return;
       if (!authorizeCapability(actor, 'integrations.google.manage', params, reply)) return;
-      return reply
-        .code(201)
-        .send(await service.startGoogle(actor, { ...body, siteId: params.siteId }));
+      const result = await service.startGoogle(actor, { ...body, siteId: params.siteId });
+      const sessionToken = readCookie(request, '__Host-omnireach_session');
+      if (sessionToken) {
+        reply.setCookie(
+          googleOAuthCallbackCookieName,
+          sessionToken,
+          googleOAuthCallbackCookieOptions,
+        );
+      }
+      return reply.code(201).send(result);
     },
   );
   server.get('/v1/orap/integrations/google/callback', async (request, reply) => {
-    const actor = await authorize(request, reply, resolveActor);
+    const actor = await authorize(request, reply, resolveCallbackActor);
     if (!actor) return;
     const query = parse(
       z.object({
         code: z.string().min(1).max(2000),
         propertyId: z.string().min(1).max(300).optional(),
-        siteId: z.string().uuid(),
         state: z.string().min(16).max(200),
       }),
       request.query,
       reply,
     );
     if (!query) return;
-    if (!authorizeCapability(actor, 'integrations.google.manage', query, reply)) return;
-    return service.finishGoogle(actor, {
-      code: query.code,
-      siteId: query.siteId,
-      state: query.state,
-      ...(query.propertyId ? { propertyId: query.propertyId } : {}),
-    });
+    let result: unknown;
+    try {
+      result = await service.finishGoogle(actor, {
+        code: query.code,
+        state: query.state,
+        ...(query.propertyId ? { propertyId: query.propertyId } : {}),
+      });
+    } catch (error) {
+      if (!(error instanceof GoogleIntegrationCallbackError)) throw error;
+      request.log.error(
+        {
+          error: error.cause,
+          googleError: error.code,
+          googleStage: error.stage,
+          siteId: error.siteId,
+        },
+        'Google authorization callback failed',
+      );
+      reply.clearCookie(googleOAuthCallbackCookieName, googleOAuthCallbackCookieOptions);
+      const safeError = safeGoogleError(error.code);
+      if (!acceptsHtml(request)) {
+        return reply.code(502).send({ error: safeError, traceId: String(request.id) });
+      }
+      return reply
+        .code(303)
+        .redirect(
+          `/orap/sites/${encodeURIComponent(error.siteId)}?notice=${encodeURIComponent(`google-${safeError}`)}`,
+        );
+    }
+    reply.clearCookie(googleOAuthCallbackCookieName, googleOAuthCallbackCookieOptions);
+    if (!acceptsHtml(request)) return result;
+    const completion = googleCompletion.safeParse(result);
+    if (!completion.success) return result;
+    if (completion.data.status === 'connected') {
+      return reply
+        .code(303)
+        .redirect(
+          `/orap/sites/${encodeURIComponent(completion.data.siteId)}?notice=google-connected`,
+        );
+    }
+    if (completion.data.status === 'no_matching_property') {
+      return reply
+        .code(303)
+        .redirect(
+          `/orap/sites/${encodeURIComponent(completion.data.siteId)}?notice=google-no-match`,
+        );
+    }
+    return reply
+      .type('text/html; charset=utf-8')
+      .send(renderGooglePropertySelection(completion.data.siteId, completion.data));
   });
   server.post(
     '/v1/orap/sites/:siteId/integrations/google/select',
@@ -170,4 +226,72 @@ function parse<T>(schema: z.ZodType<T>, value: unknown, reply: FastifyReply): T 
     return undefined;
   }
   return result.data;
+}
+
+const googleCompletion = z.discriminatedUnion('status', [
+  z.object({ siteId: z.string().uuid(), status: z.literal('connected') }),
+  z.object({ siteId: z.string().uuid(), status: z.literal('no_matching_property') }),
+  z.object({
+    eligibleProperties: z.array(
+      z.object({
+        id: z.string().min(1).max(300),
+        kind: z.enum(['ga4', 'search_console']),
+        siteUrl: z.string().min(1).max(500),
+      }),
+    ),
+    pendingSelectionId: z.string().uuid(),
+    siteId: z.string().uuid(),
+    status: z.literal('property_selection_required'),
+  }),
+]);
+
+function acceptsHtml(request: FastifyRequest): boolean {
+  const accept = request.headers.accept;
+  return typeof accept === 'string' && accept.includes('text/html');
+}
+
+function safeGoogleError(code: string): string {
+  return [
+    'insufficient_scope',
+    'insufficient_scope_or_quota',
+    'invalid_token_response',
+    'missing_refresh_token',
+    'provider_rejected',
+    'provider_unavailable',
+    'quota_exhausted',
+    'retry_exhausted',
+    'revoked_or_expired',
+  ].includes(code)
+    ? code
+    : 'connection_failed';
+}
+
+function renderGooglePropertySelection(
+  siteId: string,
+  input: Extract<z.infer<typeof googleCompletion>, { status: 'property_selection_required' }>,
+): string {
+  const options = input.eligibleProperties
+    .map(
+      (property) =>
+        `<option value="${escapeHtml(property.id)}" data-kind="${property.kind}">${escapeHtml(property.siteUrl)} — ${property.kind === 'ga4' ? 'Google Analytics 4' : 'Search Console'}</option>`,
+    )
+    .join('');
+  const propertyKind = input.eligibleProperties[0]?.kind ?? 'ga4';
+  return renderOrapShell({
+    actions: `<a class="button secondary" href="/orap/sites/${encodeURIComponent(siteId)}">Cancel</a>`,
+    content: `<section class="panel"><p class="lede">More than one Google property matches this website. Select the exact reporting property OmniReach should use.</p><form method="post" action="/orap/sites/${encodeURIComponent(siteId)}/integrations/google/select"><input type="hidden" name="pendingSelectionId" value="${escapeHtml(input.pendingSelectionId)}"><input type="hidden" name="propertyKind" value="${propertyKind}"><label for="propertyId">Google property</label><select id="propertyId" name="propertyId" required>${options}</select><button type="submit">Connect selected property</button></form></section>`,
+    current: 'sites',
+    eyebrow: 'Google integrations',
+    heading: 'Select a property',
+    title: 'Select Google property',
+  });
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(
+    /[&<>"']/gu,
+    (character) =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character] ??
+      character,
+  );
 }

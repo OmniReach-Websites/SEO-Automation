@@ -1,4 +1,5 @@
 import type {
+  PostgresAiProposalRequestRepository,
   PostgresAssetRepository,
   PostgresContentRepository,
   ContentActorContext,
@@ -23,16 +24,20 @@ export interface CustomerPreviewAdapter {
 }
 
 export class PostgresCustomerService implements CustomerEndpointService {
+  readonly aiProposalRequestsEnabled: boolean;
+
   constructor(
     private readonly pool: TenantTransactionPool,
     private readonly content: PostgresContentRepository,
     private readonly assets: PostgresAssetRepository,
     private readonly previews: CustomerPreviewAdapter,
     private readonly contactEncryptionKey: Uint8Array,
+    private readonly aiProposals?: PostgresAiProposalRequestRepository,
   ) {
     if (contactEncryptionKey.byteLength !== 32) {
       throw new Error('Contact encryption key must be exactly 32 bytes');
     }
+    this.aiProposalRequestsEnabled = aiProposals !== undefined;
   }
 
   async dashboard(principal: CustomerPrincipal): Promise<unknown> {
@@ -281,6 +286,14 @@ export class PostgresCustomerService implements CustomerEndpointService {
 
   proposals(principal: CustomerPrincipal): Promise<unknown> {
     return this.content.listProposals(actorContext(principal));
+  }
+
+  requestProposal(
+    principal: CustomerPrincipal,
+    input: { evidence: string[]; fieldId: string; fieldPurpose: string; idempotencyKey: string },
+  ): Promise<unknown> {
+    if (!this.aiProposals) throw new Error('AI proposal requests are disabled');
+    return this.aiProposals.request(actorContext(principal), input);
   }
 
   reviewProposal(

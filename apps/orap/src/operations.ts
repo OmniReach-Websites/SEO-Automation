@@ -4,6 +4,7 @@ export {
   renderOperationsCenter,
   type AlertRow,
   type BudgetView,
+  type EmailOperationsView,
   type DomainRow,
   type IntegrationRow,
   type JobRow,

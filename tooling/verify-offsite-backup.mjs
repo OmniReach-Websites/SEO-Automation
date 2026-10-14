@@ -72,6 +72,73 @@ try {
     prefixEscapeRejected = true;
   }
   if (!prefixEscapeRejected) throw new Error('Off-site prefix escape was not rejected');
+  let objectBudgetRejected = false;
+  try {
+    await new S3CompatibleBackupStore({
+      accessKeyId: 'fixture-access-key',
+      bucket: 'fixture-bucket',
+      endpoint: 'https://fixture.r2.example',
+      fetchImpl,
+      maximumObjectBytes: 4,
+      prefix: 'omnireach/production',
+      region: 'auto',
+      secretAccessKey: 'fixture-secret-key',
+    }).upload(source);
+  } catch {
+    objectBudgetRejected = true;
+  }
+  let requestBudgetRejected = false;
+  try {
+    await new S3CompatibleBackupStore({
+      accessKeyId: 'fixture-access-key',
+      bucket: 'fixture-bucket',
+      endpoint: 'https://fixture.r2.example',
+      fetchImpl,
+      maximumRequests: 1,
+      prefix: 'omnireach/request-budget',
+      region: 'auto',
+      secretAccessKey: 'fixture-secret-key',
+    }).upload(source);
+  } catch {
+    requestBudgetRejected = true;
+  }
+  if (!objectBudgetRejected || !requestBudgetRejected) {
+    throw new Error('Off-site backup budgets did not fail closed');
+  }
+  objects.set('omnireach/production/oversized.orbk', Buffer.from('oversized'));
+  let streamedDownloadBudgetRejected = false;
+  try {
+    await new S3CompatibleBackupStore({
+      accessKeyId: 'fixture-access-key',
+      bucket: 'fixture-bucket',
+      endpoint: 'https://fixture.r2.example',
+      fetchImpl,
+      maximumObjectBytes: 4,
+      prefix: 'omnireach/production',
+      region: 'auto',
+      secretAccessKey: 'fixture-secret-key',
+    }).download('omnireach/production/oversized.orbk', join(root, 'oversized.orbk'));
+  } catch {
+    streamedDownloadBudgetRejected = true;
+  }
+  let listResponseBudgetRejected = false;
+  try {
+    await new S3CompatibleBackupStore({
+      accessKeyId: 'fixture-access-key',
+      bucket: 'fixture-bucket',
+      endpoint: 'https://fixture.r2.example',
+      fetchImpl,
+      maximumListResponseBytes: 8,
+      prefix: 'omnireach/production',
+      region: 'auto',
+      secretAccessKey: 'fixture-secret-key',
+    }).list();
+  } catch {
+    listResponseBudgetRejected = true;
+  }
+  if (!streamedDownloadBudgetRejected || !listResponseBudgetRejected) {
+    throw new Error('Off-site response budgets did not fail closed');
+  }
   console.log(
     JSON.stringify({
       awsSignature: true,
@@ -79,7 +146,11 @@ try {
       downloadVerified: true,
       leastPrivilegePrefix: true,
       listVerified: true,
+      listResponseBudgetRejected,
+      objectBudgetRejected,
       ok: true,
+      requestBudgetRejected,
+      streamedDownloadBudgetRejected,
       uploadVerified: true,
     }),
   );

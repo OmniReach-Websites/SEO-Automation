@@ -215,25 +215,25 @@ features. They require separate product decisions, designs, security review, and
 
 ## Capability status
 
-| Capability                       | Repository state                                    | Still needed                                                 |
-| -------------------------------- | --------------------------------------------------- | ------------------------------------------------------------ |
-| OmniReach marketing site         | Implemented; build passes                           | Confirm deployed release and live form delivery              |
-| Public inquiry form              | Implemented/tested                                  | Enable provider, verify sender and owner recipients          |
-| ORAP                             | Implemented with capability/audit controls          | Verify VPS release and worker visibility                     |
-| Customer auth/host binding/RBAC  | Implemented/tested                                  | Real Coop DNS, identity, invited-owner smoke                 |
-| Draft/validation/concurrency     | Implemented; staging/browser proof passes           | Authorized production smoke                                  |
-| Preview                          | Implemented, signed/scoped/no-index; staged         | Authorized production smoke                                  |
-| Publish/history/restore          | Immutable daemon publish/restore staged             | Authorized production smoke                                  |
-| Coop 20-field rendering          | Exhaustive field/media artifact proof passes        | Authorized production content review                         |
-| Media storage/validation         | Safe upload and published bytes tested              | Optional richer asset-library picker                         |
-| Scheduler                        | Daemon, DB lease, dispatch verified                 | Production observation                                       |
-| Runner/recovery                  | Retry/cancel/heartbeat/stale recovery verified      | Production observation                                       |
-| Publisher/crawler/SEO/monitoring | Implemented; Compose services start healthy         | Authorized production representative work                    |
-| AIO/OpenAI                       | Libraries/policies implemented                      | Model/cap selected; production job wiring and benchmark TODO |
-| Search Console/GA4               | Connector foundation; credentials/callback approved | Consent screen, property selection and live comparison TODO  |
-| Backups                          | Local policy/harness foundations                    | R2 permission/S3 credentials, schedule and real restore TODO |
-| Payments/subscriptions           | Manual subscription state                           | Provider/pricing intentionally deferred                      |
-| Booking/SMS campaigns/commerce   | Not in scope                                        | Separate product decision/build                              |
+| Capability                       | Repository state                                        | Still needed                                                                         |
+| -------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| OmniReach marketing site         | Implemented; build passes                               | Confirm deployed release and live form delivery                                      |
+| Public inquiry form              | Implemented/tested                                      | Enable provider, verify sender and owner recipients                                  |
+| ORAP                             | Implemented with capability/audit controls              | Verify VPS release and worker visibility                                             |
+| Customer auth/host binding/RBAC  | Implemented/tested                                      | Real Coop DNS, identity, invited-owner smoke                                         |
+| Draft/validation/concurrency     | Implemented; staging/browser proof passes               | Authorized production smoke                                                          |
+| Preview                          | Implemented, signed/scoped/no-index; staged             | Authorized production smoke                                                          |
+| Publish/history/restore          | Immutable daemon publish/restore staged                 | Authorized production smoke                                                          |
+| Coop 20-field rendering          | Exhaustive field/media artifact proof passes            | Authorized production content review                                                 |
+| Media storage/validation         | Safe upload and published bytes tested                  | Optional richer asset-library picker                                                 |
+| Scheduler                        | Daemon, DB lease, dispatch verified                     | Production observation                                                               |
+| Runner/recovery                  | Retry/cancel/heartbeat/stale recovery verified          | Production observation                                                               |
+| Publisher/crawler/SEO/monitoring | Implemented; Compose services start healthy             | Authorized production representative work                                            |
+| AIO/OpenAI                       | Libraries/policies implemented                          | Model/cap selected; production job wiring and benchmark TODO                         |
+| Search Console/GA4               | Connector foundation; credentials/callback approved     | Consent screen, property selection and live comparison TODO                          |
+| Backups                          | Local policy/harness plus verified private R2 transport | VPS secret installation, schedule, retention evidence, alerts, and real restore TODO |
+| Payments/subscriptions           | Manual subscription state                               | Provider/pricing intentionally deferred                                              |
+| Booking/SMS campaigns/commerce   | Not in scope                                            | Separate product decision/build                                                      |
 
 ## Production services and invariants
 

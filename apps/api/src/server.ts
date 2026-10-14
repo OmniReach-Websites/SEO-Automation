@@ -81,6 +81,7 @@ export interface ApiServerOptions {
   orapService?: OrapAdministrationEndpointService;
   platformInquiryService?: PlatformInquiryEndpointService;
   resolvePlatformActor?: ResolvePlatformActor;
+  resolveGoogleCallbackActor?: ResolvePlatformActor;
   resolveCustomerPrincipal?: ResolveCustomerPrincipal;
   resolveContactSite?: ResolveContactSite;
   trustedProxyCidrs?: string[];
@@ -203,7 +204,12 @@ export function buildApiServer(options: ApiServerOptions = {}) {
     registerOrapRoutes(server, options.orapService, options.resolvePlatformActor);
   }
   if (options.integrationService && options.resolvePlatformActor) {
-    registerIntegrationRoutes(server, options.integrationService, options.resolvePlatformActor);
+    registerIntegrationRoutes(
+      server,
+      options.integrationService,
+      options.resolvePlatformActor,
+      options.resolveGoogleCallbackActor,
+    );
   }
   if (options.platformInquiryService) {
     registerPlatformInquiryRoutes(server, options.platformInquiryService);

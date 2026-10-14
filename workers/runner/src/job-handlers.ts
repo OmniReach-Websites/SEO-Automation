@@ -2,14 +2,31 @@ import { lookup } from 'node:dns/promises';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
+import {
+  BudgetCapExceededError,
+  OpenAiProposalProvider,
+  ProposalEvaluationError,
+  ProviderResponseError,
+} from '@omnireach/ai';
 import { validateSiteContract } from '@omnireach/contracts';
+import { PostgresEmailDeliveryQuota, type EmailDeliveryQuotaPool } from '@omnireach/database';
+import { ResendUrgentEmailAdapter } from '@omnireach/integrations';
 import { JobExecutionError, type JobEnvelope } from '@omnireach/queue';
 import { auditSite, type AuditPage } from '@omnireach/seo-core';
 import {
+  AiReviewCycleQuotaExceededError,
+  PostgresAiReviewCycleQuota,
+  SitePolicyDeniedError,
   withWorkerTransaction,
   type TenantTransactionClient,
   type TenantTransactionPool,
 } from '@omnireach/tenant';
+import {
+  executeAiAutomation,
+  PostgresAiBudgetLedger,
+  PostgresAiProposalJobLoader,
+  PostgresAiProposalStager,
+} from '@omnireach/worker-aio';
 import { crawlSite } from '@omnireach/worker-crawler';
 import { PostgresAlertCenter } from '@omnireach/worker-monitoring';
 import { runQueuedPublication } from '@omnireach/worker-publisher/run-publication';
@@ -45,7 +62,8 @@ export async function executeCategory(
       await runHealthCheck(envelope, context);
       return;
     case 'aio_proposal':
-      throw new JobExecutionError('AIO execution is disabled by policy', 'cancelled');
+      await runAiProposal(envelope, context);
+      return;
     case 'metrics_sync':
       await runGoogleMetricsSync(envelope, {
         environment: context.environment,
@@ -55,6 +73,122 @@ export async function executeCategory(
       return;
     case 'backup':
       throw new JobExecutionError('No approved production handler is configured', 'cancelled');
+  }
+}
+
+export async function runAiProposal(
+  envelope: JobEnvelope,
+  context: JobHandlerContext,
+): Promise<void> {
+  if (context.environment.OPENAI_PROVIDER_ENABLED !== 'true') {
+    throw new JobExecutionError('AI provider is disabled by policy', 'cancelled');
+  }
+  const apiKey = requiredEnvironment(context.environment, 'OPENAI_API_KEY');
+  const modelSelection = requiredEnvironment(context.environment, 'OPENAI_MODEL_SELECTION');
+  const modelAliases = modelAliasEnvironment(context.environment.OPENAI_MODEL_ALIASES_JSON);
+  const providerModel = modelAliases[modelSelection];
+  if (!providerModel) {
+    throw new JobExecutionError('AI model selection is not configured', 'permanent');
+  }
+  const now = new Date();
+  try {
+    const material = await new PostgresAiProposalJobLoader(context.pool).load(
+      envelope,
+      context.execution.jobId,
+      modelSelection,
+      providerModel,
+      now,
+    );
+    if (material.existingProposalId) return;
+    const stager = new PostgresAiProposalStager(context.pool);
+    await executeAiAutomation({
+      budget: new PostgresAiBudgetLedger(context.pool, context.execution.jobId),
+      input: material.input,
+      maxOutputTokens: integerEnvironment(
+        context.environment.OPENAI_MAX_OUTPUT_TOKENS,
+        800,
+        1,
+        20_000,
+      ),
+      mode: material.mode,
+      modelPrice: material.modelPrice,
+      now,
+      protectedFacts: material.protectedFacts,
+      provider: new OpenAiProposalProvider({
+        apiKey,
+        maxOutputTokens: integerEnvironment(
+          context.environment.OPENAI_MAX_OUTPUT_TOKENS,
+          800,
+          1,
+          20_000,
+        ),
+        modelAliases,
+        modelSelection,
+        promptVersion: 1,
+        timeoutMs: integerEnvironment(
+          context.environment.OPENAI_TIMEOUT_MS,
+          30_000,
+          1_000,
+          120_000,
+        ),
+      }),
+      providerEnabled: true,
+      raiseAlert: async (safeMessage) => {
+        await new PostgresAlertCenter(context.pool).report(
+          {
+            jobId: context.execution.jobId,
+            siteId: envelope.siteId,
+            tenantId: envelope.tenantId,
+          },
+          {
+            message: safeMessage,
+            remediationUrl: '/orap/operations',
+            scope: `site:${envelope.siteId}`,
+            severity: 'error',
+            source: 'automation.ai-proposal',
+          },
+        );
+      },
+      reviewCycles: new PostgresAiReviewCycleQuota(context.pool),
+      siteId: envelope.siteId,
+      stageProposal: (proposal) =>
+        stager.stage(
+          {
+            actorId: material.actorId,
+            baseRevision: material.baseRevision,
+            currentValue: material.currentValue,
+            fieldId: material.fieldId,
+            jobId: context.execution.jobId,
+            materialId: material.materialId,
+            policyVersion: material.policyVersion,
+            siteId: envelope.siteId,
+            tenantId: envelope.tenantId,
+            traceId: envelope.traceId,
+          },
+          {
+            ...proposal,
+            evidence: material.evidence,
+            expiresAt: new Date(now.getTime() + 14 * 24 * 60 * 60_000),
+            provider: 'openai',
+          },
+        ),
+      tenantId: envelope.tenantId,
+    });
+  } catch (error) {
+    if (error instanceof ProviderResponseError) {
+      throw new JobExecutionError(error.message, error.category);
+    }
+    if (
+      error instanceof BudgetCapExceededError ||
+      error instanceof AiReviewCycleQuotaExceededError ||
+      error instanceof SitePolicyDeniedError
+    ) {
+      throw new JobExecutionError(error.message, 'cancelled');
+    }
+    if (error instanceof ProposalEvaluationError) {
+      throw new JobExecutionError('AI proposal failed deterministic evaluation', 'permanent');
+    }
+    throw error;
   }
 }
 
@@ -321,6 +455,7 @@ async function runHealthCheck(envelope: JobEnvelope, context: JobHandlerContext)
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
   } catch {
+    const email = alertEmailAdapter(context);
     await new PostgresAlertCenter(context.pool).report(
       {
         jobId: context.execution.jobId,
@@ -334,9 +469,25 @@ async function runHealthCheck(envelope: JobEnvelope, context: JobHandlerContext)
         severity: 'critical',
         source: 'monitoring.public-site',
       },
+      email,
     );
     throw new JobExecutionError('Public site health check failed', 'retryable');
   }
+}
+
+function alertEmailAdapter(context: JobHandlerContext) {
+  if (context.environment.ALERT_EMAIL_DELIVERY_ENABLED !== 'true') return undefined;
+  const apiKey = context.environment.RESEND_API_KEY?.trim();
+  const from = context.environment.RESEND_ALERT_FROM?.trim();
+  const recipient = context.environment.ALERT_EMAIL_RECIPIENT?.trim();
+  if (!apiKey || !from || !recipient) {
+    throw new JobExecutionError('Alert email configuration is incomplete', 'permanent');
+  }
+  const quota = new PostgresEmailDeliveryQuota(
+    context.pool as unknown as EmailDeliveryQuotaPool,
+    'omnireach_worker',
+  );
+  return new ResendUrgentEmailAdapter({ apiKey, from, quota, recipient });
 }
 
 function auditPage(evidence: Record<string, unknown>): AuditPage {
@@ -415,6 +566,32 @@ function integerEnvironment(
   const value = raw === undefined ? fallback : Number(raw);
   if (!Number.isInteger(value) || value < minimum || value > maximum)
     throw new Error('Worker limit is invalid');
+  return value;
+}
+function modelAliasEnvironment(raw: string | undefined): Readonly<Record<string, string>> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw ?? '{}');
+  } catch {
+    throw new JobExecutionError('AI model aliases are invalid', 'permanent');
+  }
+  if (
+    !record(parsed) ||
+    Object.keys(parsed).length > 20 ||
+    Object.entries(parsed).some(
+      ([alias, model]) =>
+        !/^[a-z0-9][a-z0-9._-]{0,79}$/u.test(alias) ||
+        typeof model !== 'string' ||
+        !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$/u.test(model),
+    )
+  ) {
+    throw new JobExecutionError('AI model aliases are invalid', 'permanent');
+  }
+  return parsed as Record<string, string>;
+}
+function requiredEnvironment(environment: NodeJS.ProcessEnv, key: string): string {
+  const value = environment[key]?.trim();
+  if (!value) throw new JobExecutionError('AI provider configuration is incomplete', 'permanent');
   return value;
 }
 function record(value: unknown): value is Record<string, unknown> {

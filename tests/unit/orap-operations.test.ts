@@ -33,6 +33,45 @@ describe('ORAP operations views', () => {
         reservedUsdMicros: 500_000,
         usedUsdMicros: 1_000_000,
       },
+      email: {
+        channels: [
+          {
+            enabled: false,
+            kind: 'Authentication',
+            sender: 'auth@updates.omnireach.cloud',
+          },
+          {
+            enabled: true,
+            kind: 'Urgent alerts',
+            sender: 'alerts@updates.omnireach.cloud',
+          },
+          {
+            enabled: false,
+            kind: 'Forms and inquiries',
+            sender: 'forms@updates.omnireach.cloud',
+          },
+        ],
+        credentialConfigured: true,
+        failedAttemptCount: 2,
+        lastAttemptAt: '2026-10-14T01:00:00.000Z',
+        lastErrorCode: 'provider_429',
+        monthlyLimit: 3000,
+        periodStart: '2026-10-01T00:00:00.000Z',
+        provider: 'Resend',
+        reservedCount: 1,
+        sentCount: 12,
+        turnstileConfigured: false,
+      },
+      backup: {
+        byteSize: 1_572_864,
+        createdAt: '2026-10-14T00:00:00.000Z',
+        id: 'backup-1',
+        kind: 'daily',
+        lastRestoreTestedAt: '2026-10-01T00:00:00.000Z',
+        offServerCopiedAt: '2026-10-14T00:10:00.000Z',
+        state: 'healthy',
+        verifiedAt: '2026-10-14T00:05:00.000Z',
+      },
       jobs: [
         {
           category: 'crawl',
@@ -65,6 +104,18 @@ describe('ORAP operations views', () => {
     expect(html).toContain('/resolve');
     expect(html).toContain('/replay');
     expect(html).toContain('/cancel');
+    expect(html).toContain('Backup &amp; recovery');
+    expect(html).toContain('Off-site copy verified');
+    expect(html).toContain('1.5 MiB');
+    expect(html).toContain('Email delivery');
+    expect(html).toContain('12 / 3000');
+    expect(html).toContain('provider_429');
+    expect(html).not.toContain('recipient@example.test');
+  });
+  it('states honestly when no verified backup record exists', () => {
+    const html = renderOperationsCenter({ alerts: [], backup: null, budget: null, jobs: [] });
+    expect(html).toContain('No verified backup evidence');
+    expect(html).toContain('RPO and restore readiness remain unverified');
   });
   it('shows explicit disconnected and stale integration health', () => {
     expect(renderIntegrationHealth([])).toContain('Not connected');

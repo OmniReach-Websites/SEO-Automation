@@ -8,6 +8,7 @@
     "kind": "worker"
   },
   "dependencies": {
+    "@omnireach/ai": "0.0.0",
     "@omnireach/database": "0.0.0",
     "@omnireach/integrations": "0.0.0",
     "@omnireach/observability": "0.0.0",
@@ -17,6 +18,7 @@
     "@omnireach/contracts": "0.0.0",
     "@omnireach/seo-core": "0.0.0",
     "@omnireach/worker-crawler": "0.0.0",
+    "@omnireach/worker-aio": "0.0.0",
     "@omnireach/worker-monitoring": "0.0.0",
     "@omnireach/worker-publisher": "0.0.0",
     "bullmq": "5.61.2"

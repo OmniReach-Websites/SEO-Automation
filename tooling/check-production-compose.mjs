@@ -142,7 +142,15 @@ export function checkProductionCompose() {
     errors.push('OmniReach public site must not publish a host port');
   }
 
-  for (const worker of ['scheduler', 'runner', 'publisher', 'crawler', 'seo', 'monitoring']) {
+  for (const worker of [
+    'scheduler',
+    'runner',
+    'aio',
+    'publisher',
+    'crawler',
+    'seo',
+    'monitoring',
+  ]) {
     const service = compose.services?.[worker];
     if (!service?.healthcheck || service?.restart !== 'unless-stopped') {
       errors.push(`${worker} must restart and expose a health check`);
@@ -156,6 +164,9 @@ export function checkProductionCompose() {
   }
   if (compose.services?.publisher?.environment?.WORKER_CATEGORIES !== 'publish') {
     errors.push('publisher must consume only the publish queue');
+  }
+  if (compose.services?.aio?.environment?.WORKER_CATEGORIES !== 'aio_proposal') {
+    errors.push('aio must consume only the aio_proposal queue');
   }
   if (compose.services?.crawler?.environment?.WORKER_CATEGORIES !== 'crawl') {
     errors.push('crawler must consume only the crawl queue');

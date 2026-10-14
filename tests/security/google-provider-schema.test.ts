@@ -12,6 +12,20 @@ const migration = readFileSync(
   'utf8',
 );
 const service = readFileSync(resolve(root, 'apps/api/src/postgres-google.ts'), 'utf8');
+const metricIdentityMigration = readFileSync(
+  resolve(
+    root,
+    'packages/database/prisma/migrations/20261013170000_google_metric_observation_identity/migration.sql',
+  ),
+  'utf8',
+);
+const syncDiagnosticsMigration = readFileSync(
+  resolve(
+    root,
+    'packages/database/prisma/migrations/20261014070000_google_sync_diagnostics/migration.sql',
+  ),
+  'utf8',
+);
 
 describe('Google provider persistence boundary', () => {
   it('stores one-use hashed OAuth state and encrypted request/token envelopes', () => {
@@ -39,7 +53,21 @@ describe('Google provider persistence boundary', () => {
     expect(service).toContain('integration.google.consent_started');
     expect(service).toContain('integration.google.connected');
     expect(service).toContain('integration.google.disconnected');
-    expect(service).toContain('ON CONFLICT (connection_id, source_hash) DO NOTHING');
+    expect(service).toContain('ON CONFLICT (connection_id, source_hash) DO UPDATE');
+    expect(service).toContain('metric_snapshots.value IS DISTINCT FROM EXCLUDED.value');
+    expect(metricIdentityMigration).toContain(
+      'PARTITION BY connection_id, source, metric, dimensions, window_start, window_end',
+    );
     expect(service).toContain("status = 'disconnected'");
+  });
+
+  it('separates collection attempts from stored results and clears stale metrics on remap', () => {
+    expect(syncDiagnosticsMigration).toContain('ADD COLUMN last_attempted_at timestamptz(3)');
+    expect(syncDiagnosticsMigration).toContain("'partial'");
+    expect(service).toContain('DELETE FROM metric_snapshots');
+    expect(service).toContain('last_synced_at = NULL');
+    expect(service).toContain('last_attempted_at = NULL');
+    expect(service).toContain('sync_cursor = NULL');
+    expect(service).toContain('refresh_failure_code = NULL');
   });
 });

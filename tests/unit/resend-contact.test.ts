@@ -68,6 +68,27 @@ describe('Resend contact adapter', () => {
     });
   });
 
+  it('retries transient primary failures with bounded exponential backoff', async () => {
+    const fetchImplementation = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({}, { status: 503 }))
+      .mockResolvedValueOnce(Response.json({}, { status: 429 }))
+      .mockResolvedValueOnce(Response.json({ id: 'resend-primary' }));
+    const sleep = vi.fn(async () => undefined);
+    const adapter = new ResendContactDelivery({
+      apiKey: 'fictional-resend-key',
+      fetchImplementation,
+      from: 'forms@updates.omnireach.cloud',
+      maxAttempts: 4,
+      sleep,
+    });
+    await expect(adapter.deliver(submission)).resolves.toEqual({
+      providerReference: 'resend-primary',
+    });
+    expect(fetchImplementation).toHaveBeenCalledTimes(3);
+    expect(sleep.mock.calls).toEqual([[250], [500]]);
+  });
+
   it('rejects invalid sender and recipient addresses before provider delivery', async () => {
     expect(
       () =>

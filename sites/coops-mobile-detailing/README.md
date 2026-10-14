@@ -30,8 +30,12 @@ The real work photos in `public/images/` are optimized derivatives of images alr
 
 The owner approved the site content, service information, photos, and production launch on 2026-10-12. The canonical production hostname is `coopsmobiledetailingaledo.com`; `www.coopsmobiledetailingaledo.com` redirects to the canonical hostname. The first-car savings component remains disabled until a current amount is supplied.
 
+The production Content Security Policy permits inline style attributes only for the site's reviewed section ordering, progress indicator, and interactive comparison control. Inline scripts remain restricted to reviewed SHA-256 hashes, and inline `<style>` elements remain disallowed.
+
 ## OmniReach content policy
 
 The `site.manifest.json` declares stable components, routes, editable marketing fields, protected facts, and AI modes. Prices, contact information, service areas and policies, story facts, financial progress, and legal text are protected with `aiMode: disabled`. The static pages consume the supported content snapshot for the homepage heading and introduction. The remaining declared fields are ready for the central content system once its structured collection support is connected; the customer site does not write source files or run an admin backend.
 
 Production deployment uses the repository's protected, main-branch OmniReach workflow. The immutable runtime release includes the static site service and installs its host-exact shared-Caddy route with rollback-safe validation.
+
+Every HTML route loads the single consent-aware GA4 Google tag `G-B6S8N9JHL8` from the shared layout. Analytics storage defaults to denied, advertising storage remains denied, and visitors can manage their choice from the footer. The production Caddy policy permits only the required Google endpoints and exact reviewed inline-script hashes.

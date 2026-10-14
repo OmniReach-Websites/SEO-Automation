@@ -14,6 +14,117 @@ const deniedStaff = {
 const sessionAdministrator = actor;
 
 describe('PostgreSQL ORAP service', () => {
+  it('reports platform backup freshness without exposing archive contents or storage credentials', async () => {
+    const query = vi.fn(async (text: string) => {
+      if (text.includes('FROM platform_ai_budget b')) {
+        return {
+          rows: [
+            {
+              cap_usd_micros: '50000000',
+              period_start: new Date('2026-10-01T00:00:00.000Z'),
+              reserved_usd_micros: '0',
+              used_usd_micros: '0',
+            },
+          ],
+        };
+      }
+      if (text.includes('FROM backup_records record')) {
+        expect(text).not.toMatch(/storage_ref|off_server_ref|manifest|envelope_hash/iu);
+        return {
+          rows: [
+            {
+              byte_size: '1572864',
+              created_at: new Date('2026-10-14T00:00:00.000Z'),
+              error_code: 'provider detail that must not be exposed',
+              id: '90000000-0000-4000-8000-000000000001',
+              kind: 'daily',
+              last_restore_tested_at: new Date('2026-10-01T00:00:00.000Z'),
+              off_server_copied_at: new Date('2026-10-14T00:10:00.000Z'),
+              state: 'healthy',
+              verified_at: new Date('2026-10-14T00:05:00.000Z'),
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+    const service = new PostgresOrapService(
+      { connect: vi.fn(async () => ({ query, release: vi.fn() })) },
+      { send: vi.fn() },
+      vi.fn(),
+    );
+
+    await expect(service.listOperations(actor)).resolves.toMatchObject({
+      backup: {
+        byteSize: 1_572_864,
+        createdAt: '2026-10-14T00:00:00.000Z',
+        errorCode: 'backup_failed',
+        state: 'healthy',
+      },
+    });
+  });
+
+  it('reports bounded email provider readiness without credentials or recipients', async () => {
+    const query = vi.fn(async (text: string) => {
+      if (text.includes('FROM platform_ai_budget b')) {
+        return {
+          rows: [
+            {
+              cap_usd_micros: '50000000',
+              period_start: new Date('2026-10-01T00:00:00.000Z'),
+              reserved_usd_micros: '0',
+              used_usd_micros: '0',
+            },
+          ],
+        };
+      }
+      if (text.includes('FROM email_delivery_policy policy')) {
+        expect(text).not.toMatch(/recipient|api_key|message|subject/iu);
+        return {
+          rows: [
+            {
+              cap_count: 3000,
+              failed_attempt_count: 2,
+              last_attempt_at: new Date('2026-10-14T01:00:00.000Z'),
+              last_error_code: 'provider detail that must not be exposed',
+              period_start: new Date('2026-10-01T00:00:00.000Z'),
+              reserved_count: 1,
+              sent_count: 12,
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+    const service = new PostgresOrapService(
+      { connect: vi.fn(async () => ({ query, release: vi.fn() })) },
+      { send: vi.fn() },
+      vi.fn(),
+      new Map(),
+      {
+        alertEnabled: false,
+        alertSender: 'alerts@updates.omnireach.cloud',
+        authenticationEnabled: false,
+        authenticationSender: 'auth@updates.omnireach.cloud',
+        contactEnabled: false,
+        contactSender: 'forms@updates.omnireach.cloud',
+        credentialConfigured: true,
+        turnstileConfigured: false,
+      },
+    );
+
+    await expect(service.listOperations(actor)).resolves.toMatchObject({
+      email: {
+        credentialConfigured: true,
+        failedAttemptCount: 2,
+        lastErrorCode: 'provider_failure',
+        monthlyLimit: 3000,
+        reservedCount: 1,
+        sentCount: 12,
+      },
+    });
+  });
+
   it('replaces a staff password through the owner-only audited database function', async () => {
     const targetUserId = '40000000-0000-4000-8000-000000000099';
     const query = vi.fn(async (text: string, values?: unknown[]) => {

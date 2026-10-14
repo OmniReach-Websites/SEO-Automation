@@ -3,8 +3,12 @@ import { resolve } from 'node:path';
 
 import {
   adminStylesheet,
+  analyticsStylesheet,
+  renderAuthPage,
   renderCustomerDashboard,
   renderOperationsCenter,
+  renderOrapAnalyticsDashboard,
+  renderOrapAnalyticsEmpty,
   renderOrapDashboard,
   renderOrapNotFound,
   renderOrapOverview,
@@ -15,7 +19,9 @@ import {
   renderOrapStaffDetails,
   renderOrapStaffInviteForm,
   type AlertRow,
+  type BackupStatusView,
   type BudgetView,
+  type EmailOperationsView,
   type JobRow,
   type OrapNavigationItem,
   type OrapSiteManagementModel,
@@ -31,7 +37,13 @@ import { z } from 'zod';
 import type { AuthEndpointService } from './auth-routes.ts';
 import { clientNetworkIdentifier } from './client-network.ts';
 import type { CustomerEndpointService, ResolveCustomerPrincipal } from './customer-routes.ts';
+import {
+  googleOAuthCallbackCookieName,
+  googleOAuthCallbackCookieOptions,
+} from './google-oauth-cookie.ts';
+import type { IntegrationEndpointService } from './integration-routes.ts';
 import type { OrapAdministrationEndpointService, ResolvePlatformActor } from './orap-routes.ts';
+import { AnalyticsRangeError, resolveAnalyticsDateRange } from './orap-analytics.ts';
 import { registerCustomerUiRoutes } from './customer-ui-routes.ts';
 import { readCookie } from './request-auth.ts';
 import { requireSameOrigin } from './request-security.ts';
@@ -49,6 +61,7 @@ export function registerUiRoutes(
   options: {
     authService?: AuthEndpointService;
     customerService?: CustomerEndpointService;
+    integrationService?: IntegrationEndpointService;
     orapService?: OrapAdministrationEndpointService;
     resolveCustomerPrincipal?: ResolveCustomerPrincipal;
     resolvePlatformActor?: ResolvePlatformActor;
@@ -58,7 +71,7 @@ export function registerUiRoutes(
     reply
       .type('text/css; charset=utf-8')
       .header('Cache-Control', 'public, max-age=300')
-      .send(adminStylesheet),
+      .send(`${adminStylesheet}${analyticsStylesheet}`),
   );
   server.get('/assets/omnireach-logo.png', async (_request, reply) =>
     reply
@@ -66,25 +79,38 @@ export function registerUiRoutes(
       .header('Cache-Control', 'public, max-age=86400, immutable')
       .send(omnireachLogo),
   );
-  server.get<{ Querystring: { error?: string; security?: string } }>(
+  server.get<{ Querystring: { error?: string; recovery?: string; security?: string } }>(
     '/login',
     async (request, reply) =>
       reply
-        .type('text/html; charset=utf-8')
-        .send(renderLogin(request.hostname, request.query?.error, request.query?.security)),
-  );
-  server.get<{ Querystring: { email?: string; passkey?: string } }>(
-    '/mfa',
-    async (request, reply) =>
-      reply
+        .header('Cache-Control', 'no-store')
+        .header('Pragma', 'no-cache')
         .type('text/html; charset=utf-8')
         .send(
-          renderMfa(
-            readCookie(request, '__Host-omnireach_challenge') ?? '',
-            request.query?.email === '1',
-            request.query?.passkey === '1',
+          renderLogin(
+            request.hostname,
+            request.query?.error,
+            request.query?.security,
+            request.query?.recovery,
           ),
         ),
+  );
+  server.get<{
+    Querystring: { email?: string; error?: string; notice?: string; passkey?: string };
+  }>('/mfa', async (request, reply) =>
+    reply
+      .header('Cache-Control', 'no-store')
+      .header('Pragma', 'no-cache')
+      .type('text/html; charset=utf-8')
+      .send(
+        renderMfa(
+          readCookie(request, '__Host-omnireach_challenge') ?? '',
+          request.query?.email === '1',
+          request.query?.passkey === '1',
+          request.query?.error,
+          request.query?.notice,
+        ),
+      ),
   );
   server.get('/mfa/passkey.js', async (_request, reply) =>
     reply
@@ -95,16 +121,24 @@ export function registerUiRoutes(
   server.get<{ Querystring: { token?: string } }>(
     '/auth/invitations/accept',
     async (request, reply) =>
-      reply.type('text/html; charset=utf-8').send(renderInvitation(request.query?.token ?? '')),
+      reply
+        .header('Cache-Control', 'no-store')
+        .header('Pragma', 'no-cache')
+        .type('text/html; charset=utf-8')
+        .send(renderInvitation(request.query?.token ?? '')),
   );
-  server.get<{ Querystring: { token?: string } }>('/auth/recovery', async (request, reply) =>
-    reply
-      .type('text/html; charset=utf-8')
-      .send(
-        request.query?.token
-          ? renderRecoveryCompletion(request.query.token)
-          : renderRecoveryRequest(),
-      ),
+  server.get<{ Querystring: { sent?: string; token?: string } }>(
+    '/auth/recovery',
+    async (request, reply) =>
+      reply
+        .header('Cache-Control', 'no-store')
+        .header('Pragma', 'no-cache')
+        .type('text/html; charset=utf-8')
+        .send(
+          request.query?.token
+            ? renderRecoveryCompletion(request.query.token)
+            : renderRecoveryRequest(request.query?.sent === '1'),
+        ),
   );
 
   if (options.authService?.securitySettings) {
@@ -119,32 +153,38 @@ export function registerUiRoutes(
           .send(webAuthnEnrollmentBrowserScript),
       );
     }
-    server.get('/security', async (request, reply) => {
-      const currentToken = readCookie(request, '__Host-omnireach_session');
-      const [settings, sessions] = await Promise.all([
-        options.authService?.securitySettings?.(currentToken, request.hostname),
-        options.authService?.listSessions(currentToken, request.hostname) ?? [],
-      ]);
-      if (!settings) return reply.code(303).redirect('/login');
-      const platformActor = await options.resolvePlatformActor?.(request);
-      const platformView = platformActor !== undefined;
-      if (settings.webauthnEnrollmentAvailable) {
-        reply.header(
-          'Content-Security-Policy',
-          "default-src 'none'; img-src 'self'; script-src 'self'; connect-src 'self'; style-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
-        );
-      }
-      return reply
-        .type('text/html; charset=utf-8')
-        .send(
-          renderSecuritySettings(
-            settings,
-            platformView,
-            platformActor ? orapNavigation(platformActor) : undefined,
-            sessions,
-          ),
-        );
-    });
+    server.get<{ Querystring: { error?: string; notice?: string } }>(
+      '/security',
+      async (request, reply) => {
+        const currentToken = readCookie(request, '__Host-omnireach_session');
+        const [settings, sessions] = await Promise.all([
+          options.authService?.securitySettings?.(currentToken, request.hostname),
+          options.authService?.listSessions(currentToken, request.hostname) ?? [],
+        ]);
+        if (!settings) return reply.code(303).redirect('/login');
+        const platformActor = await options.resolvePlatformActor?.(request);
+        const platformView = platformActor !== undefined;
+        if (settings.webauthnEnrollmentAvailable) {
+          reply.header(
+            'Content-Security-Policy',
+            "default-src 'none'; img-src 'self'; script-src 'self'; connect-src 'self'; style-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+          );
+        }
+        return reply
+          .header('Cache-Control', 'no-store')
+          .header('Pragma', 'no-cache')
+          .type('text/html; charset=utf-8')
+          .send(
+            renderSecuritySettings(
+              settings,
+              platformView,
+              platformActor ? orapNavigation(platformActor) : undefined,
+              sessions,
+              securitySettingsNotice(request.query),
+            ),
+          );
+      },
+    );
     server.get<{ Querystring: { action?: string } }>('/security/email', async (request, reply) => {
       const settings = await options.authService?.securitySettings?.(
         readCookie(request, '__Host-omnireach_session'),
@@ -153,6 +193,8 @@ export function registerUiRoutes(
       if (!settings) return reply.code(303).redirect('/login');
       const action = request.query?.action === 'disable' ? 'disable' : 'enable';
       return reply
+        .header('Cache-Control', 'no-store')
+        .header('Pragma', 'no-cache')
         .type('text/html; charset=utf-8')
         .send(
           renderEmailPolicyVerification(
@@ -211,6 +253,124 @@ export function registerUiRoutes(
             orapNavigation(actor),
           ),
         );
+    });
+
+    server.get<{
+      Querystring: {
+        endDate?: string;
+        limit?: string;
+        pageSort?: string;
+        querySort?: string;
+        range?: string;
+        siteId?: string;
+        startDate?: string;
+      };
+    }>('/orap/analytics', async (request, reply) => {
+      const actor = await options.resolvePlatformActor?.(request);
+      if (!actor || !canOrap(actor, 'analytics.view')) {
+        return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
+      }
+      if (!options.orapService?.listAnalyticsSites || !options.orapService.siteAnalytics) {
+        return reply.code(404).type('text/html; charset=utf-8').send(renderOrapNotFound());
+      }
+      const sites = parseSiteSummaries(await options.orapService.listAnalyticsSites(actor));
+      const selectedSiteId = request.query.siteId ?? sites[0]?.id;
+      if (!selectedSiteId) {
+        return reply
+          .type('text/html; charset=utf-8')
+          .send(renderOrapAnalyticsEmpty(sites, orapNavigation(actor)));
+      }
+      const site = sites.find(({ id }) => id === selectedSiteId);
+      if (
+        !site?.id ||
+        !site.tenantId ||
+        !canOrap(actor, 'analytics.view', { siteId: site.id, tenantId: site.tenantId })
+      ) {
+        return reply
+          .code(404)
+          .type('text/html; charset=utf-8')
+          .send(renderOrapNotFound(orapNavigation(actor)));
+      }
+      const selection = z
+        .object({
+          endDate: z.string().optional(),
+          limit: z.coerce.number().int().min(1).max(50).default(25),
+          pageSort: z.enum(['clicks', 'impressions', 'position', 'ctr']).default('clicks'),
+          querySort: z.enum(['clicks', 'impressions', 'position', 'ctr']).default('clicks'),
+          range: z.enum(['7', '28', '90', 'custom']).default('28'),
+          startDate: z.string().optional(),
+        })
+        .safeParse(request.query);
+      if (!selection.success) {
+        return reply
+          .code(400)
+          .type('text/html; charset=utf-8')
+          .send(
+            renderOrapAnalyticsEmpty(
+              sites,
+              orapNavigation(actor),
+              'The analytics filters are invalid. Choose a range of no more than 90 days.',
+            ),
+          );
+      }
+      try {
+        const range = resolveAnalyticsDateRange(
+          {
+            ...(selection.data.endDate ? { endDate: selection.data.endDate } : {}),
+            preset: selection.data.range,
+            ...(selection.data.startDate ? { startDate: selection.data.startDate } : {}),
+          },
+          new Date(),
+        );
+        const model = await options.orapService.siteAnalytics(actor, {
+          endDate: range.endDate,
+          limit: selection.data.limit,
+          pageSort: selection.data.pageSort,
+          previousEndDate: range.previousEndDate,
+          previousStartDate: range.previousStartDate,
+          preset: range.preset,
+          querySort: selection.data.querySort,
+          siteId: site.id,
+          startDate: range.startDate,
+          tenantId: site.tenantId,
+        });
+        return reply.type('text/html; charset=utf-8').send(
+          renderOrapAnalyticsDashboard(
+            model,
+            sites,
+            {
+              limit: selection.data.limit,
+              pageSort: selection.data.pageSort,
+              querySort: selection.data.querySort,
+            },
+            orapNavigation(actor),
+          ),
+        );
+      } catch (error) {
+        if (error instanceof AnalyticsRangeError) {
+          return reply
+            .code(400)
+            .type('text/html; charset=utf-8')
+            .send(renderOrapAnalyticsEmpty(sites, orapNavigation(actor), error.message));
+        }
+        request.log.error(
+          {
+            errorName: error instanceof Error ? error.name : 'UnknownError',
+            traceId: request.id,
+          },
+          'ORAP analytics page failed',
+        );
+        return reply
+          .code(503)
+          .type('text/html; charset=utf-8')
+          .send(
+            renderOrapAnalyticsEmpty(
+              sites,
+              orapNavigation(actor),
+              'Analytics is temporarily unavailable. No provider request or website change was made.',
+            ),
+          );
+      }
     });
 
     server.get<{ Querystring: { notice?: string } }>(
@@ -382,7 +542,7 @@ export function registerUiRoutes(
       },
     );
 
-    server.get<{ Params: { siteIdentifier: string } }>(
+    server.get<{ Params: { siteIdentifier: string }; Querystring: { notice?: string } }>(
       '/orap/sites/:siteIdentifier',
       async (request, reply) => {
         const actor = await options.resolvePlatformActor?.(request);
@@ -404,6 +564,13 @@ export function registerUiRoutes(
             tenantId: site.tenantId,
           })
         ) {
+          const canManageGoogle = Boolean(
+            options.integrationService &&
+            canOrap(actor, 'integrations.google.manage', {
+              siteId: site.id,
+              tenantId: site.tenantId,
+            }),
+          );
           const management = options.orapService?.siteManagement
             ? parseSiteManagement(
                 await options.orapService.siteManagement(actor, {
@@ -412,6 +579,10 @@ export function registerUiRoutes(
                 }),
               )
             : undefined;
+          if (canManageGoogle) {
+            reply.header('Content-Security-Policy', googleOAuthFormActionPolicy);
+          }
+          const notice = siteNotice(request.query.notice);
           return reply.type('text/html; charset=utf-8').send(
             renderOrapSiteDetails(site, orapNavigation(actor), management, {
               canEditAutomation: canOrap(actor, 'automation.emergency_controls.manage', {
@@ -426,6 +597,8 @@ export function registerUiRoutes(
                 siteId: site.id,
                 tenantId: site.tenantId,
               }),
+              canManageGoogle,
+              ...(notice ? { notice } : {}),
             }),
           );
         }
@@ -433,6 +606,79 @@ export function registerUiRoutes(
           .code(404)
           .type('text/html; charset=utf-8')
           .send(renderOrapNotFound(orapNavigation(actor)));
+      },
+    );
+
+    server.post<{ Params: { siteIdentifier: string }; Body: unknown }>(
+      '/orap/sites/:siteIdentifier/integrations/google/start',
+      { preHandler: requireSameOrigin },
+      async (request, reply) => {
+        const actor = await options.resolvePlatformActor?.(request);
+        const body = z
+          .object({ propertyKind: z.enum(['ga4', 'search_console']) })
+          .safeParse(request.body);
+        if (!actor || !body.success || !options.integrationService) {
+          return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
+        }
+        if (
+          !canOrap(actor, 'integrations.google.manage', {
+            siteId: request.params.siteIdentifier,
+          })
+        ) {
+          return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
+        }
+        const result = await options.integrationService.startGoogle(actor, {
+          propertyKind: body.data.propertyKind,
+          redirectUri: `https://${request.hostname}/v1/orap/integrations/google/callback`,
+          siteId: request.params.siteIdentifier,
+        });
+        const authorizationUrl = parseGoogleAuthorizationUrl(result);
+        if (!authorizationUrl) {
+          request.log.error('Google authorization service returned an invalid redirect URL');
+          return reply.code(503).send({ error: 'integration_unavailable' });
+        }
+        const sessionToken = readCookie(request, '__Host-omnireach_session');
+        if (!sessionToken) {
+          return reply.code(401).send({ error: 'authentication_required' });
+        }
+        return reply
+          .setCookie(googleOAuthCallbackCookieName, sessionToken, googleOAuthCallbackCookieOptions)
+          .code(303)
+          .redirect(authorizationUrl);
+      },
+    );
+
+    server.post<{ Params: { siteIdentifier: string }; Body: unknown }>(
+      '/orap/sites/:siteIdentifier/integrations/google/select',
+      { preHandler: requireSameOrigin },
+      async (request, reply) => {
+        const actor = await options.resolvePlatformActor?.(request);
+        const body = z
+          .object({
+            pendingSelectionId: z.string().uuid(),
+            propertyId: z.string().min(1).max(300),
+            propertyKind: z.enum(['ga4', 'search_console']),
+          })
+          .safeParse(request.body);
+        if (
+          !actor ||
+          !body.success ||
+          !options.integrationService?.selectGoogleProperty ||
+          !canOrap(actor, 'integrations.google.manage', {
+            siteId: request.params.siteIdentifier,
+          })
+        ) {
+          return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
+        }
+        await options.integrationService.selectGoogleProperty(actor, {
+          ...body.data,
+          siteId: request.params.siteIdentifier,
+        });
+        return reply
+          .code(303)
+          .redirect(
+            `/orap/sites/${encodeURIComponent(request.params.siteIdentifier)}?notice=google-connected`,
+          );
       },
     );
 
@@ -662,7 +908,12 @@ export function registerUiRoutes(
   });
 }
 
-function renderLogin(hostname: string, error?: string, security?: string): string {
+function renderLogin(
+  hostname: string,
+  error?: string,
+  security?: string,
+  recovery?: string,
+): string {
   const errorNotice =
     error === 'credentials'
       ? '<div class="notice error" role="alert">The email address or password was not accepted. Check your details and try again.</div>'
@@ -671,8 +922,12 @@ function renderLogin(hostname: string, error?: string, security?: string): strin
     security === 'updated'
       ? '<div class="notice" role="status">Your security settings were updated. Sign in again to continue.</div>'
       : '';
+  const recoveryNotice =
+    recovery === 'complete'
+      ? '<div class="notice" role="status">Your password was updated. Sign in with the new password; any required second verification step still applies.</div>'
+      : '';
   return renderAuthPage({
-    content: `${errorNotice}${securityNotice}<form method="post" action="/auth/login"><div class="field"><label for="email">Email address</label><input id="email" name="email" type="email" autocomplete="username" required autofocus></div><div class="field"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required></div><button type="submit">Sign in securely</button></form><p class="auth-card-footer"><a href="/auth/recovery">Forgot your password?</a></p>`,
+    content: `${errorNotice}${securityNotice}${recoveryNotice}<form method="post" action="/auth/login"><div class="field"><label for="email">Email address</label><input id="email" name="email" type="email" autocomplete="username" required autofocus></div><div class="field"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required></div><button type="submit">Sign in securely</button></form><p class="auth-card-footer"><a href="/auth/recovery">Forgot your password?</a></p>`,
     description: `Continue to the secure administration workspace for ${escapeHtml(hostname)}.`,
     eyebrow: 'Staff access',
     heading: 'Welcome back',
@@ -684,15 +939,28 @@ function renderMfa(
   challengeId: string,
   emailAvailable: boolean,
   passkeyAvailable: boolean,
+  error?: string,
+  notice?: string,
 ): string {
+  const methodState = `<input name="emailAvailable" type="hidden" value="${emailAvailable ? '1' : '0'}"><input name="passkeyAvailable" type="hidden" value="${passkeyAvailable ? '1' : '0'}">`;
+  const errorNotice =
+    error === 'invalid'
+      ? '<div class="notice error" role="alert">That verification could not be accepted. Check the code and try again before the challenge expires.</div>'
+      : error === 'cooldown'
+        ? '<div class="notice error" role="alert">A new code cannot be sent yet. Wait briefly, then try again.</div>'
+        : '';
+  const statusNotice =
+    notice === 'sent'
+      ? '<div class="notice" role="status">A new verification code was requested. Only the newest unexpired code can be used.</div>'
+      : '';
   const resend = emailAvailable
-    ? `<form method="post" action="/auth/mfa/email/resend"><input name="challengeId" type="hidden" value="${escapeHtml(challengeId)}"><button class="secondary" type="submit">Send a new email code</button></form>`
+    ? `<form method="post" action="/auth/mfa/email/resend"><input name="challengeId" type="hidden" value="${escapeHtml(challengeId)}">${methodState}<button class="secondary" type="submit">Send a new email code</button><p class="help">Email codes expire after five minutes. Resends and attempts are limited.</p></form>`
     : '';
   const passkey = passkeyAvailable
-    ? `<input id="webauthn-challenge-id" type="hidden" value="${escapeHtml(challengeId)}"><button class="secondary" id="passkey-sign-in" type="button">Use a passkey</button><p id="passkey-sign-in-status" role="status" aria-live="polite"></p><script src="/mfa/passkey.js" defer></script>`
+    ? `<input id="webauthn-challenge-id" type="hidden" value="${escapeHtml(challengeId)}"><button class="secondary" id="passkey-sign-in" type="button">Verify with Windows Hello or security key</button><p id="passkey-sign-in-status" role="status" aria-live="polite"></p><script src="/mfa/passkey.js" defer></script>`
     : '';
   return renderAuthPage({
-    content: `<form method="post" action="/auth/mfa/verify"><input name="challengeId" type="hidden" value="${escapeHtml(challengeId)}"><div class="field"><label for="code">Verification or recovery code</label><input id="code" name="code" autocomplete="one-time-code" inputmode="numeric" required${passkeyAvailable ? '' : ' autofocus'}></div><button type="submit">Verify and continue</button></form>${passkey}${resend}`,
+    content: `${errorNotice}${statusNotice}<form method="post" action="/auth/mfa/verify"><input name="challengeId" type="hidden" value="${escapeHtml(challengeId)}">${methodState}<div class="field"><label for="code">Verification or recovery code</label><input id="code" name="code" autocomplete="one-time-code" autocapitalize="characters" maxlength="32" spellcheck="false" aria-describedby="code-help" required${passkeyAvailable ? '' : ' autofocus'}><p class="help" id="code-help">Enter an 8-digit email code, 6-digit authenticator code, or one unused recovery code.</p></div><button type="submit">Verify and continue</button></form>${passkey}${resend}`,
     description:
       'Enter your 8-digit email code, 6-digit authenticator code, or alphanumeric recovery code.',
     eyebrow: 'Two-step verification',
@@ -721,6 +989,7 @@ function renderSecuritySettings(
   platformView = false,
   navigation?: readonly OrapNavigationItem[],
   rawSessions: unknown[] = [],
+  notice?: { kind?: 'error' | 'success'; message: string },
 ): string {
   const action = settings.emailCodeEnabled ? 'disable' : 'enable';
   const verb = settings.emailCodeEnabled ? 'Disable' : 'Enable';
@@ -780,10 +1049,14 @@ function renderSecuritySettings(
       eyebrow: 'Account protection',
       heading: 'Security settings',
       ...(navigation ? { navigation } : {}),
+      ...(notice ? { notice } : {}),
       title: 'Security settings',
     });
   }
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><meta name="theme-color" content="#0b1820"><link rel="icon" type="image/png" href="/assets/omnireach-logo.png"><link rel="stylesheet" href="/assets/admin.css?v=orap-3"><title>Security settings | OmniReach</title></head><body><a class="skip-link" href="#main">Skip to content</a><main class="content" id="main"><div class="page-head"><div><p class="eyebrow">Account protection</p><h1>Security settings</h1></div></div>${content}<p><a class="button secondary" href="/">Return to dashboard</a></p></main></body></html>`;
+  const noticeMarkup = notice
+    ? `<div class="notice${notice.kind === 'error' ? ' error' : ''}" role="${notice.kind === 'error' ? 'alert' : 'status'}">${escapeHtml(notice.message)}</div>`
+    : '';
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><meta name="theme-color" content="#0b1820"><link rel="icon" type="image/png" href="/assets/omnireach-logo.png"><link rel="stylesheet" href="/assets/admin.css?v=orap-4"><title>Security settings | OmniReach</title></head><body><a class="skip-link" href="#main">Skip to content</a><main class="content" id="main"><div class="page-head"><div><p class="eyebrow">Account protection</p><h1>Security settings</h1></div></div>${noticeMarkup}${content}<p><a class="button secondary" href="/">Return to dashboard</a></p></main></body></html>`;
 }
 
 function renderEmailPolicyVerification(challengeId: string, action: 'disable' | 'enable'): string {
@@ -809,7 +1082,7 @@ function renderRestrictedRecovery(): string {
 
 function renderInvitation(token: string): string {
   return renderAuthPage({
-    content: `<form method="post" action="/auth/invitations/accept"><input name="token" type="hidden" value="${escapeHtml(token)}"><div class="field"><label for="displayName">Your name</label><input id="displayName" name="displayName" maxlength="160" autocomplete="name" required autofocus></div><div class="field"><label for="password">Create a password</label><input id="password" name="password" type="password" minlength="12" autocomplete="new-password" required><p class="help">Use at least 12 characters and a unique password.</p></div><button type="submit">Accept invitation</button></form>`,
+    content: `<form method="post" action="/auth/invitations/accept"><input name="token" type="hidden" value="${escapeHtml(token)}"><div class="field"><label for="displayName">Your name</label><input id="displayName" name="displayName" maxlength="160" autocomplete="name" required autofocus></div><div class="field"><label for="password">Create a password</label><input id="password" name="password" type="password" minlength="12" maxlength="128" autocomplete="new-password" required aria-describedby="invitation-password-help"><p class="help" id="invitation-password-help">Use at least 12 characters and a unique password.</p></div><div class="field"><label for="confirmPassword">Confirm password</label><input id="confirmPassword" name="confirmPassword" type="password" minlength="12" maxlength="128" autocomplete="new-password" required></div><button type="submit">Accept invitation</button></form>`,
     description: 'Create the secure credentials used for your OmniReach account.',
     eyebrow: 'Account invitation',
     heading: 'Accept your invitation',
@@ -817,10 +1090,12 @@ function renderInvitation(token: string): string {
   });
 }
 
-function renderRecoveryRequest(): string {
+function renderRecoveryRequest(sent = false): string {
+  const notice = sent
+    ? '<div class="notice" role="status">If that address belongs to an active account, recovery instructions will arrive shortly.</div>'
+    : '';
   return renderAuthPage({
-    content:
-      '<form method="post" action="/auth/recovery"><div class="field"><label for="email">Email address</label><input id="email" name="email" type="email" autocomplete="email" required autofocus></div><button type="submit">Send recovery link</button></form><p class="auth-card-footer"><a href="/login">Return to sign in</a></p>',
+    content: `${notice}<form method="post" action="/auth/recovery"><div class="field"><label for="email">Email address</label><input id="email" name="email" type="email" autocomplete="email" required autofocus></div><button type="submit">Send recovery link</button></form><p class="auth-card-footer"><a href="/login">Return to sign in</a></p>`,
     description:
       'If the address belongs to an active account, we will send a time-limited recovery link.',
     eyebrow: 'Account recovery',
@@ -831,8 +1106,8 @@ function renderRecoveryRequest(): string {
 
 function renderRecoveryCompletion(token: string): string {
   return renderAuthPage({
-    content: `<form method="post" action="/auth/recovery/complete"><input name="token" type="hidden" value="${escapeHtml(token)}"><div class="field"><label for="newPassword">New password</label><input id="newPassword" name="newPassword" type="password" minlength="12" autocomplete="new-password" required autofocus><p class="help">Use at least 12 characters and a password you have not used here before.</p></div><button type="submit">Update password</button></form>`,
-    description: 'Choose a new unique password to regain access to your account.',
+    content: `<div class="surface-note">Changing your password revokes existing sessions and password-reset links. It does not bypass any required second verification step.</div><form method="post" action="/auth/recovery/complete"><input name="token" type="hidden" value="${escapeHtml(token)}"><div class="field"><label for="newPassword">New password</label><input id="newPassword" name="newPassword" type="password" minlength="12" maxlength="128" autocomplete="new-password" required autofocus aria-describedby="recovery-password-help"><p class="help" id="recovery-password-help">Use at least 12 characters and a password you have not used here before.</p></div><div class="field"><label for="confirmPassword">Confirm new password</label><input id="confirmPassword" name="confirmPassword" type="password" minlength="12" maxlength="128" autocomplete="new-password" required></div><button type="submit">Update password</button></form>`,
+    description: 'Choose a new unique password to regain access safely.',
     eyebrow: 'Account recovery',
     heading: 'Choose a new password',
     title: 'Choose a new password',
@@ -850,14 +1125,30 @@ function renderForbidden(): string {
   });
 }
 
-function renderAuthPage(input: {
-  content: string;
-  description: string;
-  eyebrow: string;
-  heading: string;
-  title: string;
-}): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><meta name="theme-color" content="#0b1820"><link rel="icon" type="image/png" href="/assets/omnireach-logo.png"><link rel="stylesheet" href="/assets/admin.css?v=orap-3"><title>${escapeHtml(input.title)} | OmniReach</title></head><body><a class="skip-link" href="#main">Skip to content</a><div class="auth-page"><aside class="auth-brand-panel" aria-label="OmniReach"><a class="auth-brand" href="/login"><img class="brand-mark" src="/assets/omnireach-logo.png" alt="" width="48" height="48"><span class="brand-copy"><strong>OmniReach</strong><small>Administration platform</small></span></a><div class="auth-brand-copy"><p class="eyebrow">Agency-first website operations</p><h2>Run every customer site with confidence.</h2><p>Securely manage content, automation, publishing, access, and operational health from one staff workspace.</p></div><p class="auth-meta">Protected by host-bound sessions and two-step verification.</p></aside><div class="auth-workspace"><main class="auth-card" id="main"><p class="eyebrow">${escapeHtml(input.eyebrow)}</p><h1>${escapeHtml(input.heading)}</h1><p class="lede">${input.description}</p>${input.content}</main></div></div></body></html>`;
+function securitySettingsNotice(query: {
+  error?: string;
+  notice?: string;
+}): { kind?: 'error' | 'success'; message: string } | undefined {
+  if (query.error === 'not-allowed') {
+    return {
+      kind: 'error',
+      message:
+        'That security change was not allowed. Check your password and account safeguards, then try again.',
+    };
+  }
+  if (query.error === 'invalid') {
+    return {
+      kind: 'error',
+      message: 'Check every required security field and try again.',
+    };
+  }
+  if (query.notice === 'passkey-renamed') {
+    return { message: 'The passkey name was updated.' };
+  }
+  if (query.notice === 'session-revoked') {
+    return { message: 'The selected session was revoked.' };
+  }
+  return undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -878,6 +1169,7 @@ function orapNavigation(actor: AdminActor): OrapNavigationItem[] {
   return [
     ...(canOrap(actor, 'dashboard.view') ? (['overview'] as const) : []),
     ...(canOrap(actor, 'websites.list') ? (['sites'] as const) : []),
+    ...(canOrap(actor, 'analytics.view') ? (['analytics'] as const) : []),
     ...(canOrap(actor, 'dashboard.view') ? (['operations'] as const) : []),
     ...(isPlatformOwnerIdentity(actor) ? (['staff'] as const) : []),
     'security' as const,
@@ -950,12 +1242,15 @@ function parseStaffRoles(value: unknown): OrapStaffRoleOption[] {
 function orapLandingPage(actor: AdminActor): string {
   if (canOrap(actor, 'dashboard.view')) return '/orap';
   if (canOrap(actor, 'websites.list')) return '/orap/sites';
+  if (canOrap(actor, 'analytics.view')) return '/orap/analytics';
   return '/security';
 }
 
 function parseOperationsModel(value: unknown): {
   alerts: AlertRow[];
+  backup?: BackupStatusView | null;
   budget: BudgetView | null;
+  email?: EmailOperationsView;
   jobs: JobRow[];
 } {
   if (!isRecord(value)) {
@@ -1022,10 +1317,102 @@ function parseOperationsModel(value: unknown): {
           }
         : undefined;
   if (parsedBudget === undefined) throw new Error('Operations budget model is unavailable');
+  const backup = parseBackupStatus(value.backup);
+  const email = parseEmailOperations(value.email);
   return {
     alerts,
+    ...(backup !== undefined ? { backup } : {}),
     budget: parsedBudget,
+    ...(email ? { email } : {}),
     jobs,
+  };
+}
+
+function parseEmailOperations(value: unknown): EmailOperationsView | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value) || !Array.isArray(value.channels)) {
+    throw new Error('Operations email model is unavailable');
+  }
+  const provider = stringValue(value.provider);
+  const periodStart = stringValue(value.periodStart);
+  const lastAttemptAt = stringValue(value.lastAttemptAt);
+  const lastErrorCode = stringValue(value.lastErrorCode);
+  const numbers = [
+    value.monthlyLimit,
+    value.sentCount,
+    value.reservedCount,
+    value.failedAttemptCount,
+  ];
+  if (
+    !provider ||
+    !periodStart ||
+    numbers.some(
+      (entry) => typeof entry !== 'number' || !Number.isSafeInteger(entry) || entry < 0,
+    ) ||
+    typeof value.credentialConfigured !== 'boolean' ||
+    typeof value.turnstileConfigured !== 'boolean'
+  ) {
+    throw new Error('Operations email model is unavailable');
+  }
+  const channels = value.channels.flatMap((entry): EmailOperationsView['channels'][number][] => {
+    if (!isRecord(entry) || typeof entry.enabled !== 'boolean') return [];
+    const kind = stringValue(entry.kind);
+    const sender = stringValue(entry.sender);
+    return kind && sender ? [{ enabled: entry.enabled, kind, sender }] : [];
+  });
+  if (channels.length !== value.channels.length || channels.length > 10) {
+    throw new Error('Operations email model is unavailable');
+  }
+  return {
+    channels,
+    credentialConfigured: value.credentialConfigured,
+    failedAttemptCount: value.failedAttemptCount as number,
+    ...(lastAttemptAt ? { lastAttemptAt } : {}),
+    ...(lastErrorCode ? { lastErrorCode } : {}),
+    monthlyLimit: value.monthlyLimit as number,
+    periodStart,
+    provider,
+    reservedCount: value.reservedCount as number,
+    sentCount: value.sentCount as number,
+    turnstileConfigured: value.turnstileConfigured,
+  };
+}
+
+function parseBackupStatus(value: unknown): BackupStatusView | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (!isRecord(value)) throw new Error('Operations backup model is unavailable');
+  const id = stringValue(value.id);
+  const kind = stringValue(value.kind);
+  const createdAt = stringValue(value.createdAt);
+  const state = stringValue(value.state);
+  const states = new Set<BackupStatusView['state']>(['failed', 'healthy', 'local_only', 'stale']);
+  if (
+    !id ||
+    !kind ||
+    !createdAt ||
+    !state ||
+    !states.has(state as BackupStatusView['state']) ||
+    typeof value.byteSize !== 'number' ||
+    !Number.isSafeInteger(value.byteSize) ||
+    value.byteSize < 0
+  ) {
+    throw new Error('Operations backup model is unavailable');
+  }
+  const errorCode = stringValue(value.errorCode);
+  const lastRestoreTestedAt = stringValue(value.lastRestoreTestedAt);
+  const offServerCopiedAt = stringValue(value.offServerCopiedAt);
+  const verifiedAt = stringValue(value.verifiedAt);
+  return {
+    byteSize: value.byteSize,
+    createdAt,
+    ...(errorCode ? { errorCode } : {}),
+    id,
+    kind,
+    ...(lastRestoreTestedAt ? { lastRestoreTestedAt } : {}),
+    ...(offServerCopiedAt ? { offServerCopiedAt } : {}),
+    state: state as BackupStatusView['state'],
+    ...(verifiedAt ? { verifiedAt } : {}),
   };
 }
 
@@ -1147,10 +1534,54 @@ function parseSiteManagement(value: unknown): OrapSiteManagementModel | undefine
   return result.success ? result.data : undefined;
 }
 
+function parseGoogleAuthorizationUrl(value: unknown): string | undefined {
+  if (!isRecord(value)) return undefined;
+  const candidate = stringValue(value.authorizationUrl);
+  if (!candidate) return undefined;
+  try {
+    const url = new URL(candidate);
+    return url.protocol === 'https:' &&
+      url.hostname === 'accounts.google.com' &&
+      url.pathname === '/o/oauth2/v2/auth'
+      ? url.toString()
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+const googleOAuthFormActionPolicy =
+  "default-src 'none'; img-src 'self'; style-src 'self'; form-action 'self' https://accounts.google.com; frame-ancestors 'none'";
+
 function siteNotice(value: string | undefined): string | undefined {
-  return value === 'created'
-    ? 'Site record created. No DNS or deployment changes were made.'
-    : undefined;
+  if (value === 'created') return 'Site record created. No DNS or deployment changes were made.';
+  if (value === 'google-connected') return 'Google reporting property connected successfully.';
+  if (value === 'google-no-match') {
+    return 'No authorized Google property exactly matched this website hostname.';
+  }
+  if (value === 'google-insufficient_scope' || value === 'google-insufficient_scope_or_quota') {
+    return 'Google did not grant the required read-only permission, or the required Google API is unavailable. Reconnect and approve the requested permission.';
+  }
+  if (value === 'google-provider_rejected' || value === 'google-invalid_token_response') {
+    return 'Google rejected the authorization exchange. Start the connection again. If it repeats, verify the OAuth client secret and exact redirect URI.';
+  }
+  if (value === 'google-missing_refresh_token') {
+    return 'Google did not return long-lived access. Start the connection again and approve account access.';
+  }
+  if (
+    value === 'google-provider_unavailable' ||
+    value === 'google-quota_exhausted' ||
+    value === 'google-retry_exhausted'
+  ) {
+    return 'Google is temporarily unavailable or has reached an API limit. No connection was activated; try again shortly.';
+  }
+  if (value === 'google-revoked_or_expired') {
+    return 'Google authorization expired or was revoked. Start the connection again.';
+  }
+  if (value === 'google-connection_failed') {
+    return 'The Google connection could not be completed. No connection was activated. Start the connection again after reviewing the server error trace.';
+  }
+  return undefined;
 }
 
 function operationNotice(

@@ -32,6 +32,34 @@ export interface IntegrationRow {
   readonly propertyMapping: string;
   readonly status: string;
 }
+export interface BackupStatusView {
+  readonly byteSize: number;
+  readonly createdAt: string;
+  readonly errorCode?: string;
+  readonly id: string;
+  readonly kind: string;
+  readonly lastRestoreTestedAt?: string;
+  readonly offServerCopiedAt?: string;
+  readonly state: 'failed' | 'healthy' | 'local_only' | 'stale';
+  readonly verifiedAt?: string;
+}
+export interface EmailOperationsView {
+  readonly channels: readonly {
+    readonly enabled: boolean;
+    readonly kind: string;
+    readonly sender: string;
+  }[];
+  readonly credentialConfigured: boolean;
+  readonly failedAttemptCount: number;
+  readonly lastAttemptAt?: string;
+  readonly lastErrorCode?: string;
+  readonly monthlyLimit: number;
+  readonly periodStart: string;
+  readonly provider: string;
+  readonly reservedCount: number;
+  readonly sentCount: number;
+  readonly turnstileConfigured: boolean;
+}
 
 export function renderDomainOperations(domains: readonly DomainRow[], csrfToken: string): string {
   const rows = domains
@@ -45,11 +73,13 @@ export function renderDomainOperations(domains: readonly DomainRow[], csrfToken:
 
 export function renderOperationsCenter(input: {
   readonly alerts: readonly AlertRow[];
+  readonly backup?: BackupStatusView | null;
   readonly budget: BudgetView | null;
   readonly canAcknowledgeAlerts?: boolean;
   readonly canCancelJobs?: boolean;
   readonly canReplayJobs?: boolean;
   readonly canResolveAlerts?: boolean;
+  readonly email?: EmailOperationsView;
   readonly jobs: readonly JobRow[];
 }): string {
   const jobs = input.jobs
@@ -82,7 +112,47 @@ export function renderOperationsCenter(input: {
     ? `<dl class="stats"><div class="stat"><dt>Monthly AI cap</dt><dd>${formatUsd(input.budget.capUsdMicros)}</dd><small>UTC monthly limit</small></div><div class="stat"><dt>Used</dt><dd>${formatUsd(input.budget.usedUsdMicros)}</dd><small>Committed spend</small></div><div class="stat"><dt>Reserved</dt><dd>${formatUsd(input.budget.reservedUsdMicros)}</dd><small>Queued work</small></div><div class="stat"><dt>Available</dt><dd>${formatUsd(Math.max(0, input.budget.capUsdMicros - input.budget.usedUsdMicros - input.budget.reservedUsdMicros))}</dd><small>Remaining budget</small></div></dl>`
     : '<div class="surface-note">Platform AI budget details are hidden because this account does not have financial visibility.</div>';
   const period = input.budget ? ` · UTC period ${escapeHtml(input.budget.periodStart)}` : '';
-  return `${budget}<p class="page-subtitle">Review authorized automation work and respond to operational incidents.</p><section class="panel flush" aria-labelledby="jobs-heading"><div class="panel-header"><div><h2 id="jobs-heading">Automation jobs</h2><p class="help">Recent work in your assigned scope${period}</p></div></div><table><caption>Scoped job activity</caption><thead><tr><th>Type</th><th>State</th><th>Updated</th><th>Trace</th><th>Action</th></tr></thead><tbody>${jobs || '<tr><td colspan="5"><div class="empty"><strong>No jobs</strong>Queued and recent automation work will appear here.</div></td></tr>'}</tbody></table></section><section class="panel" aria-labelledby="alerts-heading"><h2 id="alerts-heading">Alerts</h2><ul class="alert-list">${alerts || '<li class="empty"><strong>No open alerts</strong>The platform has no active operational incidents in your scope.</li>'}</ul></section>`;
+  const backup = renderBackupStatus(input.backup);
+  const email = renderEmailOperations(input.email);
+  return `${budget}<p class="page-subtitle">Review authorized automation work and respond to operational incidents.</p>${backup}${email}<section class="panel flush" aria-labelledby="jobs-heading"><div class="panel-header"><div><h2 id="jobs-heading">Automation jobs</h2><p class="help">Recent work in your assigned scope${period}</p></div></div><table><caption>Scoped job activity</caption><thead><tr><th>Type</th><th>State</th><th>Updated</th><th>Trace</th><th>Action</th></tr></thead><tbody>${jobs || '<tr><td colspan="5"><div class="empty"><strong>No jobs</strong>Queued and recent automation work will appear here.</div></td></tr>'}</tbody></table></section><section class="panel" aria-labelledby="alerts-heading"><h2 id="alerts-heading">Alerts</h2><ul class="alert-list">${alerts || '<li class="empty"><strong>No open alerts</strong>The platform has no active operational incidents in your scope.</li>'}</ul></section>`;
+}
+
+function renderEmailOperations(email: EmailOperationsView | undefined): string {
+  if (!email) return '';
+  const enabled = email.channels.filter((channel) => channel.enabled);
+  const quotaExhausted = email.sentCount + email.reservedCount >= email.monthlyLimit;
+  const blocked =
+    enabled.length > 0 &&
+    (!email.credentialConfigured ||
+      (enabled.some(({ kind }) => kind === 'Forms and inquiries') && !email.turnstileConfigured));
+  const state = quotaExhausted
+    ? { className: 'blocked', label: 'Monthly quota exhausted' }
+    : blocked
+      ? { className: 'blocked', label: 'Configuration incomplete' }
+      : enabled.length > 0
+        ? { className: 'ready', label: 'Delivery enabled' }
+        : { className: 'blocked', label: 'Delivery disabled' };
+  const channelRows = email.channels
+    .map(
+      (channel) =>
+        `<tr><th scope="row">${escapeHtml(channel.kind)}</th><td>${channel.enabled ? 'Enabled' : 'Disabled'}</td><td>${escapeHtml(channel.sender)}</td></tr>`,
+    )
+    .join('');
+  return `<section class="panel" aria-labelledby="email-heading"><div class="panel-header"><div><h2 id="email-heading">Email delivery</h2><p class="help">Provider health and quota evidence only. Credentials, recipients, and message contents are never shown.</p></div><span class="state-pill ${state.className}">${state.label}</span></div><dl class="stats"><div class="stat"><dt>Provider</dt><dd>${escapeHtml(email.provider)}</dd><small>${email.credentialConfigured ? 'Credential configured' : 'Credential missing'}</small></div><div class="stat"><dt>Monthly sent</dt><dd>${email.sentCount} / ${email.monthlyLimit}</dd><small>UTC period ${escapeHtml(email.periodStart)}</small></div><div class="stat"><dt>Reserved</dt><dd>${email.reservedCount}</dd><small>In-flight provider calls</small></div><div class="stat"><dt>Failed attempts</dt><dd>${email.failedAttemptCount}</dd><small>Latest attempt ${escapeHtml(email.lastAttemptAt ?? 'Never')}</small></div></dl><table><caption>Configured email channels and approved sender identities</caption><thead><tr><th>Channel</th><th>State</th><th>Sender</th></tr></thead><tbody>${channelRows}</tbody></table>${email.lastErrorCode ? `<p class="notice error"><strong>Latest safe failure code:</strong> <code>${escapeHtml(email.lastErrorCode)}</code></p>` : ''}</section>`;
+}
+
+function renderBackupStatus(backup: BackupStatusView | null | undefined): string {
+  if (backup === undefined) return '';
+  if (backup === null) {
+    return '<section class="panel" aria-labelledby="backup-heading"><h2 id="backup-heading">Backup &amp; recovery</h2><div class="empty"><strong>No verified backup evidence</strong>No completed platform backup has been recorded yet. Production RPO and restore readiness remain unverified.</div></section>';
+  }
+  const stateLabel = {
+    failed: 'Latest run failed',
+    healthy: 'Off-site copy verified',
+    local_only: 'Off-site copy missing',
+    stale: 'Recovery point stale',
+  }[backup.state];
+  return `<section class="panel" aria-labelledby="backup-heading"><div class="panel-header"><div><h2 id="backup-heading">Backup &amp; recovery</h2><p class="help">Platform-wide evidence; encrypted contents and credentials are never shown.</p></div><span class="state-pill ${backup.state === 'healthy' ? 'ready' : 'blocked'}">${escapeHtml(stateLabel)}</span></div><dl class="stats"><div class="stat"><dt>Latest recovery point</dt><dd>${escapeHtml(backup.createdAt)}</dd><small>${escapeHtml(backup.kind)} · ${formatBytes(backup.byteSize)}</small></div><div class="stat"><dt>Integrity verified</dt><dd>${escapeHtml(backup.verifiedAt ?? 'Not verified')}</dd><small>Authenticated archive check</small></div><div class="stat"><dt>Off-site copied</dt><dd>${escapeHtml(backup.offServerCopiedAt ?? 'Not verified')}</dd><small>Separate downloaded-copy proof required</small></div><div class="stat"><dt>Last restore drill</dt><dd>${escapeHtml(backup.lastRestoreTestedAt ?? 'Never')}</dd><small>Monthly isolated restore target</small></div></dl>${backup.errorCode ? `<p class="notice error"><strong>Safe failure code:</strong> <code>${escapeHtml(backup.errorCode)}</code></p>` : ''}</section>`;
 }
 
 export function renderIntegrationHealth(connections: readonly IntegrationRow[]): string {
@@ -97,6 +167,14 @@ export function renderIntegrationHealth(connections: readonly IntegrationRow[]):
 
 function formatUsd(micros: number): string {
   return `$${(micros / 1_000_000).toFixed(2)} USD`;
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return 'Unavailable';
+  if (bytes < 1024) return `${Math.round(bytes)} B`;
+  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KiB`;
+  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MiB`;
+  return `${(bytes / 1024 ** 3).toFixed(1)} GiB`;
 }
 
 function escapeHtml(value: string): string {

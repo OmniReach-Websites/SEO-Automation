@@ -1,3 +1,10 @@
+import {
+  EmailProviderError,
+  providerFailureCode,
+  withEmailDeliveryQuota,
+  type EmailDeliveryQuota,
+} from './email-quota.ts';
+
 export type AuthenticationEmailKind = 'invitation' | 'password-recovery';
 
 export interface AuthenticationEmailInput {
@@ -11,6 +18,7 @@ export interface ResendAuthenticationOptions {
   readonly fetchImplementation?: typeof fetch;
   readonly from: string;
   readonly kind: AuthenticationEmailKind;
+  readonly quota?: EmailDeliveryQuota;
   readonly timeoutMs?: number;
 }
 
@@ -32,29 +40,57 @@ export class ResendAuthenticationNotifier {
     }
     const url = authenticationUrl(input.host, input.token, this.options.kind);
     const invitation = this.options.kind === 'invitation';
-    const response = await this.fetchImplementation('https://api.resend.com/emails', {
-      body: JSON.stringify({
-        from: this.options.from,
-        subject: invitation ? 'Your OmniReach account invitation' : 'Reset your OmniReach password',
-        text: invitation
-          ? `Use this one-time link to accept your OmniReach account invitation:\n\n${url}\n\nThis link expires in 7 days.`
-          : `Use this one-time link to reset your OmniReach password:\n\n${url}\n\nThis link expires in 30 minutes. If you did not request this, ignore this message.`,
-        to: [input.normalizedEmail],
-      }),
-      headers: {
-        Authorization: `Bearer ${this.options.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      method: 'POST',
-      signal: AbortSignal.timeout(this.timeoutMs),
+    await withEmailDeliveryQuota(this.options.quota, 'authentication', async (idempotencyKey) => {
+      let response: Response;
+      try {
+        response = await this.fetchImplementation('https://api.resend.com/emails', {
+          body: JSON.stringify({
+            from: this.options.from,
+            subject: invitation
+              ? 'Your OmniReach account invitation'
+              : 'Reset your OmniReach password',
+            text: invitation
+              ? `Use this one-time link to accept your OmniReach account invitation:\n\n${url}\n\nThis link expires in 7 days.`
+              : `Use this one-time link to reset your OmniReach password:\n\n${url}\n\nThis link expires in 30 minutes. If you did not request this, ignore this message.`,
+            to: [input.normalizedEmail],
+          }),
+          headers: {
+            Authorization: `Bearer ${this.options.apiKey}`,
+            'Content-Type': 'application/json',
+            ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
+          },
+          method: 'POST',
+          signal: AbortSignal.timeout(this.timeoutMs),
+        });
+      } catch {
+        throw new EmailProviderError(
+          'Resend authentication delivery failed (network)',
+          'network_failure',
+        );
+      }
+      if (!response.ok) {
+        throw new EmailProviderError(
+          `Resend authentication delivery failed (${response.status})`,
+          providerFailureCode(response.status),
+        );
+      }
+      let body: { id?: unknown };
+      try {
+        body = (await response.json()) as { id?: unknown };
+      } catch {
+        throw new EmailProviderError(
+          'Resend authentication delivery returned no reference',
+          'provider_invalid_response',
+        );
+      }
+      if (typeof body.id !== 'string' || !body.id) {
+        throw new EmailProviderError(
+          'Resend authentication delivery returned no reference',
+          'provider_invalid_response',
+        );
+      }
+      return { providerReference: body.id };
     });
-    if (!response.ok) {
-      throw new Error(`Resend authentication delivery failed (${response.status})`);
-    }
-    const body = (await response.json()) as { id?: unknown };
-    if (typeof body.id !== 'string' || !body.id) {
-      throw new Error('Resend authentication delivery returned no reference');
-    }
   }
 }
 

@@ -4,18 +4,18 @@
 
 **Branch:** `feat/phases-3-6`
 
-**Production posture:** the owner authorized the Phase 3–6 production release, the existing Google OAuth credentials, the exact callback `https://admin.omnireach.cloud/v1/orap/integrations/google/callback`, and a $5/site/month AI ceiling on 2026-10-13. Cloudflare R2, controlled AI execution, final commercial/legal decisions, and a second real customer remain TODO until the concrete evidence below exists.
+**Production posture:** the owner authorized the Phase 3–6 production release, the existing Google OAuth credentials, the exact callback `https://admin.omnireach.cloud/v1/orap/integrations/google/callback`, and a $5/site/month AI ceiling on 2026-10-13. The private Cloudflare R2 bucket and bucket-scoped transport credential now exist, but scheduled encrypted backups and a real restore drill do not. Controlled AI execution, final commercial/legal decisions, and a second real customer remain TODO until the concrete evidence below exists.
 
 Status vocabulary is strict: **Implemented** means code and local evidence exist; **Staging verified** requires a production-equivalent isolated environment; **Live** requires current production evidence; **Waiting** requires an owner/provider action; **Deferred** is outside V1.
 
 ## Outcome
 
-| Phase                     | Repository result                                       | Production state                                                                                     | Evidence                                                                                                                       |
-| ------------------------- | ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| 3 — security/recovery     | Implemented and locally verified                        | R2 credentials/schedule/restore drill are TODO                                                       | `npm test`, `npm run test:security`, `npm run verify:offsite-backup`; `security-test-matrix.md`; `key-rotation-break-glass.md` |
-| 4 — Google/reporting      | Implemented and locally verified with provider fixtures | Credentials/callback approved; live property connection and comparison are TODO                      | `google-integration-runbook.md`; Google unit/schema/route tests; customer report tests                                         |
-| 5 — controlled AI         | Implemented and locally verified; provider defaults off | Model and $5/site ceiling selected; live job wiring, price record, benchmark and activation are TODO | `ai-automation-readiness.md`; AI evaluation, policy, budget and proposal tests                                                 |
-| 6 — commercial/onboarding | Implemented controls and generic tooling                | Final pricing/legal decisions and an approved real second customer are TODO                          | `commercial-readiness.md`; `legal-policy-readiness.md`; `onboarding-runbook.md`                                                |
+| Phase                     | Repository result                                                            | Production state                                                                                                   | Evidence                                                                                                                       |
+| ------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| 3 — security/recovery     | Implemented and locally verified                                             | Private R2 transport is verified; VPS secret installation, schedule, retention, alerts, and restore drill are TODO | `npm test`, `npm run test:security`, `npm run verify:offsite-backup`; `security-test-matrix.md`; `key-rotation-break-glass.md` |
+| 4 — Google/reporting      | Implemented and locally verified with provider fixtures                      | Credentials/callback approved; live property connection and comparison are TODO                                    | `google-integration-runbook.md`; Google unit/schema/route tests; customer report tests                                         |
+| 5 — controlled AI         | Durable path and synthetic benchmark locally verified; provider defaults off | Model and $5/site ceiling selected; paid-provider benchmark, explicit activation and production smoke are TODO     | `ai-automation-readiness.md`; AI runtime, evaluation, policy, budget and proposal tests                                        |
+| 6 — commercial/onboarding | Implemented controls and generic tooling                                     | Final pricing/legal decisions and an approved real second customer are TODO                                        | `commercial-readiness.md`; `legal-policy-readiness.md`; `onboarding-runbook.md`                                                |
 
 ## Phase 3 checklist
 
@@ -27,7 +27,8 @@ Status vocabulary is strict: **Implemented** means code and local evidence exist
 - [x] Versioned MFA keyring, dry-run and bounded re-encryption tool, old/new key compatibility tests.
 - [x] Authenticated encrypted backup archive, local/off-site S3-compatible adapter, list/verify/isolated-restore/dry-run-prune and corruption rejection.
 - [x] Static public serving remains independent from API/database/Redis/workers/providers.
-- [ ] **TODO:** grant the configured Cloudflare credential R2 access or supply bucket-scoped S3 access-key credentials. The 2026-10-13 management-API check returned HTTP 403, so off-site backup remains fail-closed.
+- [x] Private Standard-class R2 bucket and dedicated bucket-scoped S3-compatible credential created; upload/download-integrity/list/delete transport probe passed on 2026-10-13 without exposing credentials.
+- [ ] **TODO:** install the R2 credential and separately held encryption key in protected VPS secret storage; production off-site mode remains disabled until the scheduled job and alerts are reviewed.
 - [ ] **Waiting:** schedule production backup and alerts, prove freshness, and complete a timed isolated restore against the 24h RPO/8h RTO targets.
 - [ ] **Waiting:** authorized production key-rotation and lost-factor exercises.
 
@@ -52,7 +53,9 @@ Status vocabulary is strict: **Implemented** means code and local evidence exist
 - [x] Proposal UI shows current/proposed text, evidence, rationale, model/mode and stale state; approval/edit creates a versioned draft; rejection is audited.
 - [x] Publication still requires the ordinary preview/validation/publish path and retains rollback history.
 - [x] Owner selected the quality-first `content-review-balanced` alias (`gpt-6.1-sol`) and a $5/site/month hard ceiling on 2026-10-13; the ceiling remains editable only through audited ORAP controls.
-- [ ] **TODO:** add the production `aio_proposal` job-material rehydration/handler, a dated price record, and a representative paid-provider benchmark before enabling `OPENAI_PROVIDER_ENABLED`. The current runner intentionally cancels this category, so changing the flag alone would be misleading.
+- [x] Tenant-scoped durable proposal material, atomic job admission, worker-side source/policy revalidation, dedicated `aio_proposal` worker, dated model-price records, immutable result linkage, and synthetic safety benchmark.
+- [x] The provider flag is checked before database, quota, budget, or provider access; the API returns a stable disabled response while the flag is off.
+- [ ] **TODO:** run and approve a representative paid-provider quality/cost benchmark, explicitly authorize activation, and capture production smoke evidence before enabling `OPENAI_PROVIDER_ENABLED`.
 
 ## Phase 6 checklist
 

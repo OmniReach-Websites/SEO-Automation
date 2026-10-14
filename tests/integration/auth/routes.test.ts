@@ -48,6 +48,23 @@ describe('authentication route safety', () => {
     expect(acceptInvitation).toHaveBeenCalledWith(
       expect.objectContaining({ host: 'admin.alpha.test', traceId: expect.any(String) }),
     );
+
+    const mismatchedForm = await server.inject({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        host: 'admin.alpha.test',
+        origin: 'https://admin.alpha.test',
+      },
+      method: 'POST',
+      payload:
+        'displayName=Invited+Owner&password=fictional-invited-password&confirmPassword=different-password&token=fictional-invitation-token',
+      url: '/auth/invitations/accept',
+    });
+    expect(mismatchedForm.statusCode).toBe(400);
+    expect(mismatchedForm.headers['content-type']).toContain('text/html');
+    expect(mismatchedForm.body).toContain('make sure the passwords match');
+    expect(mismatchedForm.body).not.toContain('different-password');
+    expect(acceptInvitation).toHaveBeenCalledTimes(1);
   });
 
   it('requires same-origin one-time owner setup before accepting the first owner', async () => {
@@ -213,6 +230,27 @@ describe('authentication route safety', () => {
       traceId: expect.any(String),
     });
 
+    const recoveryForm = await server.inject({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        host: 'admin.fictional.test',
+        origin: 'https://admin.fictional.test',
+      },
+      method: 'POST',
+      payload: 'email=missing%40example.test',
+      url: '/auth/recovery',
+    });
+    expect(recoveryForm.statusCode).toBe(303);
+    expect(recoveryForm.headers.location).toBe('/auth/recovery?sent=1');
+
+    const acceptedRecoveryPage = await server.inject({
+      headers: { host: 'admin.fictional.test' },
+      method: 'GET',
+      url: '/auth/recovery?sent=1',
+    });
+    expect(acceptedRecoveryPage.body).toContain('recovery instructions will arrive shortly');
+    expect(acceptedRecoveryPage.headers['cache-control']).toBe('no-store');
+
     const recoveryPage = await server.inject({
       headers: { host: 'admin.fictional.test' },
       method: 'GET',
@@ -221,6 +259,7 @@ describe('authentication route safety', () => {
     expect(recoveryPage.statusCode).toBe(200);
     expect(recoveryPage.body).toContain('Choose a new password');
     expect(recoveryPage.body).toContain(`value="${'A'.repeat(43)}"`);
+    expect(recoveryPage.body).toContain('name="confirmPassword"');
     expect(recoveryPage.headers['content-security-policy']).toContain("form-action 'self'");
 
     const invitationPage = await server.inject({
@@ -231,6 +270,7 @@ describe('authentication route safety', () => {
     expect(invitationPage.statusCode).toBe(200);
     expect(invitationPage.body).toContain('Accept your invitation');
     expect(invitationPage.body).toContain(`value="${'B'.repeat(43)}"`);
+    expect(invitationPage.body).toContain('name="confirmPassword"');
 
     const missingOrigin = await server.inject({
       headers: { host: 'admin.fictional.test' },
@@ -264,11 +304,21 @@ describe('authentication route safety', () => {
   });
 
   it('completes MFA before issuing a session and supports scoped session revocation', async () => {
-    const verifyMfa = vi.fn(async () => ({
-      audience: 'platform' as 'customer' | 'platform',
-      kind: 'authenticated' as const,
-      sessionToken: 'fictional-mfa-session-token',
-    }));
+    const verifyMfa = vi.fn(
+      async (): Promise<
+        | {
+            audience: 'customer' | 'platform';
+            kind: 'authenticated';
+            sessionToken: string;
+          }
+        | { kind: 'invalid' }
+      > => ({
+        audience: 'platform',
+        kind: 'authenticated',
+        sessionToken: 'fictional-mfa-session-token',
+      }),
+    );
+    const resendEmailCode = vi.fn(async () => 'sent' as const);
     const revokeSession = vi.fn(async () => true);
     const server = buildApiServer({
       authService: {
@@ -280,6 +330,7 @@ describe('authentication route safety', () => {
         logout: vi.fn(async () => undefined),
         prepareOwnerBootstrap: vi.fn(async () => undefined),
         requestPasswordRecovery: vi.fn(async () => undefined),
+        resendEmailCode,
         revokeSession,
         verifyMfa,
       },
@@ -361,6 +412,50 @@ describe('authentication route safety', () => {
     expect(customerVerifiedForm.headers['set-cookie']).toContain(
       'fictional-customer-session-token',
     );
+
+    verifyMfa.mockResolvedValueOnce({ kind: 'invalid' });
+    const rejectedMfaForm = await server.inject({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        host: 'admin.fictional.test',
+        origin: 'https://admin.fictional.test',
+      },
+      method: 'POST',
+      payload: 'challengeId=challenge-a&code=incorrect&emailAvailable=1&passkeyAvailable=1',
+      url: '/auth/mfa/verify',
+    });
+    expect(rejectedMfaForm.statusCode).toBe(303);
+    expect(rejectedMfaForm.headers.location).toBe('/mfa?email=1&passkey=1&error=invalid');
+
+    const resentForm = await server.inject({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        host: 'admin.fictional.test',
+        origin: 'https://admin.fictional.test',
+      },
+      method: 'POST',
+      payload: 'challengeId=challenge-a&emailAvailable=1&passkeyAvailable=1',
+      url: '/auth/mfa/email/resend',
+    });
+    expect(resentForm.statusCode).toBe(303);
+    expect(resentForm.headers.location).toBe('/mfa?email=1&passkey=1&notice=sent');
+    expect(resendEmailCode).toHaveBeenCalledWith(
+      expect.objectContaining({ challengeId: 'challenge-a', host: 'admin.fictional.test' }),
+    );
+
+    const recoveryCompletedForm = await server.inject({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        host: 'admin.fictional.test',
+        origin: 'https://admin.fictional.test',
+      },
+      method: 'POST',
+      payload:
+        'newPassword=fictional-new-password&confirmPassword=fictional-new-password&token=fictional-recovery-token',
+      url: '/auth/recovery/complete',
+    });
+    expect(recoveryCompletedForm.statusCode).toBe(303);
+    expect(recoveryCompletedForm.headers.location).toBe('/login?recovery=complete');
 
     const revoked = await server.inject({
       cookies: { '__Host-omnireach_session': 'current-token' },
@@ -496,6 +591,9 @@ describe('authentication route safety', () => {
       url: '/auth/security/recovery/complete',
     });
     expect(unconfirmedRecovery.statusCode).toBe(400);
+    expect(unconfirmedRecovery.headers['content-type']).toContain('text/html');
+    expect(unconfirmedRecovery.body).toContain('confirm the full recovery impact');
+    expect(unconfirmedRecovery.body).not.toContain('invalid_request');
     expect(completeCustomerRecovery).not.toHaveBeenCalled();
 
     const recoveryCompleted = await server.inject({
@@ -528,7 +626,8 @@ describe('authentication route safety', () => {
         origin: 'https://admin.alpha.test',
       },
       method: 'POST',
-      payload: 'displayName=Customer&password=fictional-password&token=invitation-token',
+      payload:
+        'displayName=Customer&password=fictional-password&confirmPassword=fictional-password&token=invitation-token',
       url: '/auth/invitations/accept',
     });
     expect(invitation.statusCode).toBe(303);
@@ -577,11 +676,21 @@ describe('authentication route safety', () => {
     });
 
     expect(page.statusCode).toBe(200);
-    expect(page.body).toContain('href="/assets/admin.css?v=orap-3"');
+    expect(page.body).toContain('href="/assets/admin.css?v=orap-4"');
     expect(page.body).toContain('href="/assets/omnireach-logo.png"');
     expect(page.body).toContain('href="/orap/operations"');
     expect(page.body).toContain('href="/security" aria-current="page"');
     expect(page.body).toContain('Two-step verification is <strong>required</strong>');
+    expect(page.headers['cache-control']).toBe('no-store');
+
+    const noticePage = await server.inject({
+      cookies: { '__Host-omnireach_session': 'platform-session' },
+      headers: { host: 'admin.omnireach.test' },
+      method: 'GET',
+      url: '/security?error=not-allowed',
+    });
+    expect(noticePage.body).toContain('role="status"');
+    expect(noticePage.body).toContain('That security change was not allowed');
   });
 
   it('serves exact-origin passkey enrollment UI and revokes the current cookie on completion', async () => {

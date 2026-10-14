@@ -1,3 +1,10 @@
+import {
+  EmailProviderError,
+  providerFailureCode,
+  withEmailDeliveryQuota,
+  type EmailDeliveryQuota,
+} from './email-quota.ts';
+
 export interface PlatformInquiryMessage {
   businessName?: string;
   email: string;
@@ -11,6 +18,7 @@ export interface ResendPlatformInquiryOptions {
   apiKey: string;
   fetchImplementation?: typeof fetch;
   from: string;
+  quota?: EmailDeliveryQuota;
   timeoutMs?: number;
 }
 
@@ -32,27 +40,58 @@ export class ResendPlatformInquiryDelivery {
     }
     if (!isEmail(message.email)) throw new Error('Platform inquiry reply address is invalid');
 
-    const response = await this.fetchImplementation('https://api.resend.com/emails', {
-      body: JSON.stringify({
-        from: this.options.from,
-        reply_to: message.email,
-        subject: `New OmniReach inquiry from ${message.businessName || message.name}`,
-        text: renderMessage(message),
-        to: recipients,
-      }),
-      headers: {
-        Authorization: `Bearer ${this.options.apiKey}`,
-        'Content-Type': 'application/json',
+    return withEmailDeliveryQuota(
+      this.options.quota,
+      'platform_inquiry',
+      async (idempotencyKey) => {
+        let response: Response;
+        try {
+          response = await this.fetchImplementation('https://api.resend.com/emails', {
+            body: JSON.stringify({
+              from: this.options.from,
+              reply_to: message.email,
+              subject: `New OmniReach inquiry from ${message.businessName || message.name}`,
+              text: renderMessage(message),
+              to: recipients,
+            }),
+            headers: {
+              Authorization: `Bearer ${this.options.apiKey}`,
+              'Content-Type': 'application/json',
+              ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
+            },
+            method: 'POST',
+            signal: AbortSignal.timeout(this.timeoutMs),
+          });
+        } catch {
+          throw new EmailProviderError(
+            'Resend inquiry delivery failed (network)',
+            'network_failure',
+          );
+        }
+        if (!response.ok) {
+          throw new EmailProviderError(
+            `Resend inquiry delivery failed (${response.status})`,
+            providerFailureCode(response.status),
+          );
+        }
+        let body: { id?: unknown };
+        try {
+          body = (await response.json()) as { id?: unknown };
+        } catch {
+          throw new EmailProviderError(
+            'Resend inquiry delivery returned no reference',
+            'provider_invalid_response',
+          );
+        }
+        if (typeof body.id !== 'string' || !body.id) {
+          throw new EmailProviderError(
+            'Resend inquiry delivery returned no reference',
+            'provider_invalid_response',
+          );
+        }
+        return { providerReference: body.id };
       },
-      method: 'POST',
-      signal: AbortSignal.timeout(this.timeoutMs),
-    });
-    if (!response.ok) throw new Error(`Resend inquiry delivery failed (${response.status})`);
-    const body = (await response.json()) as { id?: unknown };
-    if (typeof body.id !== 'string' || !body.id) {
-      throw new Error('Resend inquiry delivery returned no reference');
-    }
-    return { providerReference: body.id };
+    );
   }
 }
 

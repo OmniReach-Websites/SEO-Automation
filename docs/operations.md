@@ -201,8 +201,14 @@ approved production set of 7 daily and 4 weekly recovery points.
   `OPENAI_PROVIDER_ENABLED=false` remains the activation control until cost/quality tests
   pass and paid calls are explicitly authorized.
 
-- Google OAuth setup is deferred. Search Console and GA4 remain in the not-connected
-  state and do not block the core G31 infrastructure activation.
+- Google OAuth is configured and the owner reported completing the intended Search
+  Console and GA4 connections on 2026-10-13. A successful connection enables one
+  site-scoped `metrics_sync` schedule, admits the first run immediately, and then runs
+  daily at 04:00 UTC with up to 30 minutes of deterministic per-site jitter. The last
+  disconnect disables that site's schedule. Jobs remain concurrency-one, use opaque
+  queue envelopes, rehydrate tenant/site scope under the worker role, and never affect
+  static-site availability. First-sync evidence and live source-console comparison
+  remain required before treating the reporting data as production-verified.
 
 These directions do not authorize provider connection, credential creation, email,
 deployment, data deletion, or any other external mutation. Remaining concrete values are
@@ -320,6 +326,37 @@ Approved policy:
 
 Every backup records start/end, schema/release version, scope, checksum, encrypted size, destination status, and error. Pruning operates only on explicit backup manifests and never uses broad Docker/filesystem cleanup.
 
+Scheduled backup, applied retention, and database restore-drill commands provide the
+restricted status connection through `--record-database-url-file`; a literal database
+URL is forbidden. The recorder assumes `omnireach_worker`, uses the envelope checksum
+as an idempotency key, and updates `backup_records` only after the corresponding action
+succeeds. ORAP reads bounded status fields from those records and never exposes storage
+references, manifests, checksums, credentials, archive contents, or customer filenames.
+The persisted status manifest contains only format version, file count, and source-byte
+total. An empty status panel means no repository-verifiable production evidence exists,
+not that backups are healthy.
+
+Backup/integrity/off-site failures use a narrowly granted database function to upsert a
+single deduplicated platform alert with a fixed safe error class; recorded success
+resolves it. Raw subprocess/provider messages are not stored in ORAP. This does not
+activate email: critical-email transport remains governed by the alert-provider feature
+flag and production sender/recipient approval.
+
+Repository tooling bounds source/encrypted/decompressed bytes, member count, R2 requests,
+listing pages, response bytes, and listed objects. Remote responses are byte-counted while
+streaming even without `Content-Length`. A limit failure means the backup is incomplete and pruning
+must stop; inputs must never be silently skipped. Applied pruning writes requested and
+completed JSONL audit events. Manual pruning requires the owner's authorization
+reference; authorization-free automatic pruning is hard-bound to 7 daily and 4 weekly
+recovery points. Active and held points are preserved in addition to those counts.
+Local and off-site deletion timestamps remain distinct, and a recovery point is marked
+pruned only when all recorded copies are gone.
+
+Disposable database restore accepts its connection URL only through a permission-
+restricted file. In production mode it fails closed until filesystem roots and
+non-secret `host:port/database` production identities are configured, then rejects any
+overlapping target before `pg_restore --exit-on-error` runs.
+
 Monthly restore proof uses a new isolated database/storage namespace and verifies schema, row/reference counts, tenant boundaries, media links, one previously published artifact, and application compatibility. Production restoration requires declared incident scope, owner authorization, key custody, a fresh preservation backup where safe, and post-restore security/health checks.
 
 R-005 remains incomplete for production until the authorized automated off-server path
@@ -349,6 +386,18 @@ opaque envelopes to BullMQ. Failed dispatch claims are released for retry. ORAP 
 cancellation is limited to queued work; replay is limited to cancelled, failed, or
 skipped work and creates a new audited queued record for the durable dispatcher.
 
+AI proposal admission is disabled unless `OPENAI_PROVIDER_ENABLED=true`. While disabled,
+the customer endpoint returns `503 ai_provider_disabled` before creating durable work,
+and the dedicated worker cancels any pre-existing envelope before database, quota,
+budget, or provider access. When explicitly activated, request content and evidence are
+stored only in tenant-scoped PostgreSQL material; BullMQ receives bounded identifiers.
+The worker revalidates entitlement, field mode, protected status, emergency controls,
+policy version, source hash, expiry, model alias/price, review-cycle quota, and both hard
+budget caps before a provider call. Results remain reviewable proposals and never
+publish directly. Disable the provider flag or site automation control to stop new
+calls; public static sites remain independent. Never log provider prompts, API keys,
+protected facts, or raw provider errors.
+
 Critical-email delivery retries at most three times with exponential backoff. The
 durable alert center, not the provider transport, owns these retries so every
 attempt and terminal failure updates the deduplicated ORAP incident without exposing
@@ -360,6 +409,30 @@ Production email paths are fail-closed and disabled by default. Contact delivery
 `CONTACT_DELIVERY_ENABLED`; invitation/password recovery uses
 `AUTH_EMAIL_DELIVERY_ENABLED`; urgent alerts use `ALERT_EMAIL_DELIVERY_ENABLED`. Enabling
 a path requires `RESEND_API_KEY` plus its verified sender/recipient configuration.
+Installing a credential alone never enables any path. Contact delivery additionally
+requires both Cloudflare Turnstile keys at process startup; missing abuse-control
+configuration rejects activation rather than exposing an unprotected form.
+
+All enabled Resend channels share one PostgreSQL-authoritative UTC calendar-month
+admission policy. The initial no-spend limit is 3,000 messages across urgent alerts,
+authentication, contact, and platform-inquiry channels. A restricted application or
+worker transaction calls security-definer reserve/finalize functions; the runtime login
+cannot read the underlying policy, period, or reservation tables directly. Admission
+locks the singleton policy/period, releases expired 15-minute reservations, and rejects
+when sent plus active reservations reaches the cap. Failed/released reservations do not
+consume sent capacity. Records contain only channel, lifecycle timestamps, a provider
+reference, and an allowlisted safe error code—never a recipient, subject, body,
+verification code, form payload, API key, or provider response.
+
+The reservation UUID is sent as Resend's `Idempotency-Key`. Contact delivery performs
+one initial attempt plus at most three retries for network, throttling, and provider 5xx
+failures, with bounded exponential backoff. Client/provider 4xx failures are terminal.
+Optional confirmation delivery is admitted and recorded separately. ORAP Operations
+shows only nonsecret activation/configuration state, the current limit and counters,
+channel status, latest attempt time, and allowlisted failure class. Quota exhaustion,
+provider failure, or ORAP status-query failure must not reduce static website
+availability.
+
 Authentication emails use the database-resolved exact customer admin hostname and
 time-limited one-time tokens; request URLs are redacted from application logs.
 Password-recovery delivery is queued in the restricted PostgreSQL outbox before the

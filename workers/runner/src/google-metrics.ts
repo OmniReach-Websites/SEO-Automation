@@ -1,9 +1,9 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 
 import {
   GoogleHttpProvider,
   GoogleProviderError,
-  type GoogleMetricPoint,
+  type GoogleCollectionResult,
   type GoogleProperty,
   type GoogleProviderClient,
   type GoogleTokenSet,
@@ -33,7 +33,7 @@ export async function runGoogleMetricsSync(
     pool: TenantTransactionPool;
     provider?: GoogleProviderClient;
   },
-): Promise<{ connections: number; inserted: number }> {
+): Promise<{ connections: number; inserted: number; partialConnections: number }> {
   if (input.environment.GOOGLE_INTEGRATION_ENABLED !== 'true') {
     throw new JobExecutionError('Google metric collection is disabled by policy', 'cancelled');
   }
@@ -62,7 +62,12 @@ export async function runGoogleMetricsSync(
       [envelope.tenantId, envelope.siteId],
     ).then(({ rows }) => rows),
   );
+  if (connections.length === 0) {
+    throw new JobExecutionError('No connected Google properties are available', 'cancelled');
+  }
   let inserted = 0;
+  let partialConnections = 0;
+  const failures: { retryable: boolean }[] = [];
   for (const connection of connections) {
     try {
       let tokens = decryptTokens(
@@ -77,7 +82,7 @@ export async function runGoogleMetricsSync(
       }
       const endDate = isoDate(new Date(now.getTime() - 24 * 60 * 60_000));
       const startDate = isoDate(new Date(now.getTime() - 8 * 24 * 60 * 60_000));
-      const points = await provider.collect({
+      const collection = await provider.collect({
         endDate,
         property: {
           id: connection.property_id,
@@ -92,10 +97,11 @@ export async function runGoogleMetricsSync(
         envelope,
         input.jobId,
         connection.id,
-        points,
+        collection,
         tokens,
         { endDate, keyHex, now, startDate },
       );
+      if (!collection.complete) partialConnections += 1;
     } catch (error) {
       const providerError = error instanceof GoogleProviderError ? error : undefined;
       const code = providerError?.code ?? 'collection_failed';
@@ -104,18 +110,21 @@ export async function runGoogleMetricsSync(
           `UPDATE integration_connections
               SET status = CASE WHEN $2 IN ('revoked_or_expired','missing_refresh_token')
                                 THEN 'expired' ELSE 'error' END,
-                  refresh_failure_code = $2, updated_at = $3
+                  refresh_failure_code = $2, last_attempted_at = $3, updated_at = $3
             WHERE tenant_id = $4 AND site_id = $5 AND id = $1`,
           [connection.id, code, now, envelope.tenantId, envelope.siteId],
         ),
       );
-      throw new JobExecutionError(
-        'Google metric collection failed',
-        providerError?.retryable ? 'retryable' : 'permanent',
-      );
+      failures.push({ retryable: providerError?.retryable ?? false });
     }
   }
-  return { connections: connections.length, inserted };
+  if (failures.length > 0) {
+    throw new JobExecutionError(
+      `Google metric collection failed for ${failures.length} connection(s)`,
+      failures.some(({ retryable }) => retryable) ? 'retryable' : 'permanent',
+    );
+  }
+  return { connections: connections.length, inserted, partialConnections };
 }
 
 async function persistMetrics(
@@ -123,20 +132,39 @@ async function persistMetrics(
   envelope: JobEnvelope,
   jobId: string,
   connectionId: string,
-  points: readonly GoogleMetricPoint[],
+  collection: GoogleCollectionResult,
   tokens: GoogleTokenSet,
   input: { endDate: string; keyHex: string; now: Date; startDate: string },
 ): Promise<number> {
   return workerTransaction(pool, envelope, jobId, async (client) => {
     let inserted = 0;
-    for (const point of points) {
-      const result = await query<{ id: string }>(
+    for (const point of collection.points) {
+      const result = await query<{ id: string; inserted: boolean }>(
         client,
         `INSERT INTO metric_snapshots
            (tenant_id, site_id, connection_id, source, metric, dimensions,
             window_start, window_end, value, source_hash, ingested_at, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12)
-         ON CONFLICT (connection_id, source_hash) DO NOTHING RETURNING id`,
+         VALUES (
+           $1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9,
+           encode(
+             digest(
+               concat_ws(
+                 chr(31), $3::text, $4, $5, ($6::jsonb)::text,
+                 extract(epoch FROM $7::timestamptz)::text,
+                 extract(epoch FROM $8::timestamptz)::text
+               ),
+               'sha256'
+             ),
+             'hex'
+           ),
+           $10, $11
+         )
+         ON CONFLICT (connection_id, source_hash) DO UPDATE
+           SET value = EXCLUDED.value,
+               ingested_at = EXCLUDED.ingested_at,
+               expires_at = EXCLUDED.expires_at
+           WHERE metric_snapshots.value IS DISTINCT FROM EXCLUDED.value
+         RETURNING id, (xmax = 0) AS inserted`,
         [
           envelope.tenantId,
           envelope.siteId,
@@ -147,12 +175,11 @@ async function persistMetrics(
           `${point.startDate}T00:00:00Z`,
           `${point.endDate}T23:59:59.999Z`,
           point.value,
-          pointHash(point),
           input.now,
           new Date(input.now.getTime() + 18 * 30 * 24 * 60 * 60_000),
         ],
       );
-      inserted += result.rows.length;
+      inserted += result.rows.filter((row) => row.inserted).length;
     }
     await client.query(
       `UPDATE integration_credentials credential
@@ -173,16 +200,26 @@ async function persistMetrics(
     );
     await client.query(
       `UPDATE integration_connections
-          SET status = 'connected', last_synced_at = $2, token_expires_at = $3,
-              refresh_failure_code = NULL, sync_cursor = $4::jsonb, updated_at = $2
+          SET status = $7, last_synced_at = $2, token_expires_at = $3,
+              last_attempted_at = $2,
+              refresh_failure_code = CASE WHEN $7 = 'partial'
+                                          THEN 'collection_truncated' ELSE NULL END,
+              sync_cursor = $4::jsonb, updated_at = $2
         WHERE id = $1 AND tenant_id = $5 AND site_id = $6`,
       [
         connectionId,
         input.now,
         new Date(tokens.expiresAt),
-        JSON.stringify({ endDate: input.endDate, startDate: input.startDate }),
+        JSON.stringify({
+          complete: collection.complete,
+          diagnostics: collection.diagnostics,
+          endDate: input.endDate,
+          startDate: input.startDate,
+          version: 2,
+        }),
         envelope.tenantId,
         envelope.siteId,
+        collection.complete ? 'connected' : 'partial',
       ],
     );
     return inserted;
@@ -223,24 +260,6 @@ function decryptTokens(
   return JSON.parse(
     Buffer.concat([decipher.update(payload.subarray(33)), decipher.final()]).toString('utf8'),
   ) as GoogleTokenSet;
-}
-
-function pointHash(point: GoogleMetricPoint): string {
-  return createHash('sha256')
-    .update(
-      JSON.stringify({
-        dimensions: Object.fromEntries(
-          Object.entries(point.dimensions).sort(([left], [right]) => left.localeCompare(right)),
-        ),
-        endDate: point.endDate,
-        metric: point.metric,
-        propertyId: point.propertyId,
-        source: point.source,
-        startDate: point.startDate,
-        value: point.value,
-      }),
-    )
-    .digest('hex');
 }
 
 function isoDate(value: Date): string {

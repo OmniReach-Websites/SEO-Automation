@@ -4,7 +4,7 @@ import {
   GoogleConnectionManager,
   GoogleProviderError,
   createOAuthRequest,
-  type GoogleMetricPoint,
+  type GoogleCollectionResult,
   type GoogleProperty,
   type GoogleProviderClient,
   type GoogleTokenSet,
@@ -149,9 +149,8 @@ export class PostgresGoogleIntegrationService implements IntegrationEndpointServ
 
   async finishGoogle(
     actor: AdminActor,
-    input: { code: string; propertyId?: string; siteId: string; state: string },
+    input: { code: string; propertyId?: string; state: string },
   ): Promise<unknown> {
-    assertOrapCapability(actor, 'integrations.google.manage', { siteId: input.siteId });
     const state = await withPlatformTransaction(
       this.pool,
       { actorId: actor.id },
@@ -161,65 +160,92 @@ export class PostgresGoogleIntegrationService implements IntegrationEndpointServ
           client,
           `UPDATE google_oauth_states
             SET consumed_at = $1
-          WHERE state_hash = $2 AND site_id = $3 AND initiated_by = $4
+          WHERE state_hash = $2 AND initiated_by = $3
             AND consumed_at IS NULL AND expires_at > $1
           RETURNING tenant_id, site_id, property_kind, redirect_uri,
                     encrypted_request, key_version, initiated_by`,
-          [now, digest(input.state), input.siteId, actor.id],
+          [now, digest(input.state), actor.id],
         );
-        return required(
+        const storedState = required(
           rows.rows,
           'Google OAuth state is invalid, expired, replayed, or belongs to another actor',
         );
+        assertOrapCapability(actor, 'integrations.google.manage', {
+          siteId: storedState.site_id,
+        });
+        return storedState;
       },
     );
-    const request = this.decrypt<OAuthRequest>(
-      state.encrypted_request,
-      state.tenant_id,
-      state.site_id,
-      state.key_version,
-    );
-    this.#connectionManager.acceptCallback(request, {
-      nonce: request.nonce,
-      redirectUri: state.redirect_uri,
-      state: input.state,
-    });
-    const tokens = await this.#provider.exchangeCode({ code: input.code, request });
-    assertScopes(tokens.scopes, state.property_kind);
-    const properties = await this.#provider.listProperties(tokens, state.property_kind);
-    const siteHostname = await this.publicHostname(actor, state.tenant_id, state.site_id);
-    const eligible = properties.filter((property) => {
-      try {
-        this.#connectionManager.verifyProperty(property, siteHostname);
-        return true;
-      } catch {
-        return false;
+    let stage: GoogleCallbackStage = 'decrypt_state';
+    try {
+      const request = this.decrypt<OAuthRequest>(
+        state.encrypted_request,
+        state.tenant_id,
+        state.site_id,
+        state.key_version,
+      );
+      stage = 'validate_callback';
+      this.#connectionManager.acceptCallback(request, {
+        nonce: request.nonce,
+        redirectUri: state.redirect_uri,
+        state: input.state,
+      });
+      stage = 'exchange_code';
+      const tokens = await this.#provider.exchangeCode({ code: input.code, request });
+      stage = 'validate_scopes';
+      assertScopes(tokens.scopes, state.property_kind);
+      stage = 'list_properties';
+      const properties = await this.#provider.listProperties(tokens, state.property_kind);
+      stage = 'resolve_site_hostname';
+      const siteHostname = await this.publicHostname(actor, state.tenant_id, state.site_id);
+      const eligible = properties.filter((property) => {
+        try {
+          this.#connectionManager.verifyProperty(property, siteHostname);
+          return true;
+        } catch {
+          return false;
+        }
+      });
+      stage = 'store_credential';
+      const credentialId = await this.storeCredential(
+        actor,
+        state.tenant_id,
+        state.site_id,
+        tokens,
+      );
+      const selected = input.propertyId
+        ? eligible.find((property) => property.id === input.propertyId)
+        : eligible.length === 1
+          ? eligible[0]
+          : undefined;
+      if (!selected) {
+        return {
+          eligibleProperties: eligible.map((property) => ({
+            id: property.id,
+            kind: property.kind,
+            siteUrl: property.siteUrl,
+          })),
+          pendingSelectionId: credentialId,
+          siteId: state.site_id,
+          status: eligible.length === 0 ? 'no_matching_property' : 'property_selection_required',
+        };
       }
-    });
-    const credentialId = await this.storeCredential(actor, state.tenant_id, state.site_id, tokens);
-    const selected = input.propertyId
-      ? eligible.find((property) => property.id === input.propertyId)
-      : eligible.length === 1
-        ? eligible[0]
-        : undefined;
-    if (!selected) {
-      return {
-        eligibleProperties: eligible.map((property) => ({
-          id: property.id,
-          kind: property.kind,
-          siteUrl: property.siteUrl,
-        })),
-        pendingSelectionId: credentialId,
-        status: eligible.length === 0 ? 'no_matching_property' : 'property_selection_required',
-      };
+      stage = 'connect_property';
+      return await this.connectProperty(actor, {
+        credentialId,
+        property: selected,
+        scopes: tokens.scopes,
+        siteId: state.site_id,
+        tenantId: state.tenant_id,
+      });
+    } catch (error) {
+      throw new GoogleIntegrationCallbackError(
+        error instanceof GoogleProviderError ? error.code : 'connection_failed',
+        state.site_id,
+        stage,
+        error,
+      );
     }
-    return this.connectProperty(actor, {
-      credentialId,
-      property: selected,
-      scopes: tokens.scopes,
-      siteId: state.site_id,
-      tenantId: state.tenant_id,
-    });
   }
 
   selectGoogleProperty(
@@ -343,6 +369,21 @@ export class PostgresGoogleIntegrationService implements IntegrationEndpointServ
           WHERE id = $1`,
           [row.id, now],
         );
+        await client.query(
+          `UPDATE schedules schedule
+              SET enabled = false, updated_at = $3
+            WHERE schedule.tenant_id = $1 AND schedule.site_id = $2
+              AND schedule.category = 'metrics_sync'
+              AND NOT EXISTS (
+                SELECT 1 FROM integration_connections connection
+                 WHERE connection.tenant_id = schedule.tenant_id
+                   AND connection.site_id = schedule.site_id
+                   AND connection.provider = 'google'
+                   AND connection.status = 'connected'
+                   AND connection.collection_stopped_at IS NULL
+              )`,
+          [row.tenant_id, row.site_id, now],
+        );
         await audit(client, actor, {
           action: 'integration.google.disconnected',
           metadata: { propertyKind: row.property_kind, reason: input.reason.trim() },
@@ -383,7 +424,7 @@ export class PostgresGoogleIntegrationService implements IntegrationEndpointServ
     siteId: string;
     startDate: string;
     tenantId: string;
-  }): Promise<{ inserted: number; status: 'connected' | 'error' }> {
+  }): Promise<{ inserted: number; status: 'connected' | 'error' | 'partial' }> {
     const loaded = await this.withWorkerSite(input, async (client) => {
       const row = required(
         (
@@ -424,21 +465,22 @@ export class PostgresGoogleIntegrationService implements IntegrationEndpointServ
         kind: loaded.property_kind,
         siteUrl: loaded.property_mapping,
       };
-      const points = await this.#provider.collect({
+      const collection = await this.#provider.collect({
         endDate: input.endDate,
         property,
         startDate: input.startDate,
         tokens,
       });
-      const inserted = await this.persistMetrics(input, points, tokens, now);
-      return { inserted, status: 'connected' };
+      const inserted = await this.persistMetrics(input, collection, tokens, now);
+      return { inserted, status: collection.complete ? 'connected' : 'partial' };
     } catch (error) {
       const code = error instanceof GoogleProviderError ? error.code : 'collection_failed';
       await this.withWorkerSite(input, async (client) => {
         await client.query(
           `UPDATE integration_connections
-              SET status = CASE WHEN $2 = 'revoked_or_expired' THEN 'expired' ELSE 'error' END,
-                  refresh_failure_code = $2, updated_at = $3
+              SET status = CASE WHEN $2 IN ('revoked_or_expired','missing_refresh_token')
+                                THEN 'expired' ELSE 'error' END,
+                  refresh_failure_code = $2, last_attempted_at = $3, updated_at = $3
             WHERE id = $1`,
           [input.connectionId, code, input.now ?? this.#now()],
         );
@@ -456,21 +498,39 @@ export class PostgresGoogleIntegrationService implements IntegrationEndpointServ
       startDate: string;
       tenantId: string;
     },
-    points: readonly GoogleMetricPoint[],
+    collection: GoogleCollectionResult,
     tokens: GoogleTokenSet,
     now: Date,
   ): Promise<number> {
     return this.withWorkerSite(input, async (client) => {
       let inserted = 0;
-      for (const point of points) {
-        const sourceHash = digest(JSON.stringify(canonicalPoint(point)));
-        const result = await query<{ id: string }>(
+      for (const point of collection.points) {
+        const result = await query<{ id: string; inserted: boolean }>(
           client,
           `INSERT INTO metric_snapshots
              (tenant_id, site_id, connection_id, source, metric, dimensions,
               window_start, window_end, value, source_hash, ingested_at, expires_at)
-           VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12)
-           ON CONFLICT (connection_id, source_hash) DO NOTHING RETURNING id`,
+           VALUES (
+             $1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9,
+             encode(
+               digest(
+                 concat_ws(
+                   chr(31), $3::text, $4, $5, ($6::jsonb)::text,
+                   extract(epoch FROM $7::timestamptz)::text,
+                   extract(epoch FROM $8::timestamptz)::text
+                 ),
+                 'sha256'
+               ),
+               'hex'
+             ),
+             $10, $11
+           )
+           ON CONFLICT (connection_id, source_hash) DO UPDATE
+             SET value = EXCLUDED.value,
+                 ingested_at = EXCLUDED.ingested_at,
+                 expires_at = EXCLUDED.expires_at
+             WHERE metric_snapshots.value IS DISTINCT FROM EXCLUDED.value
+           RETURNING id, (xmax = 0) AS inserted`,
           [
             input.tenantId,
             input.siteId,
@@ -481,12 +541,11 @@ export class PostgresGoogleIntegrationService implements IntegrationEndpointServ
             `${point.startDate}T00:00:00Z`,
             `${point.endDate}T23:59:59.999Z`,
             point.value,
-            sourceHash,
             now,
             new Date(now.getTime() + 18 * 30 * 24 * 60 * 60_000),
           ],
         );
-        inserted += result.rows.length;
+        inserted += result.rows.filter((row) => row.inserted).length;
       }
       await client.query(
         `UPDATE integration_credentials
@@ -502,15 +561,24 @@ export class PostgresGoogleIntegrationService implements IntegrationEndpointServ
       );
       await client.query(
         `UPDATE integration_connections
-            SET status = 'connected', last_synced_at = $2, token_expires_at = $3,
-                refresh_failure_code = NULL,
+            SET status = $5, last_synced_at = $2, token_expires_at = $3,
+                last_attempted_at = $2,
+                refresh_failure_code = CASE WHEN $5 = 'partial'
+                                            THEN 'collection_truncated' ELSE NULL END,
                 sync_cursor = $4::jsonb, updated_at = $2
           WHERE id = $1`,
         [
           input.connectionId,
           now,
           new Date(tokens.expiresAt),
-          JSON.stringify({ endDate: input.endDate, startDate: input.startDate }),
+          JSON.stringify({
+            complete: collection.complete,
+            diagnostics: collection.diagnostics,
+            endDate: input.endDate,
+            startDate: input.startDate,
+            version: 2,
+          }),
+          collection.complete ? 'connected' : 'partial',
         ],
       );
       return inserted;
@@ -530,6 +598,17 @@ export class PostgresGoogleIntegrationService implements IntegrationEndpointServ
   ): Promise<unknown> {
     const operation = async (client: TenantTransactionClient) => {
       const now = this.#now();
+      const previous = (
+        await query<{ id: string; property_id: string }>(
+          client,
+          `SELECT id, property_id
+             FROM integration_connections
+            WHERE tenant_id = $1 AND site_id = $2 AND provider = 'google'
+              AND property_kind = $3
+            FOR UPDATE`,
+          [input.tenantId, input.siteId, input.property.kind],
+        )
+      ).rows[0];
       const connection = required(
         (
           await query<{ id: string }>(
@@ -538,7 +617,9 @@ export class PostgresGoogleIntegrationService implements IntegrationEndpointServ
                (tenant_id, site_id, provider, property_kind, property_id, property_mapping,
                 credential_ref, scopes, status, permissions_provenance,
                 consented_by, consented_at, token_expires_at)
-             VALUES ($1, $2, 'google', $3, $4, $5, $6, $7::jsonb, 'connected',
+             VALUES ($1, $2, 'google', $3, $4, $5,
+                     (SELECT id::text FROM integration_credentials WHERE id = $6::uuid),
+                     $7::jsonb, 'connected',
                      $8::jsonb, $9, $10,
                      (SELECT expires_at FROM integration_credentials WHERE id = $6::uuid))
              ON CONFLICT (tenant_id, site_id, provider, property_kind) DO UPDATE
@@ -574,6 +655,31 @@ export class PostgresGoogleIntegrationService implements IntegrationEndpointServ
         ).rows,
         'Google connection could not be saved',
       );
+      if (previous && previous.property_id !== input.property.id) {
+        await client.query(
+          `DELETE FROM metric_snapshots
+            WHERE tenant_id = $1 AND site_id = $2 AND connection_id = $3`,
+          [input.tenantId, input.siteId, connection.id],
+        );
+        await client.query(
+          `UPDATE integration_connections
+              SET last_synced_at = NULL, last_attempted_at = NULL, sync_cursor = NULL,
+                  refresh_failure_code = NULL, updated_at = $4
+            WHERE tenant_id = $1 AND site_id = $2 AND id = $3`,
+          [input.tenantId, input.siteId, connection.id, now],
+        );
+      }
+      await client.query(
+        `INSERT INTO schedules
+           (tenant_id, site_id, category, timezone, local_hour, local_minute,
+            jitter_minutes, enabled, next_attempt_at)
+         VALUES ($1, $2, 'metrics_sync', 'Etc/UTC', 4, 0, 30, true, $3)
+         ON CONFLICT (tenant_id, site_id, category) DO UPDATE
+           SET enabled = true,
+               next_attempt_at = LEAST(schedules.next_attempt_at, EXCLUDED.next_attempt_at),
+               updated_at = EXCLUDED.next_attempt_at`,
+        [input.tenantId, input.siteId, now],
+      );
       await audit(client, actor, {
         action: 'integration.google.connected',
         metadata: {
@@ -585,7 +691,7 @@ export class PostgresGoogleIntegrationService implements IntegrationEndpointServ
         targetId: connection.id,
         tenantId: input.tenantId,
       });
-      return { connectionId: connection.id, status: 'connected' };
+      return { connectionId: connection.id, siteId: input.siteId, status: 'connected' };
     };
     return existingClient
       ? operation(existingClient)
@@ -694,19 +800,28 @@ export class PostgresGoogleIntegrationService implements IntegrationEndpointServ
   }
 }
 
-function canonicalPoint(point: GoogleMetricPoint): unknown {
-  return {
-    dimensions: Object.fromEntries(
-      Object.entries(point.dimensions).sort(([left], [right]) => left.localeCompare(right)),
-    ),
-    endDate: point.endDate,
-    metric: point.metric,
-    propertyId: point.propertyId,
-    source: point.source,
-    startDate: point.startDate,
-    value: point.value,
-  };
+export class GoogleIntegrationCallbackError extends Error {
+  override readonly name = 'GoogleIntegrationCallbackError';
+
+  constructor(
+    readonly code: string,
+    readonly siteId: string,
+    readonly stage: GoogleCallbackStage,
+    override readonly cause: unknown,
+  ) {
+    super(`Google integration callback failed: ${code}`);
+  }
 }
+
+export type GoogleCallbackStage =
+  | 'connect_property'
+  | 'decrypt_state'
+  | 'exchange_code'
+  | 'list_properties'
+  | 'resolve_site_hostname'
+  | 'store_credential'
+  | 'validate_callback'
+  | 'validate_scopes';
 
 function digest(value: string): string {
   return createHash('sha256').update(value).digest('hex');

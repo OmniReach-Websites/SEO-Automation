@@ -12,6 +12,8 @@ const publicSiteScriptPath = resolve(
   'infrastructure/deploy/configure-omnireach-public-route.sh',
 );
 const publicSiteSource = readFileSync(publicSiteScriptPath, 'utf8');
+const coopsSiteScriptPath = resolve(root, 'infrastructure/deploy/configure-coops-site-route.sh');
+const coopsSiteSource = readFileSync(coopsSiteScriptPath, 'utf8');
 
 describe('shared Caddy integration script', () => {
   it('is executable and refuses an uninventoried source configuration', () => {
@@ -63,5 +65,35 @@ describe('OmniReach public Caddy integration script', () => {
     expect(publicSiteSource).toContain('caddy reload');
     expect(publicSiteSource).toContain('https://christiansreunite.com');
     expect(publicSiteSource).toContain('cp --preserve=mode,ownership -- "$backup" "$caddyfile"');
+  });
+});
+
+describe('Coop public Caddy integration script', () => {
+  it('allows only the reviewed site and Google Analytics scripts', () => {
+    expect(coopsSiteSource).toContain('https://www.googletagmanager.com');
+    expect(coopsSiteSource).toContain('https://www.google-analytics.com');
+    for (const hash of [
+      'Auky1RF93bHadMyKgiBJYnh4IZdEeaJBanm3qGYOpyM=',
+      '5LQt8nuMFaxybQw44FhRwFCNluBmu0b9/68O/Xg8+hI=',
+      'THEVRzZdTFzfhUTrvRL1wzh4o+iNn5tETfLqraij3q4=',
+      'HwxHjYdadh60svsZJnUmyNDkEqfM6h5jvM7vx05DuWU=',
+    ]) {
+      expect(coopsSiteSource).toContain(`'sha256-${hash}'`);
+    }
+    expect(coopsSiteSource).toContain(
+      "style-src 'self'; style-src-elem 'self'; style-src-attr 'unsafe-inline'",
+    );
+    expect(coopsSiteSource).not.toContain("script-src 'self' 'unsafe-inline'");
+    expect(coopsSiteSource).not.toContain("'unsafe-eval'");
+  });
+
+  it('updates only its managed route with validation and rollback checks', () => {
+    expect(coopsSiteSource).toContain("marker='# BEGIN OMNIREACH COOPS MOBILE DETAILING'");
+    expect(coopsSiteSource).toContain("end_marker='# END OMNIREACH COOPS MOBILE DETAILING'");
+    expect(coopsSiteSource).toContain('start_count=$(grep -Fxc');
+    expect(coopsSiteSource).toContain('caddy validate');
+    expect(coopsSiteSource).toContain('caddy reload');
+    expect(coopsSiteSource).toContain('https://christiansreunite.com');
+    expect(coopsSiteSource).toContain('cp --preserve=mode,ownership -- "$backup" "$caddyfile"');
   });
 });

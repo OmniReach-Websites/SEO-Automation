@@ -19,6 +19,7 @@ const owner: CustomerPrincipal = {
 
 function service() {
   return {
+    aiProposalRequestsEnabled: false,
     assetDownload: vi.fn(async () => ({
       bytes: new Uint8Array([1, 2, 3]),
       contentType: 'image/png',
@@ -43,6 +44,7 @@ function service() {
     history: vi.fn(async () => []),
     pages: vi.fn(async () => []),
     proposals: vi.fn(async () => [] as unknown[]),
+    requestProposal: vi.fn(async () => ({ jobId: 'job-a', state: 'queued' })),
     reports: vi.fn(async () => ({
       generatedAt: new Date(0).toISOString(),
       measurements: [] as unknown[],
@@ -511,5 +513,56 @@ describe('customer content routes', () => {
       proposalId: '90000000-0000-4000-8000-000000000009',
       reason: 'Approved after review',
     });
+  });
+
+  it('keeps AI request admission disabled by default and admits bounded same-origin requests', async () => {
+    const disabled = service();
+    const disabledServer = buildApiServer({
+      customerService: disabled,
+      logLevel: 'silent',
+      resolveCustomerPrincipal: async () => owner,
+    });
+    servers.push(disabledServer);
+    const request = {
+      headers: {
+        host: 'admin.alpha.test',
+        'idempotency-key': 'fixture-request-0001',
+        origin: 'https://admin.alpha.test',
+      },
+      method: 'POST' as const,
+      payload: {
+        evidence: ['Synthetic crawl evidence.'],
+        fieldId: 'home.heading',
+        fieldPurpose: 'Home-page heading',
+      },
+      url: '/v1/customer/proposals',
+    };
+    const blocked = await disabledServer.inject(request);
+    expect(blocked.statusCode).toBe(503);
+    expect(blocked.json()).toEqual({ error: 'ai_provider_disabled' });
+    expect(disabled.requestProposal).not.toHaveBeenCalled();
+
+    const enabled = service();
+    enabled.aiProposalRequestsEnabled = true;
+    const enabledServer = buildApiServer({
+      customerService: enabled,
+      logLevel: 'silent',
+      resolveCustomerPrincipal: async () => owner,
+    });
+    servers.push(enabledServer);
+    const admitted = await enabledServer.inject(request);
+    expect(admitted.statusCode).toBe(202);
+    expect(enabled.requestProposal).toHaveBeenCalledWith(owner, {
+      evidence: ['Synthetic crawl evidence.'],
+      fieldId: 'home.heading',
+      fieldPurpose: 'Home-page heading',
+      idempotencyKey: 'fixture-request-0001',
+    });
+
+    const crossOrigin = await enabledServer.inject({
+      ...request,
+      headers: { ...request.headers, origin: 'https://attacker.invalid' },
+    });
+    expect(crossOrigin.statusCode).toBe(403);
   });
 });

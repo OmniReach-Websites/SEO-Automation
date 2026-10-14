@@ -800,6 +800,28 @@ model ContentProposal {
   @@map("content_proposals")
 }
 
+model AiProposalJobMaterial {
+  id              String    @id @default(uuid()) @db.Uuid
+  tenantId        String    @map("tenant_id") @db.Uuid
+  siteId          String    @map("site_id") @db.Uuid
+  fieldId         String    @map("field_id") @db.Uuid
+  requestedBy     String    @map("requested_by") @db.Uuid
+  requestKey      String    @map("request_key") @db.Char(64)
+  baseRevision    Int       @map("base_revision")
+  policyVersion   Int       @map("policy_version")
+  fieldPurpose    String    @map("field_purpose") @db.VarChar(200)
+  evidence        Json      @default("[]")
+  sourceValueHash String    @map("source_value_hash") @db.Char(64)
+  expiresAt       DateTime  @map("expires_at") @db.Timestamptz(3)
+  proposalId      String?   @map("proposal_id") @db.Uuid
+  completedAt     DateTime? @map("completed_at") @db.Timestamptz(3)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@unique([tenantId, siteId, requestKey])
+  @@index([tenantId, siteId, createdAt(sort: Desc)])
+  @@map("ai_proposal_job_materials")
+}
+
 model AiEvaluationResult {
   id            String   @id @default(uuid()) @db.Uuid
   fixtureId     String   @map("fixture_id") @db.VarChar(120)
@@ -966,6 +988,43 @@ model SiteContactForm {
   @@map("site_contact_forms")
 }
 
+model EmailDeliveryPolicy {
+  singleton    Boolean  @id @default(true)
+  provider     String   @default("resend") @db.VarChar(30)
+  monthlyLimit Int      @default(3000) @map("monthly_limit")
+  policyVersion Int     @default(1) @map("policy_version")
+  updatedAt    DateTime @default(now()) @map("updated_at") @db.Timestamptz(3)
+
+  @@map("email_delivery_policy")
+}
+
+model EmailDeliveryPeriod {
+  periodStart        DateTime                   @id @map("period_start") @db.Timestamptz(3)
+  capCount           Int                        @map("cap_count")
+  sentCount          Int                        @default(0) @map("sent_count")
+  failedAttemptCount Int                        @default(0) @map("failed_attempt_count")
+  updatedAt          DateTime                   @default(now()) @map("updated_at") @db.Timestamptz(3)
+  reservations       EmailDeliveryReservation[]
+
+  @@map("email_delivery_periods")
+}
+
+model EmailDeliveryReservation {
+  id                String              @id @default(uuid()) @db.Uuid
+  periodStart       DateTime            @map("period_start") @db.Timestamptz(3)
+  period            EmailDeliveryPeriod @relation(fields: [periodStart], references: [periodStart], onDelete: Restrict)
+  channel           String              @db.VarChar(30)
+  state             String              @default("active") @db.VarChar(20)
+  providerReference String?             @map("provider_reference") @db.VarChar(200)
+  errorCode         String?             @map("error_code") @db.VarChar(100)
+  createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  expiresAt         DateTime            @map("expires_at") @db.Timestamptz(3)
+  finalizedAt       DateTime?           @map("finalized_at") @db.Timestamptz(3)
+
+  @@index([periodStart, state, createdAt])
+  @@map("email_delivery_reservations")
+}
+
 model PublicationRequest {
   id                 String    @id @default(uuid()) @db.Uuid
   tenantId           String    @map("tenant_id") @db.Uuid
@@ -1096,6 +1155,7 @@ model AiModelPrice {
   id                        String   @id @default(uuid()) @db.Uuid
   modelAlias                String   @map("model_alias") @db.VarChar(120)
   version                   Int
+  providerModel             String   @map("provider_model") @db.VarChar(120)
   inputUsdMicrosPerMillion  Int      @map("input_usd_micros_per_million")
   outputUsdMicrosPerMillion Int      @map("output_usd_micros_per_million")
   effectiveAt               DateTime @map("effective_at") @db.Timestamptz(3)
@@ -1298,6 +1358,7 @@ model IntegrationConnection {
   permissionsProvenance Json      @map("permissions_provenance")
   syncCursor            Json?     @map("sync_cursor")
   lastSyncedAt          DateTime? @map("last_synced_at") @db.Timestamptz(3)
+  lastAttemptedAt       DateTime? @map("last_attempted_at") @db.Timestamptz(3)
   disconnectedAt        DateTime? @map("disconnected_at") @db.Timestamptz(3)
   consentedBy           String?   @map("consented_by") @db.Uuid
   consentedAt           DateTime? @map("consented_at") @db.Timestamptz(3)
@@ -1363,6 +1424,7 @@ model MetricSnapshot {
 
   @@unique([connectionId, sourceHash])
   @@index([tenantId, siteId, metric, windowStart])
+  @@index([tenantId, siteId, source, windowStart])
   @@map("metric_snapshots")
 }
 
@@ -1381,6 +1443,8 @@ model BackupRecord {
   createdAt         DateTime  @map("created_at") @db.Timestamptz(3)
   verifiedAt        DateTime? @map("verified_at") @db.Timestamptz(3)
   offServerCopiedAt DateTime? @map("off_server_copied_at") @db.Timestamptz(3)
+  localPrunedAt      DateTime? @map("local_pruned_at") @db.Timestamptz(3)
+  offServerPrunedAt  DateTime? @map("off_server_pruned_at") @db.Timestamptz(3)
   restoreTestedAt   DateTime? @map("restore_tested_at") @db.Timestamptz(3)
   errorCode         String?   @map("error_code") @db.VarChar(100)
 

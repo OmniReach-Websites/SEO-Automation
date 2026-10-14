@@ -1,5 +1,6 @@
 export {
   adminStylesheet,
+  renderAuthPage,
   renderCustomerDashboard,
   renderOrapDashboard,
   renderOrapNotFound,
@@ -19,6 +20,15 @@ export {
   type OrapStaffRoleOption,
 } from './admin.ts';
 export {
+  analyticsStylesheet,
+  renderOrapAnalyticsDashboard,
+  renderOrapAnalyticsEmpty,
+  type AnalyticsAvailability,
+  type AnalyticsTableRow,
+  type OrapAnalyticsModel,
+  type OrapAnalyticsSelection,
+} from './analytics.ts';
+export {
   renderReportingDashboard,
   visibleMeasurementKinds,
   type MeasurementKind,
@@ -30,7 +40,9 @@ export {
   renderIntegrationHealth,
   renderOperationsCenter,
   type AlertRow,
+  type BackupStatusView,
   type BudgetView,
+  type EmailOperationsView,
   type DomainRow,
   type IntegrationRow,
   type JobRow,

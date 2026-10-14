@@ -12,6 +12,7 @@ import { validateAiFieldMutation, type EffectiveAiMode } from '@omnireach/conten
 import type { AiReviewCycleQuota, PlanQuotaReservation } from '@omnireach/tenant';
 
 export { PostgresAiBudgetLedger } from './postgres-budget.ts';
+export { PostgresAiProposalJobLoader, type RehydratedAiProposalJob } from './postgres-job.ts';
 export {
   PostgresAiProposalStager,
   type AiProposalStageContext,
@@ -22,6 +23,7 @@ export async function generateFieldProposal(options: {
   readonly budget: AiBudgetLedger;
   readonly input: ProposalInput;
   readonly mode: EffectiveAiMode;
+  readonly maxOutputTokens?: number;
   readonly modelPrice: ModelPrice;
   readonly now: Date;
   readonly provider: ProposalProvider;
@@ -36,6 +38,7 @@ export async function generateFieldProposal(options: {
   readonly evaluation: ReturnType<typeof evaluateProposal>;
   readonly latencyMs: number;
   readonly model: string;
+  readonly inputTokens: number;
   readonly outputTokens: number;
   readonly promptVersion: number;
   readonly providerRequestHash?: string;
@@ -47,6 +50,10 @@ export async function generateFieldProposal(options: {
     throw new Error('AI provider is disabled by the centralized provider gate');
   if (options.mode === 'PROTECTED')
     throw new Error('Protected fields are rejected before provider admission');
+  const maxOutputTokens = options.maxOutputTokens ?? 800;
+  if (!Number.isSafeInteger(maxOutputTokens) || maxOutputTokens < 1 || maxOutputTokens > 20_000) {
+    throw new Error('AI maximum output tokens are invalid');
+  }
   const reviewCycle = await options.reviewCycles.reserve({
     expiresAt: new Date(options.now.getTime() + 10 * 60_000),
     now: options.now,
@@ -57,8 +64,8 @@ export async function generateFieldProposal(options: {
   let budgetFinalized = false;
   const estimate = estimateCostUsdMicros(
     options.modelPrice,
-    JSON.stringify(options.input).length,
-    800,
+    Buffer.byteLength(JSON.stringify(options.input), 'utf8'),
+    maxOutputTokens,
   );
   try {
     budgetReservation = await options.budget.reserve({
@@ -95,6 +102,7 @@ export async function generateFieldProposal(options: {
       evaluation,
       latencyMs: result.latencyMs,
       model: result.model,
+      inputTokens: result.usage.inputTokens,
       outputTokens: result.usage.outputTokens,
       promptVersion: result.promptVersion,
       ...(result.providerRequestHash ? { providerRequestHash: result.providerRequestHash } : {}),
@@ -128,6 +136,7 @@ export async function executeAiAutomation(
       readonly latencyMs: number;
       readonly mode: 'AUTO' | 'SUGGEST';
       readonly model: string;
+      readonly inputTokens: number;
       readonly outputTokens: number;
       readonly promptVersion: number;
       readonly providerRequestHash?: string;
@@ -148,6 +157,7 @@ export async function executeAiAutomation(
       latencyMs: proposal.latencyMs,
       mode: options.mode === 'AUTO' ? 'AUTO' : 'SUGGEST',
       model: proposal.model,
+      inputTokens: proposal.inputTokens,
       outputTokens: proposal.outputTokens,
       promptVersion: proposal.promptVersion,
       ...(proposal.providerRequestHash
@@ -159,11 +169,7 @@ export async function executeAiAutomation(
     return { action: 'review_staged', proposalId: staged.proposalId };
   } catch (error) {
     if (options.mode === 'AUTO') {
-      await options.raiseAlert(
-        error instanceof Error
-          ? `AI proposal staging failed safely: ${error.message}`
-          : 'AI proposal staging failed safely',
-      );
+      await options.raiseAlert('AI proposal failed safely; live content was unchanged.');
     }
     throw error;
   }

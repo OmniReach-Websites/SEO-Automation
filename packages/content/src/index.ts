@@ -44,6 +44,12 @@ export {
 } from './postgres.ts';
 export { PostgresAssetRepository, type StoredAsset } from './postgres-assets.ts';
 export {
+  PostgresAiProposalRequestRepository,
+  sourceValueHash,
+  type AiProposalRequestInput,
+  type AiProposalRequestResult,
+} from './postgres-ai-proposals.ts';
+export {
   authorizeProposalAcceptance,
   effectiveAiMode,
   validateAiFieldMutation,

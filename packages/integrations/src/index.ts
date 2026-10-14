@@ -17,6 +17,14 @@ export {
 } from './cloudflare.ts';
 export { generateCaddyFragment, type CaddyRoute } from './caddy.ts';
 export {
+  EmailProviderError,
+  providerFailureCode,
+  withEmailDeliveryQuota,
+  type EmailDeliveryChannel,
+  type EmailDeliveryFailureCode,
+  type EmailDeliveryQuota,
+} from './email-quota.ts';
+export {
   CloudflareTurnstileVerifier,
   MockTurnstileVerifier,
   type TurnstileChallenge,
@@ -51,6 +59,9 @@ export {
   GoogleProviderError,
   classifyAiReferral,
   createOAuthRequest,
+  type GoogleCollectionDataset,
+  type GoogleCollectionDiagnostic,
+  type GoogleCollectionResult,
   type GoogleMetricPoint,
   type GoogleProperty,
   type GoogleProviderClient,
