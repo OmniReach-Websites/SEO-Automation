@@ -74,4 +74,72 @@ describe('PostgreSQL Google connection persistence', () => {
       expect.any(Date),
     ]);
   });
+
+  it('removes observations and sync diagnostics when an authorized property is remapped', async () => {
+    const query = vi.fn(async (sql: string, values?: unknown[]) => {
+      void values;
+      if (sql.includes('SELECT id, property_id')) {
+        return {
+          rows: [
+            {
+              id: '70000000-0000-4000-8000-000000000001',
+              property_id: 'sc-domain:old.example.test',
+            },
+          ],
+        };
+      }
+      if (sql.includes('INSERT INTO integration_connections')) {
+        return { rows: [{ id: '70000000-0000-4000-8000-000000000001' }] };
+      }
+      return { rows: [] };
+    });
+    const client = { query } as unknown as TenantTransactionClient;
+    const service = new PostgresGoogleIntegrationService(
+      { connect: vi.fn() } as unknown as TenantTransactionPool,
+      {
+        allowedRedirectUris: ['https://admin.omnireach.test/v1/orap/integrations/google/callback'],
+        encryptionKeyHex: '11'.repeat(32),
+        provider: {} as GoogleProviderClient,
+      },
+    );
+    const persist = service as unknown as {
+      connectProperty(
+        callbackActor: AdminActor,
+        input: {
+          credentialId: string;
+          property: { id: string; kind: 'search_console'; siteUrl: string };
+          scopes: readonly string[];
+          siteId: string;
+          tenantId: string;
+        },
+        existingClient: TenantTransactionClient,
+      ): Promise<unknown>;
+    };
+
+    await persist.connectProperty(
+      actor,
+      {
+        credentialId: '80000000-0000-4000-8000-000000000001',
+        property: {
+          id: 'sc-domain:new.example.test',
+          kind: 'search_console',
+          siteUrl: 'sc-domain:new.example.test',
+        },
+        scopes: ['https://www.googleapis.com/auth/webmasters.readonly'],
+        siteId: '20000000-0000-4000-8000-000000000001',
+        tenantId: '10000000-0000-4000-8000-000000000001',
+      },
+      client,
+    );
+
+    const deletion = query.mock.calls.find(([sql]) => sql.includes('DELETE FROM metric_snapshots'));
+    expect(deletion?.[1]).toEqual([
+      '10000000-0000-4000-8000-000000000001',
+      '20000000-0000-4000-8000-000000000001',
+      '70000000-0000-4000-8000-000000000001',
+    ]);
+    expect(
+      query.mock.calls.find(([sql]) => sql.includes('SET last_synced_at = NULL'))?.[0],
+    ).toContain('last_attempted_at = NULL');
+  });
 });

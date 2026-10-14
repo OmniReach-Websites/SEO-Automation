@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import type { GoogleMetricPoint, GoogleProviderClient } from '@omnireach/integrations';
+import type { GoogleCollectionResult, GoogleProviderClient } from '@omnireach/integrations';
 import type { TenantTransactionClient } from '@omnireach/tenant';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -54,7 +54,7 @@ describe('Google metric observation identity', () => {
           startDate: string;
           tenantId: string;
         },
-        points: readonly GoogleMetricPoint[],
+        collection: GoogleCollectionResult,
         tokens: { accessToken: string; expiresAt: string; refreshToken: string; scopes: string[] },
         now: Date,
       ): Promise<number>;
@@ -70,17 +70,29 @@ describe('Google metric observation identity', () => {
           startDate: '2026-10-06',
           tenantId: '10000000-0000-4000-8000-000000000001',
         },
-        [
-          {
-            dimensions: { date: '20261012', query: 'fixture' },
-            endDate: '2026-10-12',
-            metric: 'clicks',
-            propertyId: 'sc-domain:example.test',
-            source: 'search_console',
-            startDate: '2026-10-12',
-            value: 12,
-          },
-        ],
+        {
+          complete: true,
+          diagnostics: [
+            {
+              complete: true,
+              dataset: 'search_console_query',
+              pageCount: 1,
+              rows: 1,
+              totalRows: null,
+            },
+          ],
+          points: [
+            {
+              dimensions: { aggregation: 'query', query: 'fixture' },
+              endDate: '2026-10-12',
+              metric: 'clicks',
+              propertyId: 'sc-domain:example.test',
+              source: 'search_console',
+              startDate: '2026-10-12',
+              value: 12,
+            },
+          ],
+        },
         {
           accessToken: 'fixture-access-token',
           expiresAt: '2026-10-14T05:00:00.000Z',

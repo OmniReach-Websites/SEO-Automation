@@ -22,6 +22,23 @@ export interface GoogleMetricPoint {
   readonly value: number;
 }
 
+export type GoogleCollectionDataset =
+  'ga4_source_medium' | 'search_console_page' | 'search_console_property' | 'search_console_query';
+
+export interface GoogleCollectionDiagnostic {
+  readonly complete: boolean;
+  readonly dataset: GoogleCollectionDataset;
+  readonly pageCount: number;
+  readonly rows: number;
+  readonly totalRows: number | null;
+}
+
+export interface GoogleCollectionResult {
+  readonly complete: boolean;
+  readonly diagnostics: readonly GoogleCollectionDiagnostic[];
+  readonly points: readonly GoogleMetricPoint[];
+}
+
 export interface GoogleTokenSet {
   readonly accessToken: string;
   readonly expiresAt: string;
@@ -43,13 +60,15 @@ export interface GoogleProviderClient {
     property: GoogleProperty;
     startDate: string;
     tokens: GoogleTokenSet;
-  }): Promise<readonly GoogleMetricPoint[]>;
+  }): Promise<GoogleCollectionResult>;
 }
 
 export interface GoogleHttpProviderOptions {
   readonly clientId: string;
   readonly clientSecret: string;
   readonly fetchImpl?: typeof fetch;
+  readonly maximumPages?: number;
+  readonly pageSize?: number;
   readonly sleep?: (milliseconds: number) => Promise<void>;
 }
 
@@ -57,6 +76,9 @@ const googleScopes = {
   ga4: ['https://www.googleapis.com/auth/analytics.readonly'],
   search_console: ['https://www.googleapis.com/auth/webmasters.readonly'],
 } as const;
+
+const defaultPageSize = 25_000;
+const defaultMaximumPages = 4;
 
 export function createOAuthRequest(
   redirectUri: string,
@@ -78,6 +100,8 @@ export class GoogleHttpProvider implements GoogleProviderClient {
   readonly #clientId: string;
   readonly #clientSecret: string;
   readonly #fetch: typeof fetch;
+  readonly #maximumPages: number;
+  readonly #pageSize: number;
   readonly #sleep: (milliseconds: number) => Promise<void>;
 
   constructor(options: GoogleHttpProviderOptions) {
@@ -87,6 +111,18 @@ export class GoogleHttpProvider implements GoogleProviderClient {
     this.#clientId = options.clientId;
     this.#clientSecret = options.clientSecret;
     this.#fetch = options.fetchImpl ?? fetch;
+    this.#maximumPages = boundedInteger(
+      options.maximumPages ?? defaultMaximumPages,
+      1,
+      16,
+      'Google maximum pages',
+    );
+    this.#pageSize = boundedInteger(
+      options.pageSize ?? defaultPageSize,
+      1,
+      25_000,
+      'Google page size',
+    );
     this.#sleep =
       options.sleep ??
       ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
@@ -162,10 +198,13 @@ export class GoogleHttpProvider implements GoogleProviderClient {
     property: GoogleProperty;
     startDate: string;
     tokens: GoogleTokenSet;
-  }): Promise<readonly GoogleMetricPoint[]> {
+  }): Promise<GoogleCollectionResult> {
     assertIsoDate(input.startDate);
     assertIsoDate(input.endDate);
     if (input.startDate > input.endDate) throw new Error('Google metric window is invalid');
+    if (!input.property.id.trim() || !input.property.siteUrl.trim()) {
+      throw new GoogleProviderError('missing_property', false);
+    }
     return input.property.kind === 'search_console'
       ? this.collectSearchConsole(input)
       : this.collectGa4(input);
@@ -222,46 +261,100 @@ export class GoogleHttpProvider implements GoogleProviderClient {
     property: GoogleProperty;
     startDate: string;
     tokens: GoogleTokenSet;
-  }): Promise<GoogleMetricPoint[]> {
-    const response = await this.authorizedRequest(
-      `https://searchconsole.googleapis.com/webmasters/v3/sites/${encodeURIComponent(input.property.id)}/searchAnalytics/query`,
-      input.tokens,
-      {
-        body: JSON.stringify({
-          dataState: 'final',
-          dimensions: ['date', 'query', 'page', 'country', 'device'],
-          endDate: input.endDate,
-          rowLimit: 25_000,
-          startDate: input.startDate,
-        }),
-        headers: { 'content-type': 'application/json' },
-        method: 'POST',
-      },
-    );
-    const payload = (await response.json()) as {
-      rows?: {
-        clicks?: number;
-        ctr?: number;
-        impressions?: number;
-        keys?: string[];
-        position?: number;
-      }[];
+  }): Promise<GoogleCollectionResult> {
+    const collections = [
+      await this.collectSearchConsoleDataset(input, 'search_console_property', ['date']),
+      await this.collectSearchConsoleDataset(input, 'search_console_query', ['date', 'query']),
+      await this.collectSearchConsoleDataset(input, 'search_console_page', ['date', 'page']),
+    ];
+    return {
+      complete: collections.every(({ diagnostic }) => diagnostic.complete),
+      diagnostics: collections.map(({ diagnostic }) => diagnostic),
+      points: collections.flatMap(({ points }) => points),
     };
-    const metrics = ['clicks', 'impressions', 'ctr', 'position'] as const;
-    return (payload.rows ?? []).flatMap((row) => {
-      const [date = input.startDate, query = '', page = '', country = '', device = ''] =
-        row.keys ?? [];
-      const dimensions = { country, device, page, query };
-      return metrics.map((metric) => ({
-        dimensions,
-        endDate: date,
-        metric,
-        propertyId: input.property.id,
-        source: 'search_console' as const,
-        startDate: date,
-        value: Number(row[metric] ?? 0),
-      }));
-    });
+  }
+
+  private async collectSearchConsoleDataset(
+    input: {
+      endDate: string;
+      property: GoogleProperty;
+      startDate: string;
+      tokens: GoogleTokenSet;
+    },
+    dataset: Extract<GoogleCollectionDataset, `search_console_${string}`>,
+    dimensions: readonly ('date' | 'page' | 'query')[],
+  ): Promise<{ diagnostic: GoogleCollectionDiagnostic; points: GoogleMetricPoint[] }> {
+    const points: GoogleMetricPoint[] = [];
+    let rowsRead = 0;
+    let pageCount = 0;
+    let complete = false;
+    for (let page = 0; page < this.#maximumPages; page += 1) {
+      const response = await this.authorizedRequest(
+        `https://searchconsole.googleapis.com/webmasters/v3/sites/${encodeURIComponent(input.property.id)}/searchAnalytics/query`,
+        input.tokens,
+        {
+          body: JSON.stringify({
+            dataState: 'final',
+            dimensions,
+            endDate: input.endDate,
+            rowLimit: this.#pageSize,
+            startDate: input.startDate,
+            startRow: page * this.#pageSize,
+          }),
+          headers: { 'content-type': 'application/json' },
+          method: 'POST',
+        },
+      );
+      const payload = (await response.json()) as {
+        rows?: {
+          clicks?: number;
+          ctr?: number;
+          impressions?: number;
+          keys?: string[];
+          position?: number;
+        }[];
+      };
+      const rows = payload.rows ?? [];
+      pageCount += 1;
+      rowsRead += rows.length;
+      for (const row of rows) {
+        const values = Object.fromEntries(
+          dimensions.map((dimension, index) => [dimension, row.keys?.[index] ?? '']),
+        );
+        const date = values.date || input.startDate;
+        const aggregation = dataset.replace('search_console_', '');
+        const pointDimensions = {
+          aggregation,
+          ...(dataset === 'search_console_query' ? { query: values.query ?? '' } : {}),
+          ...(dataset === 'search_console_page' ? { page: values.page ?? '' } : {}),
+        };
+        for (const metric of ['clicks', 'impressions', 'ctr', 'position'] as const) {
+          points.push({
+            dimensions: pointDimensions,
+            endDate: date,
+            metric,
+            propertyId: input.property.id,
+            source: 'search_console',
+            startDate: date,
+            value: Number(row[metric] ?? 0),
+          });
+        }
+      }
+      if (rows.length < this.#pageSize) {
+        complete = true;
+        break;
+      }
+    }
+    return {
+      diagnostic: {
+        complete,
+        dataset,
+        pageCount,
+        rows: rowsRead,
+        totalRows: null,
+      },
+      points,
+    };
   }
 
   private async collectGa4(input: {
@@ -269,48 +362,83 @@ export class GoogleHttpProvider implements GoogleProviderClient {
     property: GoogleProperty;
     startDate: string;
     tokens: GoogleTokenSet;
-  }): Promise<GoogleMetricPoint[]> {
+  }): Promise<GoogleCollectionResult> {
     const propertyId = input.property.id.replace(/^properties\//u, '');
-    const response = await this.authorizedRequest(
-      `https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(propertyId)}:runReport`,
-      input.tokens,
-      {
-        body: JSON.stringify({
-          dateRanges: [{ endDate: input.endDate, startDate: input.startDate }],
-          dimensions: [{ name: 'date' }, { name: 'sessionSource' }, { name: 'sessionMedium' }],
-          limit: '100000',
-          metrics: [{ name: 'sessions' }, { name: 'activeUsers' }, { name: 'screenPageViews' }],
-        }),
-        headers: { 'content-type': 'application/json' },
-        method: 'POST',
-      },
-    );
-    const payload = (await response.json()) as {
-      dimensionHeaders?: { name?: string }[];
-      metricHeaders?: { name?: string }[];
-      rows?: { dimensionValues?: { value?: string }[]; metricValues?: { value?: string }[] }[];
-    };
-    const dimensions = (payload.dimensionHeaders ?? []).map((header) => header.name ?? 'unknown');
-    const metrics = (payload.metricHeaders ?? []).map((header) => header.name ?? 'unknown');
-    return (payload.rows ?? []).flatMap((row) => {
-      const values = Object.fromEntries(
-        dimensions.map((name, index) => [name, row.dimensionValues?.[index]?.value ?? '']),
+    const points: GoogleMetricPoint[] = [];
+    let pageCount = 0;
+    let rowsRead = 0;
+    let totalRows: number | null = null;
+    let complete = false;
+    for (let page = 0; page < this.#maximumPages; page += 1) {
+      const response = await this.authorizedRequest(
+        `https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(propertyId)}:runReport`,
+        input.tokens,
+        {
+          body: JSON.stringify({
+            dateRanges: [{ endDate: input.endDate, startDate: input.startDate }],
+            dimensions: [{ name: 'date' }, { name: 'sessionSource' }, { name: 'sessionMedium' }],
+            limit: String(this.#pageSize),
+            metrics: [{ name: 'sessions' }, { name: 'activeUsers' }, { name: 'screenPageViews' }],
+            offset: String(page * this.#pageSize),
+            orderBys: [
+              { dimension: { dimensionName: 'date' } },
+              { dimension: { dimensionName: 'sessionSource' } },
+              { dimension: { dimensionName: 'sessionMedium' } },
+            ],
+          }),
+          headers: { 'content-type': 'application/json' },
+          method: 'POST',
+        },
       );
-      const rawDate = values.date ?? input.startDate.replaceAll('-', '');
-      const date = /^\d{8}$/u.test(rawDate)
-        ? `${rawDate.slice(0, 4)}-${rawDate.slice(4, 6)}-${rawDate.slice(6)}`
-        : input.startDate;
-      delete values.date;
-      return metrics.map((metric, index) => ({
-        dimensions: values,
-        endDate: date,
-        metric,
-        propertyId: input.property.id,
-        source: 'ga4' as const,
-        startDate: date,
-        value: Number(row.metricValues?.[index]?.value ?? 0),
-      }));
-    });
+      const payload = (await response.json()) as {
+        dimensionHeaders?: { name?: string }[];
+        metricHeaders?: { name?: string }[];
+        rowCount?: number;
+        rows?: { dimensionValues?: { value?: string }[]; metricValues?: { value?: string }[] }[];
+      };
+      const rows = payload.rows ?? [];
+      const dimensions = (payload.dimensionHeaders ?? []).map((header) => header.name ?? 'unknown');
+      const metrics = (payload.metricHeaders ?? []).map((header) => header.name ?? 'unknown');
+      totalRows =
+        Number.isInteger(payload.rowCount) && Number(payload.rowCount) >= 0
+          ? Number(payload.rowCount)
+          : totalRows;
+      pageCount += 1;
+      rowsRead += rows.length;
+      for (const row of rows) {
+        const values = Object.fromEntries(
+          dimensions.map((name, index) => [name, row.dimensionValues?.[index]?.value ?? '']),
+        );
+        const rawDate = values.date ?? input.startDate.replaceAll('-', '');
+        const date = /^\d{8}$/u.test(rawDate)
+          ? `${rawDate.slice(0, 4)}-${rawDate.slice(4, 6)}-${rawDate.slice(6)}`
+          : input.startDate;
+        delete values.date;
+        for (const [index, metric] of metrics.entries()) {
+          points.push({
+            dimensions: values,
+            endDate: date,
+            metric,
+            propertyId: input.property.id,
+            source: 'ga4',
+            startDate: date,
+            value: Number(row.metricValues?.[index]?.value ?? 0),
+          });
+        }
+      }
+      if (rows.length < this.#pageSize || (totalRows !== null && rowsRead >= totalRows)) {
+        complete = true;
+        break;
+      }
+    }
+    const diagnostic: GoogleCollectionDiagnostic = {
+      complete,
+      dataset: 'ga4_source_medium',
+      pageCount,
+      rows: rowsRead,
+      totalRows,
+    };
+    return { complete, diagnostics: [diagnostic], points };
   }
 
   private authorizedRequest(url: string, tokens: GoogleTokenSet, init: RequestInit = {}) {
@@ -327,13 +455,12 @@ export class GoogleHttpProvider implements GoogleProviderClient {
     for (let attempt = 0; attempt < 4; attempt += 1) {
       const response = await this.#fetch(url, init);
       if (response.ok) return response;
-      const retryable = response.status === 429 || response.status >= 500;
+      const reason = await googleErrorReason(response);
+      const code = providerErrorCode(response.status, reason);
+      const retryable =
+        response.status === 429 || response.status >= 500 || code === 'quota_exhausted';
       if (!retryable || attempt === 3) {
-        throw new GoogleProviderError(
-          providerErrorCode(response.status),
-          retryable,
-          response.status,
-        );
+        throw new GoogleProviderError(code, retryable, response.status);
       }
       const retryAfterHeader = response.headers.get('retry-after');
       const retryAfter = retryAfterHeader === null ? Number.NaN : Number(retryAfterHeader);
@@ -411,20 +538,45 @@ export class GoogleConnectionManager {
   ingest(points: readonly GoogleMetricPoint[]): number {
     let inserted = 0;
     for (const point of points) {
-      const key = createHash('sha256').update(JSON.stringify(point)).digest('hex');
+      const key = createHash('sha256')
+        .update(
+          JSON.stringify({
+            dimensions: Object.fromEntries(
+              Object.entries(point.dimensions).sort(([left], [right]) => left.localeCompare(right)),
+            ),
+            endDate: point.endDate,
+            metric: point.metric,
+            propertyId: point.propertyId,
+            source: point.source,
+            startDate: point.startDate,
+          }),
+        )
+        .digest('hex');
       if (!this.metrics.has(key)) {
-        this.metrics.set(key, structuredClone(point));
         inserted += 1;
       }
+      this.metrics.set(key, structuredClone(point));
     }
     return inserted;
   }
 }
 
 function assertIsoDate(value: string): void {
-  if (!/^\d{4}-\d{2}-\d{2}$/u.test(value) || Number.isNaN(Date.parse(`${value}T00:00:00Z`))) {
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/u.test(value) ||
+    Number.isNaN(parsed.getTime()) ||
+    parsed.toISOString().slice(0, 10) !== value
+  ) {
     throw new Error('Google metric date must use YYYY-MM-DD');
   }
+}
+
+function boundedInteger(value: number, minimum: number, maximum: number, label: string): number {
+  if (!Number.isInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`${label} must be between ${minimum} and ${maximum}`);
+  }
+  return value;
 }
 
 function encodeGoogleResource(value: string): string {
@@ -452,12 +604,31 @@ function parseTokenResponse(value: unknown): GoogleTokenSet {
   };
 }
 
-function providerErrorCode(status: number): string {
+function providerErrorCode(status: number, reason: string | null): string {
   if (status === 401) return 'revoked_or_expired';
-  if (status === 403) return 'insufficient_scope_or_quota';
+  if (status === 403 && reason && /(?:quota|ratelimit|limitexceeded)/iu.test(reason)) {
+    return 'quota_exhausted';
+  }
+  if (status === 403) return 'insufficient_scope';
+  if (status === 404) return 'property_not_found';
   if (status === 429) return 'quota_exhausted';
   if (status >= 500) return 'provider_unavailable';
   return 'provider_rejected';
+}
+
+async function googleErrorReason(response: Response): Promise<string | null> {
+  try {
+    const payload = (await response.clone().json()) as {
+      error?: { details?: { reason?: string }[]; errors?: { reason?: string }[] };
+    };
+    return (
+      payload.error?.errors?.find(({ reason }) => Boolean(reason))?.reason ??
+      payload.error?.details?.find(({ reason }) => Boolean(reason))?.reason ??
+      null
+    );
+  } catch {
+    return null;
+  }
 }
 
 const aiReferralMap: Readonly<Record<string, string>> = {

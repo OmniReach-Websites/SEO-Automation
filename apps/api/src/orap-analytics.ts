@@ -33,12 +33,14 @@ export interface OrapAnalyticsDashboard {
     connections: readonly {
       availableEndDate: string | null;
       availableStartDate: string | null;
+      lastAttemptedAt: string | null;
       lastErrorCode: string | null;
       lastSyncedAt: string | null;
       propertyId: string;
       propertyKind: 'ga4' | 'search_console';
       propertyMapping: string;
       status: string;
+      syncWindow: AnalyticsSyncWindow | null;
     }[];
     generatedAt: string;
     notes: readonly string[];
@@ -69,6 +71,23 @@ export interface OrapAnalyticsDashboard {
   timeline: readonly AnalyticsTimelineEvent[];
   topPages: readonly AnalyticsSearchRow[];
   topQueries: readonly AnalyticsSearchRow[];
+}
+
+export interface AnalyticsSyncWindow {
+  complete: boolean;
+  diagnostics: readonly {
+    complete: boolean;
+    dataset:
+      | 'ga4_source_medium'
+      | 'search_console_page'
+      | 'search_console_property'
+      | 'search_console_query';
+    pageCount: number;
+    rows: number;
+    totalRows: number | null;
+  }[];
+  endDate: string;
+  startDate: string;
 }
 
 export interface AnalyticsKpi {

@@ -8,12 +8,29 @@ export interface OrapAnalyticsModel {
     connections: readonly {
       availableEndDate: string | null;
       availableStartDate: string | null;
+      lastAttemptedAt?: string | null;
       lastErrorCode: string | null;
       lastSyncedAt: string | null;
       propertyId: string;
       propertyKind: 'ga4' | 'search_console';
       propertyMapping: string;
       status: string;
+      syncWindow?: {
+        complete: boolean;
+        diagnostics: readonly {
+          complete: boolean;
+          dataset:
+            | 'ga4_source_medium'
+            | 'search_console_page'
+            | 'search_console_property'
+            | 'search_console_query';
+          pageCount: number;
+          rows: number;
+          totalRows: number | null;
+        }[];
+        endDate: string;
+        startDate: string;
+      } | null;
     }[];
     generatedAt: string;
     notes: readonly string[];
@@ -287,7 +304,10 @@ function renderDataQuality(model: OrapAnalyticsModel): string {
       const failure = connection.lastErrorCode
         ? `<p class="notice error"><strong>Collection issue:</strong> ${escapeHtml(providerFailureMessage(connection.lastErrorCode))} <code>${escapeHtml(connection.lastErrorCode)}</code></p>`
         : '';
-      return `<article class="technical-stat connection-card"><div class="analytics-meta"><strong>${source}</strong><span class="badge${connection.status === 'connected' ? '' : ' disabled'}">${escapeHtml(connection.status)}</span></div><div><span class="help">Exact property ID</span><code>${escapeHtml(connection.propertyId)}</code></div><div><span class="help">Verified mapping</span><code>${escapeHtml(connection.propertyMapping)}</code></div><p class="help">Available stored period: ${escapeHtml(period)}</p><p class="help">Reporting calendar: ${escapeHtml(reportingCalendar)}</p><p class="help">Last successful sync: ${escapeHtml(connection.lastSyncedAt ? formatDateTime(connection.lastSyncedAt) : 'Never')}</p>${failure}</article>`;
+      const syncWindow = connection.syncWindow
+        ? `<details><summary>Last collection window: ${escapeHtml(connection.syncWindow.startDate)} through ${escapeHtml(connection.syncWindow.endDate)} — ${connection.syncWindow.complete ? 'complete' : 'partial'}</summary><ul class="quality-list">${connection.syncWindow.diagnostics.map((diagnostic) => `<li><strong>${escapeHtml(collectionDatasetLabel(diagnostic.dataset))}:</strong> ${formatCount(diagnostic.rows)} rows across ${formatCount(diagnostic.pageCount)} page${diagnostic.pageCount === 1 ? '' : 's'}${diagnostic.totalRows === null ? '' : ` of ${formatCount(diagnostic.totalRows)}`} — ${diagnostic.complete ? 'complete' : 'bounded partial result'}</li>`).join('')}</ul></details>`
+        : '<p class="help">Detailed collection-window diagnostics will appear after the next versioned sync.</p>';
+      return `<article class="technical-stat connection-card"><div class="analytics-meta"><strong>${source}</strong><span class="badge${connection.status === 'connected' ? '' : ' disabled'}">${escapeHtml(connection.status)}</span></div><div><span class="help">Exact property ID</span><code>${escapeHtml(connection.propertyId)}</code></div><div><span class="help">Verified mapping</span><code>${escapeHtml(connection.propertyMapping)}</code></div><p class="help">Available stored period: ${escapeHtml(period)}</p><p class="help">Reporting calendar: ${escapeHtml(reportingCalendar)}</p><p class="help">Last collection attempt: ${escapeHtml(connection.lastAttemptedAt ? formatDateTime(connection.lastAttemptedAt) : 'Never')}</p><p class="help">Last stored collection: ${escapeHtml(connection.lastSyncedAt ? formatDateTime(connection.lastSyncedAt) : 'Never')}</p>${syncWindow}${failure}</article>`;
     })
     .join('');
   return `<section class="panel" aria-labelledby="data-quality"><div class="panel-header"><div><h2 id="data-quality">Connections &amp; data quality</h2><p class="help">Generated ${escapeHtml(formatDateTime(model.dataQuality.generatedAt))}</p></div><span class="state-pill ${escapeHtml(model.dataQuality.state)}">${escapeHtml(stateLabel(model.dataQuality.state))}</span></div><div class="section-grid"><div>${connections || '<div class="empty"><strong>No Google connection</strong>Connect a verified site property before expecting provider measurements.</div>'}</div><ul class="quality-list">${model.dataQuality.notes.map((note) => `<li>${escapeHtml(note)}</li>`).join('')}</ul></div></section>`;
@@ -376,7 +396,20 @@ function providerFailureMessage(code: string): string {
   const messages: Record<string, string> = {
     collection_failed:
       'Collection failed. Review the worker event and retry after the provider recovers.',
+    collection_truncated:
+      'Google returned more rows than the bounded collection budget. Totals remain separately collected, but query or page detail may be partial.',
+    insufficient_scope:
+      'Reconnect this property with the approved read-only permission because Google denied the required scope.',
+    insufficient_scope_or_quota:
+      'Google denied the request. Verify the approved read-only permission and provider quota before reconnecting.',
     missing_refresh_token: 'Reconnect this property because no renewable permission is available.',
+    property_not_found:
+      'The mapped property is unavailable to this connection. Verify the exact property and reconnect it.',
+    provider_rejected:
+      'Google rejected the collection request. Verify the exact property mapping and approved API access.',
+    provider_unavailable:
+      'Google is temporarily unavailable. The bounded worker retry policy will try again.',
+    quota_exhausted: 'Google throttled collection. The bounded worker retry policy will try again.',
     revoked_or_expired:
       'Reconnect this property because Google authorization expired or was revoked.',
   };
@@ -384,6 +417,22 @@ function providerFailureMessage(code: string): string {
     return 'Google throttled collection. The bounded worker retry policy will try again.';
   }
   return messages[code] ?? 'Collection needs review in the integration and worker diagnostics.';
+}
+
+function collectionDatasetLabel(
+  dataset:
+    | 'ga4_source_medium'
+    | 'search_console_page'
+    | 'search_console_property'
+    | 'search_console_query',
+): string {
+  const labels = {
+    ga4_source_medium: 'GA4 source/medium detail',
+    search_console_page: 'Search Console landing pages',
+    search_console_property: 'Search Console property totals',
+    search_console_query: 'Search Console queries',
+  } as const;
+  return labels[dataset];
 }
 
 function escapeHtml(value: string): string {

@@ -1298,6 +1298,7 @@ model IntegrationConnection {
   permissionsProvenance Json      @map("permissions_provenance")
   syncCursor            Json?     @map("sync_cursor")
   lastSyncedAt          DateTime? @map("last_synced_at") @db.Timestamptz(3)
+  lastAttemptedAt       DateTime? @map("last_attempted_at") @db.Timestamptz(3)
   disconnectedAt        DateTime? @map("disconnected_at") @db.Timestamptz(3)
   consentedBy           String?   @map("consented_by") @db.Uuid
   consentedAt           DateTime? @map("consented_at") @db.Timestamptz(3)

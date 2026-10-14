@@ -19,6 +19,13 @@ const metricIdentityMigration = readFileSync(
   ),
   'utf8',
 );
+const syncDiagnosticsMigration = readFileSync(
+  resolve(
+    root,
+    'packages/database/prisma/migrations/20261014070000_google_sync_diagnostics/migration.sql',
+  ),
+  'utf8',
+);
 
 describe('Google provider persistence boundary', () => {
   it('stores one-use hashed OAuth state and encrypted request/token envelopes', () => {
@@ -52,5 +59,15 @@ describe('Google provider persistence boundary', () => {
       'PARTITION BY connection_id, source, metric, dimensions, window_start, window_end',
     );
     expect(service).toContain("status = 'disconnected'");
+  });
+
+  it('separates collection attempts from stored results and clears stale metrics on remap', () => {
+    expect(syncDiagnosticsMigration).toContain('ADD COLUMN last_attempted_at timestamptz(3)');
+    expect(syncDiagnosticsMigration).toContain("'partial'");
+    expect(service).toContain('DELETE FROM metric_snapshots');
+    expect(service).toContain('last_synced_at = NULL');
+    expect(service).toContain('last_attempted_at = NULL');
+    expect(service).toContain('sync_cursor = NULL');
+    expect(service).toContain('refresh_failure_code = NULL');
   });
 });

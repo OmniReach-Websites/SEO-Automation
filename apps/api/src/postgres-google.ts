@@ -4,7 +4,7 @@ import {
   GoogleConnectionManager,
   GoogleProviderError,
   createOAuthRequest,
-  type GoogleMetricPoint,
+  type GoogleCollectionResult,
   type GoogleProperty,
   type GoogleProviderClient,
   type GoogleTokenSet,
@@ -424,7 +424,7 @@ export class PostgresGoogleIntegrationService implements IntegrationEndpointServ
     siteId: string;
     startDate: string;
     tenantId: string;
-  }): Promise<{ inserted: number; status: 'connected' | 'error' }> {
+  }): Promise<{ inserted: number; status: 'connected' | 'error' | 'partial' }> {
     const loaded = await this.withWorkerSite(input, async (client) => {
       const row = required(
         (
@@ -465,21 +465,22 @@ export class PostgresGoogleIntegrationService implements IntegrationEndpointServ
         kind: loaded.property_kind,
         siteUrl: loaded.property_mapping,
       };
-      const points = await this.#provider.collect({
+      const collection = await this.#provider.collect({
         endDate: input.endDate,
         property,
         startDate: input.startDate,
         tokens,
       });
-      const inserted = await this.persistMetrics(input, points, tokens, now);
-      return { inserted, status: 'connected' };
+      const inserted = await this.persistMetrics(input, collection, tokens, now);
+      return { inserted, status: collection.complete ? 'connected' : 'partial' };
     } catch (error) {
       const code = error instanceof GoogleProviderError ? error.code : 'collection_failed';
       await this.withWorkerSite(input, async (client) => {
         await client.query(
           `UPDATE integration_connections
-              SET status = CASE WHEN $2 = 'revoked_or_expired' THEN 'expired' ELSE 'error' END,
-                  refresh_failure_code = $2, updated_at = $3
+              SET status = CASE WHEN $2 IN ('revoked_or_expired','missing_refresh_token')
+                                THEN 'expired' ELSE 'error' END,
+                  refresh_failure_code = $2, last_attempted_at = $3, updated_at = $3
             WHERE id = $1`,
           [input.connectionId, code, input.now ?? this.#now()],
         );
@@ -497,13 +498,13 @@ export class PostgresGoogleIntegrationService implements IntegrationEndpointServ
       startDate: string;
       tenantId: string;
     },
-    points: readonly GoogleMetricPoint[],
+    collection: GoogleCollectionResult,
     tokens: GoogleTokenSet,
     now: Date,
   ): Promise<number> {
     return this.withWorkerSite(input, async (client) => {
       let inserted = 0;
-      for (const point of points) {
+      for (const point of collection.points) {
         const result = await query<{ id: string; inserted: boolean }>(
           client,
           `INSERT INTO metric_snapshots
@@ -560,15 +561,24 @@ export class PostgresGoogleIntegrationService implements IntegrationEndpointServ
       );
       await client.query(
         `UPDATE integration_connections
-            SET status = 'connected', last_synced_at = $2, token_expires_at = $3,
-                refresh_failure_code = NULL,
+            SET status = $5, last_synced_at = $2, token_expires_at = $3,
+                last_attempted_at = $2,
+                refresh_failure_code = CASE WHEN $5 = 'partial'
+                                            THEN 'collection_truncated' ELSE NULL END,
                 sync_cursor = $4::jsonb, updated_at = $2
           WHERE id = $1`,
         [
           input.connectionId,
           now,
           new Date(tokens.expiresAt),
-          JSON.stringify({ endDate: input.endDate, startDate: input.startDate }),
+          JSON.stringify({
+            complete: collection.complete,
+            diagnostics: collection.diagnostics,
+            endDate: input.endDate,
+            startDate: input.startDate,
+            version: 2,
+          }),
+          collection.complete ? 'connected' : 'partial',
         ],
       );
       return inserted;
@@ -588,6 +598,17 @@ export class PostgresGoogleIntegrationService implements IntegrationEndpointServ
   ): Promise<unknown> {
     const operation = async (client: TenantTransactionClient) => {
       const now = this.#now();
+      const previous = (
+        await query<{ id: string; property_id: string }>(
+          client,
+          `SELECT id, property_id
+             FROM integration_connections
+            WHERE tenant_id = $1 AND site_id = $2 AND provider = 'google'
+              AND property_kind = $3
+            FOR UPDATE`,
+          [input.tenantId, input.siteId, input.property.kind],
+        )
+      ).rows[0];
       const connection = required(
         (
           await query<{ id: string }>(
@@ -634,6 +655,20 @@ export class PostgresGoogleIntegrationService implements IntegrationEndpointServ
         ).rows,
         'Google connection could not be saved',
       );
+      if (previous && previous.property_id !== input.property.id) {
+        await client.query(
+          `DELETE FROM metric_snapshots
+            WHERE tenant_id = $1 AND site_id = $2 AND connection_id = $3`,
+          [input.tenantId, input.siteId, connection.id],
+        );
+        await client.query(
+          `UPDATE integration_connections
+              SET last_synced_at = NULL, last_attempted_at = NULL, sync_cursor = NULL,
+                  refresh_failure_code = NULL, updated_at = $4
+            WHERE tenant_id = $1 AND site_id = $2 AND id = $3`,
+          [input.tenantId, input.siteId, connection.id, now],
+        );
+      }
       await client.query(
         `INSERT INTO schedules
            (tenant_id, site_id, category, timezone, local_hour, local_minute,
