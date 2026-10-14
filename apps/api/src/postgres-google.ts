@@ -231,7 +231,7 @@ export class PostgresGoogleIntegrationService implements IntegrationEndpointServ
         };
       }
       stage = 'connect_property';
-      return this.connectProperty(actor, {
+      return await this.connectProperty(actor, {
         credentialId,
         property: selected,
         scopes: tokens.scopes,
@@ -564,7 +564,9 @@ export class PostgresGoogleIntegrationService implements IntegrationEndpointServ
                (tenant_id, site_id, provider, property_kind, property_id, property_mapping,
                 credential_ref, scopes, status, permissions_provenance,
                 consented_by, consented_at, token_expires_at)
-             VALUES ($1, $2, 'google', $3, $4, $5, $6, $7::jsonb, 'connected',
+             VALUES ($1, $2, 'google', $3, $4, $5,
+                     (SELECT id::text FROM integration_credentials WHERE id = $6::uuid),
+                     $7::jsonb, 'connected',
                      $8::jsonb, $9, $10,
                      (SELECT expires_at FROM integration_credentials WHERE id = $6::uuid))
              ON CONFLICT (tenant_id, site_id, provider, property_kind) DO UPDATE
