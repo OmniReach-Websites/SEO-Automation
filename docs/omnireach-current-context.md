@@ -2,7 +2,7 @@
 
 **Snapshot:** October 13, 2026 (America/Chicago; latest deployment completed October 14 UTC)  
 **Repository:** `OmniReach-Websites/SEO-Automation`  
-**Production release:** `ef35878b258845fd8e88ef6fcc340a72d84fef27`  
+**Latest application-changing release:** `ef35878b258845fd8e88ef6fcc340a72d84fef27`
 **Audience:** Codex agents, developers, and authorized OmniReach operators
 
 This is the current handoff document for ongoing OmniReach work. It supersedes
@@ -24,11 +24,13 @@ production-input worksheet.
 
 ## Current verified production baseline
 
-The protected `main` workflow deployed commit
-`ef35878b258845fd8e88ef6fcc340a72d84fef27` successfully in GitHub Actions run
+The protected `main` workflow deployed the latest application-changing commit,
+`ef35878b258845fd8e88ef6fcc340a72d84fef27`, successfully in GitHub Actions run
 `38511007593`. The workflow checked out the exact commit, ran the repository build and
 test gate, built immutable runtime images, packaged and transferred the release through
-the restricted SSH path, activated it, and passed post-deployment checks.
+the restricted SSH path, activated it, and passed post-deployment checks. Later
+documentation-only commits may have a newer active release SHA without changing this
+application baseline; verify the latest workflow when an exact active SHA matters.
 
 Direct checks after activation returned:
 
