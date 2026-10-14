@@ -1,13 +1,14 @@
-import { createHash } from 'node:crypto';
-
 import type { ProposalEvaluation } from '@omnireach/ai';
-import { withTenantTransaction, type TenantTransactionPool } from '@omnireach/tenant';
+import { sourceValueHash } from '@omnireach/content';
+import { withWorkerTransaction, type TenantTransactionPool } from '@omnireach/tenant';
 
 export interface AiProposalStageContext {
   actorId: string;
   baseRevision: number;
   currentValue: unknown;
   fieldId: string;
+  jobId: string;
+  materialId: string;
   policyVersion: number;
   siteId: string;
   tenantId: string;
@@ -22,6 +23,7 @@ export interface AiProposalStageInput {
   latencyMs: number;
   mode: 'AUTO' | 'SUGGEST';
   model: string;
+  inputTokens: number;
   outputTokens: number;
   promptVersion: number;
   provider: string;
@@ -47,17 +49,18 @@ export class PostgresAiProposalStager {
       context.policyVersion < 1 ||
       proposal.expiresAt <= new Date() ||
       proposal.costUsdMicros < 0 ||
+      proposal.inputTokens < 0 ||
       proposal.outputTokens < 0 ||
       proposal.latencyMs < 0
     ) {
       throw new Error('Invalid AI proposal staging input');
     }
-    return withTenantTransaction(
+    return withWorkerTransaction(
       this.pool,
       {
+        jobId: context.jobId,
         siteId: context.siteId,
         tenantId: context.tenantId,
-        userId: context.actorId,
       },
       async (client) => {
         const field = (await client.query(
@@ -81,8 +84,11 @@ export class PostgresAiProposalStager {
           throw new Error('AI proposal is not allowed for this field');
         }
         const current = (await client.query(
-          `SELECT revision.content -> $4 AS field_value
+          `SELECT COALESCE(draft.content, revision.content) -> $4 AS field_value
              FROM content_revisions revision
+             LEFT JOIN content_drafts draft
+               ON draft.tenant_id = revision.tenant_id AND draft.site_id = revision.site_id
+              AND draft.state = 'active' AND draft.base_revision = revision.revision
             WHERE revision.tenant_id = $1 AND revision.site_id = $2
               AND revision.revision = $3`,
           [context.tenantId, context.siteId, context.baseRevision, selected.stable_id],
@@ -101,11 +107,11 @@ export class PostgresAiProposalStager {
         const inserted = (await client.query(
           `INSERT INTO content_proposals
              (tenant_id, site_id, field_id, base_revision, state, proposed_value,
-              provider, model, prompt_version, evidence, rationale, output_tokens,
+              provider, model, prompt_version, evidence, rationale, input_tokens, output_tokens,
               latency_ms, provider_request_hash, expires_at, effective_mode,
               validation, policy_version)
            VALUES ($1, $2, $3, $4, 'pending', $5::jsonb, $6, $7, $8,
-                   $9::jsonb, $10, $11, $12, $13, $14, $15, $16::jsonb, $17)
+                   $9::jsonb, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18)
            ON CONFLICT DO NOTHING
            RETURNING id`,
           [
@@ -119,6 +125,7 @@ export class PostgresAiProposalStager {
             proposal.promptVersion,
             JSON.stringify(proposal.evidence),
             proposal.rationale,
+            proposal.inputTokens,
             proposal.outputTokens,
             proposal.latencyMs,
             proposal.providerRequestHash ?? null,
@@ -147,6 +154,24 @@ export class PostgresAiProposalStager {
             )) as { rows: { id: string }[] });
         const proposalId = existing.rows[0]?.id;
         if (!proposalId) throw new Error('AI proposal staging failed');
+        const material = (await client.query(
+          `UPDATE ai_proposal_job_materials
+              SET proposal_id = $4, completed_at = now()
+            WHERE tenant_id = $1 AND site_id = $2 AND id = $3
+              AND proposal_id IS NULL
+            RETURNING id`,
+          [context.tenantId, context.siteId, context.materialId, proposalId],
+        )) as { rows: { id: string }[] };
+        if (!material.rows[0]) {
+          const existingMaterial = (await client.query(
+            `SELECT proposal_id FROM ai_proposal_job_materials
+              WHERE tenant_id = $1 AND site_id = $2 AND id = $3`,
+            [context.tenantId, context.siteId, context.materialId],
+          )) as { rows: { proposal_id: string | null }[] };
+          if (existingMaterial.rows[0]?.proposal_id !== proposalId) {
+            throw new Error('AI proposal material result could not be recorded');
+          }
+        }
         await client.query(
           `INSERT INTO audit_events
              (tenant_id, site_id, actor_id, action, trace_id, target_type, target_id, metadata)
@@ -169,10 +194,4 @@ export class PostgresAiProposalStager {
       },
     );
   }
-}
-
-function sourceValueHash(value: unknown): string {
-  return createHash('sha256')
-    .update(JSON.stringify(value ?? null), 'utf8')
-    .digest('hex');
 }

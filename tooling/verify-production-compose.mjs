@@ -291,7 +291,7 @@ try {
     ],
     { capture: true },
   );
-  assert.equal(workerHeartbeats.stdout.trim(), '6');
+  assert.equal(workerHeartbeats.stdout.trim(), '7');
 
   dockerCompose([
     'exec',
@@ -487,7 +487,7 @@ try {
       ok: true,
       persistence: 'verified after restart',
       staticAvailability: 'verified during control-plane restart',
-      workers: 'six kinds healthy',
+      workers: 'seven kinds healthy',
       project: basename(project),
     }),
   );

@@ -9,7 +9,10 @@ import {
 import { withWorkerTransaction, type TenantTransactionPool } from '@omnireach/tenant';
 
 export class PostgresAiBudgetLedger implements AiBudgetLedger {
-  constructor(private readonly pool: TenantTransactionPool) {}
+  constructor(
+    private readonly pool: TenantTransactionPool,
+    private readonly durableJobId?: string,
+  ) {}
 
   reserve(input: {
     readonly amountUsdMicros: number;
@@ -31,6 +34,17 @@ export class PostgresAiBudgetLedger implements AiBudgetLedger {
       );
       const id = result.rows[0]?.id;
       if (!id) throw new Error('AI budget reservation failed');
+      if (this.durableJobId) {
+        const linked = await query<{ id: string }>(
+          client,
+          `UPDATE ai_reservations
+              SET job_id = $4
+            WHERE tenant_id = $1 AND site_id = $2 AND id = $3 AND job_id IS NULL
+            RETURNING id`,
+          [input.tenantId, input.siteId, id, this.durableJobId],
+        );
+        if (!linked.rows[0]) throw new Error('AI budget reservation job link failed');
+      }
       return {
         amountUsdMicros: input.amountUsdMicros,
         expiresAt: input.expiresAt.toISOString(),

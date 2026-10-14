@@ -17,6 +17,7 @@ export {
 } from './transaction.ts';
 export { SitePolicyDeniedError, assertSiteFeatureEnabled } from './postgres-policy.ts';
 export {
+  AiReviewCycleQuotaExceededError,
   MemoryAiReviewCycleQuota,
   PostgresAiReviewCycleQuota,
   type AiReviewCycleQuota,

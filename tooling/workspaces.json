@@ -83,6 +83,7 @@
       "path": "workers/runner",
       "kind": "worker",
       "allowedWorkspaceDependencies": [
+        "@omnireach/ai",
         "@omnireach/contracts",
         "@omnireach/database",
         "@omnireach/integrations",
@@ -91,6 +92,7 @@
         "@omnireach/seo-core",
         "@omnireach/shared",
         "@omnireach/tenant",
+        "@omnireach/worker-aio",
         "@omnireach/worker-crawler",
         "@omnireach/worker-monitoring",
         "@omnireach/worker-publisher"

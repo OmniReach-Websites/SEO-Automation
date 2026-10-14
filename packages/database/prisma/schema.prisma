@@ -800,6 +800,28 @@ model ContentProposal {
   @@map("content_proposals")
 }
 
+model AiProposalJobMaterial {
+  id              String    @id @default(uuid()) @db.Uuid
+  tenantId        String    @map("tenant_id") @db.Uuid
+  siteId          String    @map("site_id") @db.Uuid
+  fieldId         String    @map("field_id") @db.Uuid
+  requestedBy     String    @map("requested_by") @db.Uuid
+  requestKey      String    @map("request_key") @db.Char(64)
+  baseRevision    Int       @map("base_revision")
+  policyVersion   Int       @map("policy_version")
+  fieldPurpose    String    @map("field_purpose") @db.VarChar(200)
+  evidence        Json      @default("[]")
+  sourceValueHash String    @map("source_value_hash") @db.Char(64)
+  expiresAt       DateTime  @map("expires_at") @db.Timestamptz(3)
+  proposalId      String?   @map("proposal_id") @db.Uuid
+  completedAt     DateTime? @map("completed_at") @db.Timestamptz(3)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@unique([tenantId, siteId, requestKey])
+  @@index([tenantId, siteId, createdAt(sort: Desc)])
+  @@map("ai_proposal_job_materials")
+}
+
 model AiEvaluationResult {
   id            String   @id @default(uuid()) @db.Uuid
   fixtureId     String   @map("fixture_id") @db.VarChar(120)
@@ -1133,6 +1155,7 @@ model AiModelPrice {
   id                        String   @id @default(uuid()) @db.Uuid
   modelAlias                String   @map("model_alias") @db.VarChar(120)
   version                   Int
+  providerModel             String   @map("provider_model") @db.VarChar(120)
   inputUsdMicrosPerMillion  Int      @map("input_usd_micros_per_million")
   outputUsdMicrosPerMillion Int      @map("output_usd_micros_per_million")
   effectiveAt               DateTime @map("effective_at") @db.Timestamptz(3)

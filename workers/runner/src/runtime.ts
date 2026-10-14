@@ -230,7 +230,7 @@ export class WorkerHeartbeat {
   constructor(
     private readonly pool: TenantTransactionPool,
     readonly instanceId: string,
-    readonly kind: 'crawler' | 'monitoring' | 'publisher' | 'runner' | 'scheduler' | 'seo',
+    readonly kind: 'aio' | 'crawler' | 'monitoring' | 'publisher' | 'runner' | 'scheduler' | 'seo',
     private readonly releaseSha: string,
   ) {}
 
