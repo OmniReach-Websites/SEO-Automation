@@ -386,6 +386,18 @@ opaque envelopes to BullMQ. Failed dispatch claims are released for retry. ORAP 
 cancellation is limited to queued work; replay is limited to cancelled, failed, or
 skipped work and creates a new audited queued record for the durable dispatcher.
 
+AI proposal admission is disabled unless `OPENAI_PROVIDER_ENABLED=true`. While disabled,
+the customer endpoint returns `503 ai_provider_disabled` before creating durable work,
+and the dedicated worker cancels any pre-existing envelope before database, quota,
+budget, or provider access. When explicitly activated, request content and evidence are
+stored only in tenant-scoped PostgreSQL material; BullMQ receives bounded identifiers.
+The worker revalidates entitlement, field mode, protected status, emergency controls,
+policy version, source hash, expiry, model alias/price, review-cycle quota, and both hard
+budget caps before a provider call. Results remain reviewable proposals and never
+publish directly. Disable the provider flag or site automation control to stop new
+calls; public static sites remain independent. Never log provider prompts, API keys,
+protected facts, or raw provider errors.
+
 Critical-email delivery retries at most three times with exponential backoff. The
 durable alert center, not the provider transport, owns these retries so every
 attempt and terminal failure updates the deduplicated ORAP incident without exposing

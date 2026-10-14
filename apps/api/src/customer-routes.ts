@@ -24,6 +24,7 @@ export interface CustomerPrincipal {
 }
 
 export interface CustomerEndpointService {
+  readonly aiProposalRequestsEnabled?: boolean;
   assetDownload(
     principal: CustomerPrincipal,
     input: { assetId: string },
@@ -49,6 +50,15 @@ export interface CustomerEndpointService {
   reports(principal: CustomerPrincipal): Promise<unknown>;
   pages(principal: CustomerPrincipal): Promise<unknown>;
   proposals?(principal: CustomerPrincipal): Promise<unknown>;
+  requestProposal?(
+    principal: CustomerPrincipal,
+    input: {
+      evidence: string[];
+      fieldId: string;
+      fieldPurpose: string;
+      idempotencyKey: string;
+    },
+  ): Promise<unknown>;
   preview(
     principal: CustomerPrincipal,
     input: { draftId: string },
@@ -123,6 +133,35 @@ export function registerCustomerRoutes(
       ? service.proposals(principal)
       : reply.code(404).send({ error: 'not_found' });
   });
+
+  server.post(
+    '/v1/customer/proposals',
+    { preHandler: requireSameOrigin },
+    async (request, reply) => {
+      const principal = await authorize(request, reply, resolvePrincipal, 'content.edit');
+      if (!principal) return;
+      if (!service.aiProposalRequestsEnabled || !service.requestProposal) {
+        return reply.code(503).send({ error: 'ai_provider_disabled' });
+      }
+      const idempotencyKey = parse(
+        z.string().trim().min(8).max(128),
+        request.headers['idempotency-key'],
+        reply,
+      );
+      const body = parse(
+        z.object({
+          evidence: z.array(z.string().max(1_000)).max(10),
+          fieldId: stableId,
+          fieldPurpose: z.string().trim().min(1).max(200),
+        }),
+        request.body,
+        reply,
+      );
+      if (!idempotencyKey || !body) return;
+      const result = await service.requestProposal(principal, { ...body, idempotencyKey });
+      return reply.code(202).send(result);
+    },
+  );
 
   server.post(
     '/v1/customer/proposals/:proposalId/review',

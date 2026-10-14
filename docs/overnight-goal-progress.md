@@ -2,7 +2,7 @@
 
 **Started:** 2026-10-13 (America/Chicago)
 
-**Working branch:** `docs/context-update-20261014-0853z`
+**Working branch:** `feature/ai-proposal-pipeline`
 **Source goal:** `OMNIREACH_AUTONOMOUS_OVERNIGHT_GOAL.md`
 
 This file is the durable resume point for the autonomous overnight goal. Evidence states
@@ -64,8 +64,8 @@ work, `WAITING_FOR_OWNER` needs a human decision/credential, and
 
 ### P5 — AI proposal pipeline
 
-- [ ] Complete durable disabled-by-default proposal job/material/result path and tests.
-- [ ] Add synthetic benchmark harness and preserve protected-fact/budget gates.
+- [x] Complete durable disabled-by-default proposal job/material/result path and tests.
+- [x] Add synthetic benchmark harness and preserve protected-fact/budget gates.
 - [ ] `WAITING_FOR_OWNER` — paid production activation remains disabled.
 
 ### P6 — Maintenance
@@ -371,10 +371,34 @@ work, `WAITING_FOR_OWNER` needs a human decision/credential, and
 - Real Resend/contact/alert delivery remains disabled. No provider message, DNS change,
   backup activation, or paid OpenAI call was made by this release.
 
+### 2026-10-14 UTC — Priority 5 repository candidate
+
+- Added RLS-protected tenant/site proposal-job material, atomic idempotent admission,
+  worker-side content/policy rehydration, source-hash and protected-field revalidation,
+  immutable proposal-result linkage, and a charge-within-reservation database guard.
+- Added dated official price rows for the selected balanced and economy aliases. The
+  configured alias must match its provider model and effective price record.
+- Replaced the unconditional queue cancellation with a dedicated `aio_proposal` worker.
+  The provider flag is still checked first; production remains disabled by default and
+  no paid call was made.
+- Added bounded same-origin customer request admission, a stable disabled response,
+  safe provider error classification, deterministic evaluation, budget/cycle handling,
+  and deduplicated safe AUTO-failure alerts.
+- Added a five-case synthetic benchmark covering bounded copy, prompt injection as
+  untrusted data, protected-fact removal, unsafe links, and unsupported claims. Reports
+  contain hashes and violation codes, not fixture source text.
+- Full evidence passes: 71 unit files (375 passed, 1 skipped), 12 integration files (71
+  passed), 17 security files (78 passed), 2 contract files (10 passed), the 10-site load
+  test, and 5 Playwright tests. Typecheck, lint, build, docs, migrations, Compose,
+  workflow, workspace, five-site contract/build, full secret scan (604 files), and
+  production dependency audit (zero vulnerabilities) also pass. The disposable stack
+  applied all 61 migrations, ran seven healthy worker kinds, proved restricted roles,
+  private isolation, persistence, and static-site independence, then was removed.
+- Paid-provider benchmarking, explicit activation, and production smoke remain
+  `WAITING_FOR_OWNER`; `OPENAI_PROVIDER_ENABLED=false` remains required.
+
 ## Resume point
 
-Begin Priority 5 from a fresh branch based on `origin/main`. Complete and verify the
-durable disabled-by-default AI proposal job/material/result path and synthetic benchmark
-without enabling paid production calls. Preserve protected-fact, per-field mode,
-per-site budget, platform budget, authenticated Analytics, exact Google-console, real
-R2, and timed isolated-restore requirements.
+Finish full repository verification for the Priority 5 candidate, then use the
+protected feature-branch/PR workflow. Do not activate paid OpenAI calls during release.
+Afterward begin Priority 6 by reviewing historical Dependabot PRs individually.

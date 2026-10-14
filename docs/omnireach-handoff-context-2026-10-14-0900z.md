@@ -9,8 +9,9 @@
 **Latest protected-main commit:** `b06756bee636da166ed80122714c60600f231197`
 (`Harden staff authentication UX (#67)`)
 
-**Current documentation branch:** `docs/context-update-20261014-0853z`, created from
-the protected-main commit above
+**Current repository branch:** `feature/ai-proposal-pipeline`, created from the
+protected-main commit above; Priority 5 is implemented locally but is not yet merged or
+deployed
 
 **Latest verified production workflow:** GitHub Actions run `38538086374` completed
 successfully for exact commit `b06756bee636da166ed80122714c60600f231197`.
@@ -131,6 +132,23 @@ OmniReach uses GA4 ID `G-5H7ZB5HMLC`; Coop uses `G-B6S8N9JHL8`. Both tags are
 consent-aware and site-specific. Never put one site's ID on the other site.
 
 ## Delivered milestone state
+
+### Priority 5 — controlled AI proposal pipeline (repository candidate only)
+
+The current feature branch adds tenant/RLS-scoped durable proposal material, atomic
+idempotent job admission, worker-side content and policy revalidation, protected-field
+and emergency-control enforcement, dated model prices, budget reservation linkage,
+immutable proposal-result linkage, and a dedicated resource-limited `aio_proposal`
+worker. The customer request endpoint fails closed with `503 ai_provider_disabled`
+while the provider flag is off. Queue payloads retain identifiers rather than customer
+copy or evidence.
+
+A deterministic five-case synthetic benchmark covers safe copy, prompt-injection data,
+protected facts, unsafe links, and unsupported claims. A disposable production stack
+applied all 61 migrations and observed seven healthy worker kinds. This work is
+**implemented/tested**, not deployed. `OPENAI_PROVIDER_ENABLED=false` remains required;
+no paid provider call was made. A representative paid-provider benchmark, explicit
+activation, and production smoke remain waiting for the owner.
 
 ### Priority 1 — ORAP Analytics and SEO Performance
 

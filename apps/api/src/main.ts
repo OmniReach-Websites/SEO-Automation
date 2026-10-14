@@ -18,6 +18,7 @@ import {
 import {
   LocalAssetStorage,
   MockContactDelivery,
+  PostgresAiProposalRequestRepository,
   PostgresAssetRepository,
   PostgresContentRepository,
 } from '@omnireach/content';
@@ -150,6 +151,7 @@ const customerService = new PostgresCustomerService(
     signingKey: config.PREVIEW_SIGNING_KEY,
   }),
   contactEncryptionKey,
+  config.OPENAI_PROVIDER_ENABLED ? new PostgresAiProposalRequestRepository(tenantPool) : undefined,
 );
 const orapService = new PostgresOrapService(
   tenantPool,

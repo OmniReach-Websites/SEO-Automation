@@ -13,6 +13,7 @@ export {
 export {
   MockProposalProvider,
   OpenAiProposalProvider,
+  ProviderResponseError,
   proposalSchema,
   redactUntrustedText,
   type ProposalInput,
@@ -28,3 +29,8 @@ export {
   type ProposalEvaluation,
   type ProposalViolationCode,
 } from './evaluation.ts';
+export {
+  runSyntheticProposalBenchmark,
+  syntheticProposalBenchmark,
+  type SyntheticProposalBenchmarkCase,
+} from './benchmark.ts';

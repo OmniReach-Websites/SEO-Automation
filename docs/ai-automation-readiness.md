@@ -14,16 +14,26 @@ ceiling. The ceiling is the existing default and remains changeable only through
 audited ORAP budget control. The platform-wide $50 hard ceiling remains an additional
 safety bound.
 
-This decision does not yet make paid calls live. The production runner still rejects
-`aio_proposal` jobs by policy, no durable job-material record currently supplies the
-field/evidence inputs to that runner, and the model-price ledger needs a dated price
-record plus a representative benchmark. Those implementation and evidence items are
-TODO; `OPENAI_PROVIDER_ENABLED` must stay `false` until they pass.
+This decision does not make paid calls live. The repository now has a tenant-scoped,
+RLS-protected durable job-material record, atomic job admission, worker-side source and
+policy revalidation, a dedicated resource-limited `aio_proposal` worker, immutable
+proposal-result linkage, and a synthetic deterministic safety benchmark. The request
+route returns `503 ai_provider_disabled` and performs no database/provider work while
+`OPENAI_PROVIDER_ENABLED=false`, which remains the production default.
+
+The dated price ledger records the official 2026-10-14 standard rates used only for
+budget reservation and reconciliation: `gpt-6.1-sol` at $2/M input and $10/M output
+tokens, and `gpt-6-luna` at $0.10/M input and $0.50/M output tokens. Sources:
+`https://developers.openai.com/api/docs/models/gpt-6.1-sol` and
+`https://developers.openai.com/api/docs/models/gpt-6-luna`. A configured alias must
+match both the provider model and a currently effective dated price row or execution
+fails closed.
 
 Before any paid activation the owner must record:
 
 - approved model alias and provider project;
-- representative fixture quality result and known failure modes;
+- representative paid-provider quality result and known failure modes (the synthetic
+  provider-independent safety benchmark is complete);
 - published input/output prices and the date checked;
 - maximum output tokens, timeout, retry and concurrency;
 - site and platform USD ceilings and plan cycle quotas;
@@ -31,4 +41,4 @@ Before any paid activation the owner must record:
 - prompt/response retention and provider data-processing decision;
 - smoke-test, emergency-stop and rollback owner.
 
-Estimate monthly cost as `(input tokens × input rate + output tokens × output rate) / 1,000,000`, multiplied by approved cycles and a retry margin, then ensure both hard caps are lower than the owner's maximum exposure. The owner authorization and ceiling now exist. Until the remaining job wiring, price record, benchmark, and production smoke evidence exist, paid production AI is **TODO/Disabled**, which is the safe completed posture.
+Estimate monthly cost as `(input tokens × input rate + output tokens × output rate) / 1,000,000`, multiplied by approved cycles and a retry margin, then ensure both hard caps are lower than the owner's maximum exposure. The owner authorization and ceiling now exist. Until a representative paid-provider benchmark, explicit activation, and production smoke evidence exist, paid production AI is **TODO/Disabled**, which is the safe completed posture.

@@ -2,6 +2,13 @@ import { randomUUID } from 'node:crypto';
 
 import { withWorkerTransaction, type TenantTransactionPool } from './transaction.ts';
 
+export class AiReviewCycleQuotaExceededError extends Error {
+  override readonly name = 'AiReviewCycleQuotaExceededError';
+  constructor() {
+    super('AI review-cycle quota hard cap exceeded');
+  }
+}
+
 export interface PlanQuotaReservation {
   id: string;
   siteId: string;
@@ -87,15 +94,22 @@ export class PostgresAiReviewCycleQuota implements AiReviewCycleQuota {
     tenantId: string;
   }): Promise<PlanQuotaReservation> {
     const jobId = `ai-cycle-reserve:${input.siteId}:${randomUUID()}`;
-    return withWorkerTransaction(this.pool, { ...input, jobId }, async (client) => {
-      const result = (await client.query(
-        `SELECT reserve_plan_quota($1, $2, 'ai_review_cycles_per_month', 1, $3) AS id`,
-        [input.tenantId, input.siteId, input.expiresAt],
-      )) as { rows: { id: string }[] };
-      const id = result.rows[0]?.id;
-      if (!id) throw new Error('AI review-cycle reservation failed');
-      return { id, siteId: input.siteId, tenantId: input.tenantId };
-    });
+    try {
+      return await withWorkerTransaction(this.pool, { ...input, jobId }, async (client) => {
+        const result = (await client.query(
+          `SELECT reserve_plan_quota($1, $2, 'ai_review_cycles_per_month', 1, $3) AS id`,
+          [input.tenantId, input.siteId, input.expiresAt],
+        )) as { rows: { id: string }[] };
+        const id = result.rows[0]?.id;
+        if (!id) throw new Error('AI review-cycle reservation failed');
+        return { id, siteId: input.siteId, tenantId: input.tenantId };
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('plan quota hard cap exceeded')) {
+        throw new AiReviewCycleQuotaExceededError();
+      }
+      throw error;
+    }
   }
 
   async consume(reservation: PlanQuotaReservation): Promise<void> {

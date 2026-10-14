@@ -108,10 +108,12 @@ function parseCategories(value: string): JobCategory[] {
   }
   return [...new Set(parsed)] as JobCategory[];
 }
-function workerKind(value: string): 'crawler' | 'monitoring' | 'publisher' | 'runner' | 'seo' {
-  if (!['crawler', 'monitoring', 'publisher', 'runner', 'seo'].includes(value))
+function workerKind(
+  value: string,
+): 'aio' | 'crawler' | 'monitoring' | 'publisher' | 'runner' | 'seo' {
+  if (!['aio', 'crawler', 'monitoring', 'publisher', 'runner', 'seo'].includes(value))
     throw new Error('WORKER_KIND is invalid');
-  return value as 'crawler' | 'monitoring' | 'publisher' | 'runner' | 'seo';
+  return value as 'aio' | 'crawler' | 'monitoring' | 'publisher' | 'runner' | 'seo';
 }
 function required(key: string): string {
   const value = process.env[key]?.trim();
