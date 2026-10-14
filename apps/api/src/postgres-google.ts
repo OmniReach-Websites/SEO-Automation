@@ -149,9 +149,8 @@ export class PostgresGoogleIntegrationService implements IntegrationEndpointServ
 
   async finishGoogle(
     actor: AdminActor,
-    input: { code: string; propertyId?: string; siteId: string; state: string },
+    input: { code: string; propertyId?: string; state: string },
   ): Promise<unknown> {
-    assertOrapCapability(actor, 'integrations.google.manage', { siteId: input.siteId });
     const state = await withPlatformTransaction(
       this.pool,
       { actorId: actor.id },
@@ -161,16 +160,20 @@ export class PostgresGoogleIntegrationService implements IntegrationEndpointServ
           client,
           `UPDATE google_oauth_states
             SET consumed_at = $1
-          WHERE state_hash = $2 AND site_id = $3 AND initiated_by = $4
+          WHERE state_hash = $2 AND initiated_by = $3
             AND consumed_at IS NULL AND expires_at > $1
           RETURNING tenant_id, site_id, property_kind, redirect_uri,
                     encrypted_request, key_version, initiated_by`,
-          [now, digest(input.state), input.siteId, actor.id],
+          [now, digest(input.state), actor.id],
         );
-        return required(
+        const storedState = required(
           rows.rows,
           'Google OAuth state is invalid, expired, replayed, or belongs to another actor',
         );
+        assertOrapCapability(actor, 'integrations.google.manage', {
+          siteId: storedState.site_id,
+        });
+        return storedState;
       },
     );
     const request = this.decrypt<OAuthRequest>(
@@ -210,6 +213,7 @@ export class PostgresGoogleIntegrationService implements IntegrationEndpointServ
           siteUrl: property.siteUrl,
         })),
         pendingSelectionId: credentialId,
+        siteId: state.site_id,
         status: eligible.length === 0 ? 'no_matching_property' : 'property_selection_required',
       };
     }
@@ -585,7 +589,7 @@ export class PostgresGoogleIntegrationService implements IntegrationEndpointServ
         targetId: connection.id,
         tenantId: input.tenantId,
       });
-      return { connectionId: connection.id, status: 'connected' };
+      return { connectionId: connection.id, siteId: input.siteId, status: 'connected' };
     };
     return existingClient
       ? operation(existingClient)

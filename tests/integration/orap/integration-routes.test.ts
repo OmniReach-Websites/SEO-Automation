@@ -88,7 +88,7 @@ describe('Google integration management routes', () => {
       disconnect: vi.fn(),
       finishGoogle: vi
         .fn()
-        .mockResolvedValueOnce({ connectionId: 'connection-1', status: 'connected' })
+        .mockResolvedValueOnce({ connectionId: 'connection-1', siteId, status: 'connected' })
         .mockResolvedValueOnce({
           eligibleProperties: [
             {
@@ -98,6 +98,7 @@ describe('Google integration management routes', () => {
             },
           ],
           pendingSelectionId: '80000000-0000-4000-8000-000000000001',
+          siteId,
           status: 'property_selection_required',
         }),
       list: vi.fn(),
@@ -108,7 +109,7 @@ describe('Google integration management routes', () => {
       resolvePlatformActor: async () => actor,
     });
     servers.push(server);
-    const query = `code=code-value&siteId=${siteId}&state=${'s'.repeat(24)}`;
+    const query = `code=code-value&state=${'s'.repeat(24)}`;
 
     const connected = await server.inject({
       headers: { accept: 'text/html', host: 'admin.omnireach.test' },
@@ -117,6 +118,10 @@ describe('Google integration management routes', () => {
     });
     expect(connected.statusCode).toBe(303);
     expect(connected.headers.location).toBe(`/orap/sites/${siteId}?notice=google-connected`);
+    expect(service.finishGoogle).toHaveBeenNthCalledWith(1, actor, {
+      code: 'code-value',
+      state: 's'.repeat(24),
+    });
 
     const selection = await server.inject({
       headers: { accept: 'text/html', host: 'admin.omnireach.test' },

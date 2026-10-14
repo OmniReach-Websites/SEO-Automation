@@ -22,7 +22,6 @@ export interface IntegrationEndpointService {
     input: {
       readonly code: string;
       readonly propertyId?: string;
-      readonly siteId: string;
       readonly state: string;
     },
   ): Promise<unknown>;
@@ -97,17 +96,14 @@ export function registerIntegrationRoutes(
       z.object({
         code: z.string().min(1).max(2000),
         propertyId: z.string().min(1).max(300).optional(),
-        siteId: z.string().uuid(),
         state: z.string().min(16).max(200),
       }),
       request.query,
       reply,
     );
     if (!query) return;
-    if (!authorizeCapability(actor, 'integrations.google.manage', query, reply)) return;
     const result = await service.finishGoogle(actor, {
       code: query.code,
-      siteId: query.siteId,
       state: query.state,
       ...(query.propertyId ? { propertyId: query.propertyId } : {}),
     });
@@ -118,16 +114,20 @@ export function registerIntegrationRoutes(
     if (completion.data.status === 'connected') {
       return reply
         .code(303)
-        .redirect(`/orap/sites/${encodeURIComponent(query.siteId)}?notice=google-connected`);
+        .redirect(
+          `/orap/sites/${encodeURIComponent(completion.data.siteId)}?notice=google-connected`,
+        );
     }
     if (completion.data.status === 'no_matching_property') {
       return reply
         .code(303)
-        .redirect(`/orap/sites/${encodeURIComponent(query.siteId)}?notice=google-no-match`);
+        .redirect(
+          `/orap/sites/${encodeURIComponent(completion.data.siteId)}?notice=google-no-match`,
+        );
     }
     return reply
       .type('text/html; charset=utf-8')
-      .send(renderGooglePropertySelection(query.siteId, completion.data));
+      .send(renderGooglePropertySelection(completion.data.siteId, completion.data));
   });
   server.post(
     '/v1/orap/sites/:siteId/integrations/google/select',
@@ -204,8 +204,8 @@ function parse<T>(schema: z.ZodType<T>, value: unknown, reply: FastifyReply): T 
 }
 
 const googleCompletion = z.discriminatedUnion('status', [
-  z.object({ status: z.literal('connected') }),
-  z.object({ status: z.literal('no_matching_property') }),
+  z.object({ siteId: z.string().uuid(), status: z.literal('connected') }),
+  z.object({ siteId: z.string().uuid(), status: z.literal('no_matching_property') }),
   z.object({
     eligibleProperties: z.array(
       z.object({
@@ -215,6 +215,7 @@ const googleCompletion = z.discriminatedUnion('status', [
       }),
     ),
     pendingSelectionId: z.string().uuid(),
+    siteId: z.string().uuid(),
     status: z.literal('property_selection_required'),
   }),
 ]);
