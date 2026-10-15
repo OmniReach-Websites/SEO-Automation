@@ -110,7 +110,7 @@ function proposal(
     aiReviewCyclesPerMonth,
     businessLocations: 1,
     code,
-    commercialStatus: 'proposal',
+    commercialStatus: 'approved',
     currency: 'USD',
     customerSeats,
     monthlyPriceCents,

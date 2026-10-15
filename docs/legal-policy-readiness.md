@@ -2,6 +2,11 @@
 
 This is an operational mapping for owner/legal review, not legal advice and not approved public text.
 
+The dated review, discrepancy report, six unpublished drafts, and exact owner checklist
+are in `docs/legal-review-package-2026-10-15.md` and
+`docs/legal-drafts/2026-10-15/`. Those files are preparation material only; none is an
+approved policy or authorization to publish.
+
 | Data/activity          | Current technical behavior                                                                                                        | Policy decision still required                                                |
 | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
 | Public inquiry         | bounded same-origin form, consent checkbox, Turnstile/rate/honeypot controls, encrypted delivery payload, active owner recipients | approved consent/privacy text and retention exceptions                        |

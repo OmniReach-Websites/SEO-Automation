@@ -15,6 +15,7 @@ import {
   renderOrapShell,
   renderOrapSiteDetails,
   renderOrapSiteForm,
+  renderOrapTierEditor,
   renderOrapStaffDirectory,
   renderOrapStaffDetails,
   renderOrapStaffInviteForm,
@@ -24,6 +25,7 @@ import {
   type EmailOperationsView,
   type JobRow,
   type OrapNavigationItem,
+  type OrapPlanCatalogModel,
   type OrapSiteManagementModel,
   type OrapSiteSummary,
   type OrapStaffSummary,
@@ -254,6 +256,109 @@ export function registerUiRoutes(
           ),
         );
     });
+
+    server.get<{ Querystring: { notice?: string; tier?: string } }>(
+      '/orap/plans',
+      async (request, reply) => {
+        const actor = await options.resolvePlatformActor?.(request);
+        if (!actor || !canOrap(actor, 'plans.view')) {
+          return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
+        }
+        if (!options.orapService?.listPlanCatalog) return reply.code(404).send();
+        const catalog = parsePlanCatalog(await options.orapService.listPlanCatalog(actor));
+        const notice =
+          request.query.notice === 'updated'
+            ? { message: 'The new immutable tier version is active.' }
+            : request.query.notice === 'failed'
+              ? {
+                  kind: 'error' as const,
+                  message: 'The tier could not be updated. Check its feature readiness and values.',
+                }
+              : undefined;
+        return reply
+          .type('text/html; charset=utf-8')
+          .send(renderOrapTierEditor(catalog, orapNavigation(actor), request.query.tier, notice));
+      },
+    );
+
+    server.post<{ Params: { code: string }; Body: unknown }>(
+      '/orap/plans/:code',
+      { preHandler: requireSameOrigin },
+      async (request, reply) => {
+        const actor = await options.resolvePlatformActor?.(request);
+        if (!actor || !canOrap(actor, 'plans.edit') || !options.orapService?.revisePlan) {
+          return reply.code(403).type('text/html; charset=utf-8').send(renderForbidden());
+        }
+        const parsed = z
+          .object({
+            aiReviewCyclesPerMonth: z.coerce.number().int().min(0),
+            businessLocationLimit: z.coerce.number().int().positive(),
+            commercialStatus: z.enum(['approved', 'proposal']),
+            customerSeatLimit: z.coerce.number().int().positive(),
+            features: z.union([z.string(), z.array(z.string())]).optional(),
+            name: z.string().trim().min(1).max(160),
+            pendingInvitationsCountAsSeats: z.literal('true').optional(),
+            priceUsd: z.coerce.number().min(0).max(100_000),
+            reason: z.string().trim().min(3).max(500),
+            seoAuditIntervalHours: z.coerce.number().pipe(z.union([z.literal(24), z.literal(168)])),
+            standardPageLimit: z.coerce.number().int().positive(),
+          })
+          .safeParse(request.body);
+        if (
+          !parsed.success ||
+          !/^(?:STARTER|GROWTH|PRO|ELITE|[a-z][a-z0-9-]{1,79})$/u.test(request.params.code)
+        ) {
+          return reply
+            .code(303)
+            .redirect(`/orap/plans?tier=${encodeURIComponent(request.params.code)}&notice=failed`);
+        }
+        const catalog = parsePlanCatalog(await options.orapService.listPlanCatalog?.(actor));
+        const plan = catalog.plans.find(({ code }) => code === request.params.code);
+        if (!plan)
+          return reply
+            .code(404)
+            .type('text/html; charset=utf-8')
+            .send(renderOrapNotFound(orapNavigation(actor)));
+        const enabled = new Set(
+          typeof parsed.data.features === 'string'
+            ? [parsed.data.features]
+            : (parsed.data.features ?? []),
+        );
+        const features = catalog.features
+          .filter(({ planId }) => planId === plan.id)
+          .map((feature) => ({
+            enabled: enabled.has(`${feature.key}:${feature.version}`),
+            key: feature.key,
+            version: feature.version,
+          }));
+        try {
+          await options.orapService.revisePlan(actor, {
+            code: request.params.code,
+            entitlements: {
+              aiReviewCyclesPerMonth: parsed.data.aiReviewCyclesPerMonth,
+              businessLocationLimit: parsed.data.businessLocationLimit,
+              commercialStatus: parsed.data.commercialStatus,
+              currency: 'USD',
+              customerSeatLimit: parsed.data.customerSeatLimit,
+              monthlyPriceCents: Math.round(parsed.data.priceUsd * 100),
+              pendingInvitationsCountAsSeats: parsed.data.pendingInvitationsCountAsSeats === 'true',
+              seoAuditIntervalHours: parsed.data.seoAuditIntervalHours,
+              standardPageLimit: parsed.data.standardPageLimit,
+            },
+            features,
+            name: parsed.data.name,
+            reason: parsed.data.reason,
+          });
+          return reply
+            .code(303)
+            .redirect(`/orap/plans?tier=${encodeURIComponent(request.params.code)}&notice=updated`);
+        } catch {
+          return reply
+            .code(303)
+            .redirect(`/orap/plans?tier=${encodeURIComponent(request.params.code)}&notice=failed`);
+        }
+      },
+    );
 
     server.get<{
       Querystring: {
@@ -1170,6 +1275,7 @@ function orapNavigation(actor: AdminActor): OrapNavigationItem[] {
     ...(canOrap(actor, 'dashboard.view') ? (['overview'] as const) : []),
     ...(canOrap(actor, 'websites.list') ? (['sites'] as const) : []),
     ...(canOrap(actor, 'analytics.view') ? (['analytics'] as const) : []),
+    ...(canOrap(actor, 'plans.view') ? (['plans'] as const) : []),
     ...(canOrap(actor, 'dashboard.view') ? (['operations'] as const) : []),
     ...(isPlatformOwnerIdentity(actor) ? (['staff'] as const) : []),
     'security' as const,
@@ -1244,6 +1350,43 @@ function orapLandingPage(actor: AdminActor): string {
   if (canOrap(actor, 'websites.list')) return '/orap/sites';
   if (canOrap(actor, 'analytics.view')) return '/orap/analytics';
   return '/security';
+}
+
+function parsePlanCatalog(value: unknown): OrapPlanCatalogModel {
+  const schema = z
+    .object({
+      features: z.array(
+        z.object({
+          description: z.string(),
+          enabled: z.boolean().nullable(),
+          key: z.string(),
+          overrideable: z.boolean(),
+          planId: z.string().uuid().nullable(),
+          readiness: z.enum(['deployable', 'planned', 'tested']),
+          version: z.number().int().positive(),
+        }),
+      ),
+      plans: z.array(
+        z.object({
+          aiReviewCyclesPerMonth: z.number().int().nonnegative(),
+          businessLocationLimit: z.number().int().positive(),
+          code: z.string(),
+          commercialStatus: z.enum(['approved', 'proposal']),
+          currency: z.literal('USD'),
+          customerSeatLimit: z.number().int().positive(),
+          id: z.string().uuid(),
+          monthlyPriceCents: z.number().int().nonnegative(),
+          name: z.string(),
+          pendingInvitationsCountAsSeats: z.boolean(),
+          seoAuditIntervalHours: z.union([z.literal(24), z.literal(168)]),
+          standardPageLimit: z.number().int().positive(),
+          version: z.number().int().positive(),
+        }),
+      ),
+    })
+    .safeParse(value);
+  if (!schema.success) throw new Error('Plan catalog model is unavailable');
+  return schema.data;
 }
 
 function parseOperationsModel(value: unknown): {

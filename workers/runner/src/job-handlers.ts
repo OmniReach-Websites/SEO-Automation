@@ -103,6 +103,22 @@ export async function runAiProposal(
     const stager = new PostgresAiProposalStager(context.pool);
     await executeAiAutomation({
       budget: new PostgresAiBudgetLedger(context.pool, context.execution.jobId),
+      ...(context.environment.OPENAI_EVALUATION_CAP_USD_MICROS
+        ? {
+            budgetCapUsdMicros: integerEnvironment(
+              context.environment.OPENAI_EVALUATION_CAP_USD_MICROS,
+              1_000_000,
+              1,
+              1_000_000,
+            ),
+            platformBudgetCapUsdMicros: integerEnvironment(
+              context.environment.OPENAI_EVALUATION_CAP_USD_MICROS,
+              1_000_000,
+              1,
+              1_000_000,
+            ),
+          }
+        : {}),
       input: material.input,
       maxOutputTokens: integerEnvironment(
         context.environment.OPENAI_MAX_OUTPUT_TOKENS,

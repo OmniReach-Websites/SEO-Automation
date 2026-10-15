@@ -108,7 +108,32 @@ describe('Cloudflare domain onboarding', () => {
         token: 'challenge-token',
       }),
     ).resolves.toBe(false);
+    await expect(
+      verifier.verify({ expectedHostname: 'fictional.test', remoteIp: '127.0.0.1', token: '' }),
+    ).resolves.toBe(false);
     expect(calls[0]?.url).toContain('siteverify');
     expect(calls[0]?.body).toContain('secret=server-only-test-secret');
+  });
+
+  it('fails Turnstile verification closed on provider and response failures', async () => {
+    const unavailable = new CloudflareTurnstileVerifier('server-only-test-secret', async () => {
+      throw new Error('provider unavailable');
+    });
+    const rejected = new CloudflareTurnstileVerifier(
+      'server-only-test-secret',
+      async () => new Response(JSON.stringify({ hostname: 'fictional.test', success: false })),
+    );
+    const malformed = new CloudflareTurnstileVerifier(
+      'server-only-test-secret',
+      async () => new Response('{not-json'),
+    );
+    const challenge = {
+      expectedHostname: 'fictional.test',
+      remoteIp: '127.0.0.1',
+      token: 'challenge-token',
+    };
+    await expect(unavailable.verify(challenge)).resolves.toBe(false);
+    await expect(rejected.verify(challenge)).resolves.toBe(false);
+    await expect(malformed.verify(challenge)).resolves.toBe(false);
   });
 });

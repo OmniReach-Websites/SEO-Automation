@@ -10,12 +10,12 @@ import {
 import { describe, expect, it } from 'vitest';
 
 describe('R-011 plan entitlements', () => {
-  it('records the exact four selected commercial proposals', () => {
+  it('records the exact four owner-approved commercial tiers', () => {
     expect(selectedPlanProposals).toMatchObject({
       STARTER: {
         aiReviewCyclesPerMonth: 2,
         businessLocations: 1,
-        commercialStatus: 'proposal',
+        commercialStatus: 'approved',
         customerSeats: 2,
         monthlyPriceCents: 50_000,
         seoAuditIntervalHours: 168,

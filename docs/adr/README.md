@@ -27,32 +27,32 @@ ADRs record approved architecture decisions. Accepted ADRs are not reopened casu
 
 `Affected goals` are implementation targets, not unresolved blockers. `Remaining input` points to the owner-supplied production value in the roadmap; `None` means the architecture is fully determined for local implementation.
 
-| ID    | Disposition                           | Decision owner             | ADR              | Affected goals        | Remaining input                         |
-| ----- | ------------------------------------- | -------------------------- | ---------------- | --------------------- | --------------------------------------- |
-| D-001 | Approved; V1 hostname supplied        | OmniReach owner            | 0003             | G01, G17–G19, G31–G32 | None                                    |
-| D-002 | Approved; production owner supplied   | OmniReach owner            | 0003             | G05, G07, G31–G32     | None                                    |
-| D-003 | Approved                              | Architecture               | 0003             | G05, G14              | None                                    |
-| D-004 | Approved                              | Security architecture      | 0002             | G04, G06              | None                                    |
-| D-005 | Approved; four-tier proposal selected | OmniReach owner            | 0002             | G04, G08, G21         | R-011 final approval/definitions        |
-| D-006 | Approved                              | OmniReach owner            | 0002, 0003       | G05–G08, G14–G16      | None                                    |
-| D-007 | Approved                              | Architecture               | 0004             | G09, G11, G15–G16     | None                                    |
-| D-008 | Approved                              | OmniReach owner/security   | 0004, 0007       | G11, G26              | None                                    |
-| D-009 | Approved                              | Architecture               | 0005             | G13, G16, G19, G31    | None                                    |
-| D-010 | Approved                              | Security architecture      | 0005             | G13, G15              | None                                    |
-| D-011 | Approved                              | Architecture               | 0008             | G12, G29              | R-005 for production target/key custody |
-| D-012 | Approved                              | OmniReach owner/operations | 0006             | G03, G19, G31         | R-010                                   |
-| D-013 | Approved                              | OmniReach owner/operations | 0006             | G18–G19, G29–G32      | R-003                                   |
-| D-014 | Approved; provider authority supplied | OmniReach owner/operations | 0006             | G17–G18, G31–G32      | Per-change DNS authorization            |
-| D-015 | Approved                              | OmniReach owner            | 0007             | G21, G25–G26          | R-012 for provider account/spend        |
-| D-016 | Approved; initial activation verified | OmniReach owner/operations | 0008             | G29, G31–G32          | R-005 ongoing operations                |
-| D-017 | Approved                              | Security architecture      | 0001, 0008       | G02, G09, G12, G19    | None                                    |
-| D-018 | Approved; legal text pending          | OmniReach owner/legal      | 0009             | G27–G29, G32          | R-006                                   |
-| D-019 | Approved; account permissions pending | Architecture/operations    | 0009             | G27–G28               | R-007                                   |
-| D-020 | Approved                              | OmniReach owner            | 0004, 0005       | G09–G10, G13, G32     | R-009 for live forms                    |
-| D-021 | Approved; Resend selected             | OmniReach owner/operations | 0009             | G22, G28–G32          | R-008                                   |
-| D-022 | Approved                              | OmniReach owner/product    | 0007, 0009       | G24, G27–G28          | None                                    |
-| D-023 | Approved                              | OmniReach owner/security   | 0002, 0008, 0009 | G11, G20, G22, G29    | R-006 for legal/site variants           |
-| D-024 | Approved                              | OmniReach owner            | 0001             | G01–G02               | None                                    |
+| ID    | Disposition                              | Decision owner             | ADR              | Affected goals        | Remaining input                         |
+| ----- | ---------------------------------------- | -------------------------- | ---------------- | --------------------- | --------------------------------------- |
+| D-001 | Approved; V1 hostname supplied           | OmniReach owner            | 0003             | G01, G17–G19, G31–G32 | None                                    |
+| D-002 | Approved; production owner supplied      | OmniReach owner            | 0003             | G05, G07, G31–G32     | None                                    |
+| D-003 | Approved                                 | Architecture               | 0003             | G05, G14              | None                                    |
+| D-004 | Approved                                 | Security architecture      | 0002             | G04, G06              | None                                    |
+| D-005 | Approved; four-tier commercial structure | OmniReach owner            | 0002             | G04, G08, G21         | Contract execution and launch approval  |
+| D-006 | Approved                                 | OmniReach owner            | 0002, 0003       | G05–G08, G14–G16      | None                                    |
+| D-007 | Approved                                 | Architecture               | 0004             | G09, G11, G15–G16     | None                                    |
+| D-008 | Approved                                 | OmniReach owner/security   | 0004, 0007       | G11, G26              | None                                    |
+| D-009 | Approved                                 | Architecture               | 0005             | G13, G16, G19, G31    | None                                    |
+| D-010 | Approved                                 | Security architecture      | 0005             | G13, G15              | None                                    |
+| D-011 | Approved                                 | Architecture               | 0008             | G12, G29              | R-005 for production target/key custody |
+| D-012 | Approved                                 | OmniReach owner/operations | 0006             | G03, G19, G31         | R-010                                   |
+| D-013 | Approved                                 | OmniReach owner/operations | 0006             | G18–G19, G29–G32      | R-003                                   |
+| D-014 | Approved; provider authority supplied    | OmniReach owner/operations | 0006             | G17–G18, G31–G32      | Per-change DNS authorization            |
+| D-015 | Approved                                 | OmniReach owner            | 0007             | G21, G25–G26          | R-012 for provider account/spend        |
+| D-016 | Approved; initial activation verified    | OmniReach owner/operations | 0008             | G29, G31–G32          | R-005 ongoing operations                |
+| D-017 | Approved                                 | Security architecture      | 0001, 0008       | G02, G09, G12, G19    | None                                    |
+| D-018 | Approved; legal text pending             | OmniReach owner/legal      | 0009             | G27–G29, G32          | R-006                                   |
+| D-019 | Approved; account permissions pending    | Architecture/operations    | 0009             | G27–G28               | R-007                                   |
+| D-020 | Approved                                 | OmniReach owner            | 0004, 0005       | G09–G10, G13, G32     | R-009 for live forms                    |
+| D-021 | Approved; Resend selected                | OmniReach owner/operations | 0009             | G22, G28–G32          | R-008                                   |
+| D-022 | Approved                                 | OmniReach owner/product    | 0007, 0009       | G24, G27–G28          | None                                    |
+| D-023 | Approved                                 | OmniReach owner/security   | 0002, 0008, 0009 | G11, G20, G22, G29    | R-006 for legal/site variants           |
+| D-024 | Approved                                 | OmniReach owner            | 0001             | G01–G02               | None                                    |
 
 ## Owner-input queue
 

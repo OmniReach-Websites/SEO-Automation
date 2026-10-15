@@ -102,8 +102,19 @@ export interface OrapAdministrationEndpointService {
   siteAnalytics?(actor: AdminActor, input: OrapAnalyticsInput): Promise<OrapAnalyticsDashboard>;
   siteManagement?(actor: AdminActor, input: { siteId: string; tenantId: string }): Promise<unknown>;
   listOperations?(actor: AdminActor): Promise<unknown>;
+  listPlanCatalog?(actor: AdminActor): Promise<unknown>;
   listStaff?(actor: AdminActor): Promise<unknown>;
   listStaffRoles?(actor: AdminActor): Promise<unknown>;
+  revisePlan?(
+    actor: AdminActor,
+    input: {
+      code: string;
+      entitlements: PlanEntitlementsInput;
+      features: { enabled: boolean; key: string; version: number }[];
+      name: string;
+      reason: string;
+    },
+  ): Promise<unknown>;
   requestCustomerReset(
     actor: AdminActor,
     input: { networkIdentifier: string; reason: string; siteId: string; userId: string },

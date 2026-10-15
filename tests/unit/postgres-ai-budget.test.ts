@@ -9,7 +9,8 @@ const scope = {
 
 describe('PostgreSQL AI budget ledger', () => {
   it('reserves, records an immutable charge, and refreshes site/platform counters', async () => {
-    const query = vi.fn(async (text: string) => {
+    const query = vi.fn(async (text: string, values?: unknown[]) => {
+      void values;
       if (text.includes('reserve_ai_budget')) return { rows: [{ id: 'reservation-a' }] };
       if (text.includes('finalize_ai_budget')) return { rows: [{ id: 'usage-a' }] };
       return { rows: [] };
@@ -21,10 +22,22 @@ describe('PostgreSQL AI budget ledger', () => {
     const now = new Date('2026-10-11T00:00:00.000Z');
     const reservation = await ledger.reserve({
       amountUsdMicros: 1_000_000,
+      capUsdMicros: 1_000_000,
       expiresAt: new Date('2026-10-11T00:10:00.000Z'),
       now,
+      platformCapUsdMicros: 1_000_000,
       ...scope,
     });
+    const reserveCall = query.mock.calls.find(([text]) => text.includes('reserve_ai_budget'));
+    expect(reserveCall?.[0]).toContain('$5, $6');
+    expect(reserveCall?.[1]).toEqual([
+      scope.tenantId,
+      scope.siteId,
+      1_000_000,
+      new Date('2026-10-11T00:10:00.000Z'),
+      1_000_000,
+      1_000_000,
+    ]);
     await expect(ledger.reconcile(reservation, 750_000, 1)).resolves.toMatchObject({
       amountUsdMicros: 750_000,
       id: 'usage-a',

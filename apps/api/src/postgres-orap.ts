@@ -156,6 +156,178 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
     });
   }
 
+  listPlanCatalog(actor: AdminActor): Promise<unknown> {
+    assertOrapCapability(actor, 'plans.view');
+    return this.transaction(actor, async (client) => {
+      const [plans, features] = await Promise.all([
+        query<{
+          ai_review_cycles_per_month: number;
+          business_location_limit: number;
+          code: string;
+          commercial_status: 'approved' | 'proposal';
+          currency: 'USD';
+          customer_seat_limit: number;
+          id: string;
+          monthly_price_cents: number;
+          name: string;
+          pending_invitations_count_as_seats: boolean;
+          seo_audit_interval_hours: 24 | 168;
+          standard_page_limit: number;
+          version: number;
+        }>(
+          client,
+          `SELECT id, code, name, version, monthly_price_cents, currency,
+                  commercial_status, customer_seat_limit, standard_page_limit,
+                  business_location_limit, seo_audit_interval_hours,
+                  ai_review_cycles_per_month, pending_invitations_count_as_seats
+             FROM plans WHERE active ORDER BY code`,
+          [],
+        ),
+        query<{
+          description: string;
+          enabled: boolean | null;
+          key: string;
+          overrideable: boolean;
+          plan_id: string | null;
+          readiness: 'deployable' | 'planned' | 'tested';
+          version: number;
+        }>(
+          client,
+          `SELECT definition.key, definition.version, definition.description,
+                  definition.overrideable, definition.readiness,
+                  plan_feature.plan_id, plan_feature.enabled
+             FROM feature_definitions definition
+             LEFT JOIN plan_features plan_feature
+               ON plan_feature.feature_key = definition.key
+              AND plan_feature.feature_version = definition.version
+              AND plan_feature.plan_id IN (SELECT id FROM plans WHERE active)
+            ORDER BY definition.key, definition.version DESC`,
+          [],
+        ),
+      ]);
+      return {
+        features: features.rows.map((feature) => ({
+          description: feature.description,
+          enabled: feature.enabled,
+          key: feature.key,
+          overrideable: feature.overrideable,
+          planId: feature.plan_id,
+          readiness: feature.readiness,
+          version: feature.version,
+        })),
+        plans: plans.rows.map((plan) => ({
+          aiReviewCyclesPerMonth: plan.ai_review_cycles_per_month,
+          businessLocationLimit: plan.business_location_limit,
+          code: plan.code,
+          commercialStatus: plan.commercial_status,
+          currency: plan.currency,
+          customerSeatLimit: plan.customer_seat_limit,
+          id: plan.id,
+          monthlyPriceCents: plan.monthly_price_cents,
+          name: plan.name,
+          pendingInvitationsCountAsSeats: plan.pending_invitations_count_as_seats,
+          seoAuditIntervalHours: plan.seo_audit_interval_hours,
+          standardPageLimit: plan.standard_page_limit,
+          version: plan.version,
+        })),
+      };
+    });
+  }
+
+  revisePlan(
+    actor: AdminActor,
+    input: {
+      code: string;
+      entitlements: PlanEntitlementsInput;
+      features: { enabled: boolean; key: string; version: number }[];
+      name: string;
+      reason: string;
+    },
+  ): Promise<unknown> {
+    assertOrapCapability(actor, 'plans.edit');
+    for (const feature of input.features) assertPlanFeatureAllowed(feature.key);
+    return this.transaction(actor, async (client) => {
+      await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`plan:${input.code}`]);
+      const previous = required(
+        (
+          await query<{ id: string; version: number }>(
+            client,
+            `SELECT id, version FROM plans WHERE code = $1 AND active
+              ORDER BY version DESC LIMIT 1 FOR UPDATE`,
+            [input.code],
+          )
+        ).rows[0],
+        `Active plan was not found: ${input.code}`,
+      );
+      for (const requested of input.features) {
+        const feature = required(
+          (
+            await query<{ key: string; readiness: 'deployable' | 'planned' | 'tested' }>(
+              client,
+              `SELECT key, readiness FROM feature_definitions WHERE key = $1 AND version = $2`,
+              [requested.key, requested.version],
+            )
+          ).rows[0],
+          `Feature definition was not found: ${requested.key}@${requested.version}`,
+        );
+        if (
+          input.entitlements.commercialStatus === 'approved' &&
+          requested.enabled &&
+          feature.readiness !== 'deployable'
+        ) {
+          throw new Error(`Approved plans cannot enable a nondeployable feature: ${feature.key}`);
+        }
+      }
+      const version = previous.version + 1;
+      const plan = required(
+        (
+          await query<{ code: string; id: string; name: string; version: number }>(
+            client,
+            `INSERT INTO plans
+               (code, name, version, monthly_price_cents, currency, commercial_status,
+                customer_seat_limit, standard_page_limit, business_location_limit,
+                seo_audit_interval_hours, ai_review_cycles_per_month,
+                pending_invitations_count_as_seats)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+             RETURNING id, code, name, version`,
+            [
+              input.code,
+              input.name.trim(),
+              version,
+              input.entitlements.monthlyPriceCents,
+              input.entitlements.currency,
+              input.entitlements.commercialStatus,
+              input.entitlements.customerSeatLimit,
+              input.entitlements.standardPageLimit,
+              input.entitlements.businessLocationLimit,
+              input.entitlements.seoAuditIntervalHours,
+              input.entitlements.aiReviewCyclesPerMonth,
+              input.entitlements.pendingInvitationsCountAsSeats,
+            ],
+          )
+        ).rows[0],
+        'Plan revision failed',
+      );
+      for (const feature of input.features) {
+        await client.query(
+          `INSERT INTO plan_features (plan_id, feature_key, feature_version, enabled)
+           VALUES ($1, $2, $3, $4)`,
+          [plan.id, feature.key, feature.version, feature.enabled],
+        );
+      }
+      await client.query(`UPDATE plans SET active = false WHERE id = $1`, [previous.id]);
+      await audit(client, actor, {
+        action: 'plan.revised',
+        after: { ...plan, entitlements: input.entitlements, features: input.features },
+        before: previous,
+        reason: input.reason,
+        targetId: plan.id,
+        targetType: 'plan',
+      });
+      return { ...plan, entitlements: input.entitlements, features: input.features };
+    });
+  }
+
   listStaff(actor: AdminActor): Promise<unknown> {
     assertPlatformOwnerIdentity(actor);
     return this.transaction(actor, async (client) => {
