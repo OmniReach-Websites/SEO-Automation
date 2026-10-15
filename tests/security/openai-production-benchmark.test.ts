@@ -20,10 +20,19 @@ describe('one-time OpenAI production benchmark', () => {
       'ON CONFLICT (fixture_id, model_alias, prompt_version, schema_version) DO NOTHING',
     );
     expect(runner).toContain('attemptLimit: 1');
+    expect(runner).toContain('const benchmarkPromptVersion = 2');
+    expect(runner).toContain('OPENAI_PROMPT_VERSION: String(benchmarkPromptVersion)');
     expect(runner).toContain('liveContentChanged: false');
     expect(runner).not.toMatch(
       /INSERT\s+INTO\s+publication_requests|UPDATE\s+content_drafts|UPDATE\s+content_revisions/iu,
     );
+  });
+
+  it('claims the one-time attempt before field preparation so preflight failures are recorded', () => {
+    expect(runner.indexOf('const admitted = await admitSingleAttempt(pool)')).toBeLessThan(
+      runner.indexOf('const prepared = await prepareBenchmark(pool)'),
+    );
+    expect(runner).toContain('await startBenchmarkJob(pool, prepared)');
   });
 
   it('includes prompt-injection evidence and relies on the normal protected-fact proposal path', () => {
