@@ -109,10 +109,12 @@ export async function runGoogleMetricsSync(
       await workerTransaction(input.pool, envelope, input.jobId, (client) =>
         client.query(
           `UPDATE integration_connections
-              SET status = CASE WHEN $2 IN ('revoked_or_expired','missing_refresh_token')
+              SET status = CASE WHEN $2::varchar(80) IN ('revoked_or_expired','missing_refresh_token')
                                 THEN 'expired' ELSE 'error' END,
-                  refresh_failure_code = $2, last_attempted_at = $3, updated_at = $3
-            WHERE tenant_id = $4 AND site_id = $5 AND id = $1`,
+                  refresh_failure_code = $2::varchar(80),
+                  last_attempted_at = $3::timestamptz,
+                  updated_at = $3::timestamptz
+            WHERE tenant_id = $4::uuid AND site_id = $5::uuid AND id = $1::uuid`,
           [connection.id, code, now, envelope.tenantId, envelope.siteId],
         ),
       );
@@ -186,9 +188,11 @@ async function persistMetrics(
     }
     await client.query(
       `UPDATE integration_credentials credential
-          SET encrypted_payload = $2, key_version = 1, expires_at = $3, updated_at = $4
+          SET encrypted_payload = $2::bytea, key_version = 1,
+              expires_at = $3::timestamptz, updated_at = $4::timestamptz
          FROM integration_connections connection
-        WHERE connection.id = $1 AND connection.tenant_id = $5 AND connection.site_id = $6
+        WHERE connection.id = $1::uuid AND connection.tenant_id = $5::uuid
+          AND connection.site_id = $6::uuid
           AND credential.id::text = connection.credential_ref
           AND credential.tenant_id = connection.tenant_id
           AND credential.site_id = connection.site_id`,
@@ -203,12 +207,13 @@ async function persistMetrics(
     );
     await client.query(
       `UPDATE integration_connections
-          SET status = $7, last_synced_at = $2, token_expires_at = $3,
-              last_attempted_at = $2,
-              refresh_failure_code = CASE WHEN $7 = 'partial'
+          SET status = $7::varchar(30), last_synced_at = $2::timestamptz,
+              token_expires_at = $3::timestamptz,
+              last_attempted_at = $2::timestamptz,
+              refresh_failure_code = CASE WHEN $7::varchar(30) = 'partial'
                                           THEN 'collection_truncated' ELSE NULL END,
-              sync_cursor = $4::jsonb, updated_at = $2
-        WHERE id = $1 AND tenant_id = $5 AND site_id = $6`,
+              sync_cursor = $4::jsonb, updated_at = $2::timestamptz
+        WHERE id = $1::uuid AND tenant_id = $5::uuid AND site_id = $6::uuid`,
       [
         connectionId,
         input.now,
