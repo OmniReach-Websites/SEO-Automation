@@ -18,6 +18,7 @@ import {
   PostgresAiReviewCycleQuota,
   SitePolicyDeniedError,
   withWorkerTransaction,
+  type AiReviewCycleQuota,
   type TenantTransactionClient,
   type TenantTransactionPool,
 } from '@omnireach/tenant';
@@ -79,6 +80,7 @@ export async function executeCategory(
 export async function runAiProposal(
   envelope: JobEnvelope,
   context: JobHandlerContext,
+  evaluationOverrides?: { reviewCycles: AiReviewCycleQuota },
 ): Promise<void> {
   if (context.environment.OPENAI_PROVIDER_ENABLED !== 'true') {
     throw new JobExecutionError('AI provider is disabled by policy', 'cancelled');
@@ -170,7 +172,8 @@ export async function runAiProposal(
           },
         );
       },
-      reviewCycles: new PostgresAiReviewCycleQuota(context.pool),
+      reviewCycles:
+        evaluationOverrides?.reviewCycles ?? new PostgresAiReviewCycleQuota(context.pool),
       siteId: envelope.siteId,
       stageProposal: (proposal) =>
         stager.stage(

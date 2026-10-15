@@ -5,6 +5,7 @@ import { PostgresAiProposalRequestRepository } from '@omnireach/content';
 import { createJobEnvelope, type JobEnvelope } from '@omnireach/queue';
 import {
   SitePolicyDeniedError,
+  MemoryAiReviewCycleQuota,
   withTenantTransaction,
   type TenantTransactionClient,
   type TenantTransactionPool,
@@ -15,7 +16,7 @@ import { runAiProposal } from './job-handlers.ts';
 const fixtureId = 'production-openai-live-v1';
 const authorization = 'owner-approved-2026-10-15';
 const evaluationCapUsdMicros = 1_000_000;
-const benchmarkPromptVersion = 8;
+const benchmarkPromptVersion = 9;
 
 interface Candidate {
   actorId: string;
@@ -153,11 +154,20 @@ async function executeBenchmark(
     OPENAI_PROVIDER_ENABLED: 'true',
   };
   try {
-    await runAiProposal(prepared.envelope, {
-      environment: runtimeEnvironment,
-      execution: { attempt: 1, jobId: prepared.jobId, runId: randomUUID() },
-      pool,
-    });
+    await runAiProposal(
+      prepared.envelope,
+      {
+        environment: runtimeEnvironment,
+        execution: { attempt: 1, jobId: prepared.jobId, runId: randomUUID() },
+        pool,
+      },
+      {
+        // Internal evaluations must not consume or require a customer's commercial
+        // plan allowance. This in-memory quota is process-local and permits exactly
+        // the one attempt already admitted by ai_evaluation_results.
+        reviewCycles: new MemoryAiReviewCycleQuota(1),
+      },
+    );
     const result = await proposalResult(pool, prepared);
     await completeJob(pool, prepared, 'succeeded');
     await updateBenchmark(pool, true, {
