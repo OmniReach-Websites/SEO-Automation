@@ -513,6 +513,9 @@ Roll back only the named route/configuration if an additive change caused the fa
 - Audit records: 12 months.
 - Content revisions: per site/legal policy; no silent pruning.
 - Backups: 3 daily and 1 weekly recovery point.
+- Immutable application releases: 10, including the protected `current` and `previous`
+  rollback targets. Pruning is restricted to validated commit-SHA directories under
+  `/opt/servers/omnireach/releases` and runs after successful release operations.
 
 Retention is configurable and respects active incidents, legal/site holds, customer deletion obligations, and R-006. Changes are audited. Destructive retention remains disabled until the corresponding policy and exact target are verified.
 

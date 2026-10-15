@@ -104,6 +104,15 @@ checking, the fixed incoming directory, target lock, immutable release directori
 restricted wrapper apply to both operations. Neither workflow changes shared Caddy or
 Christians Reunite resources.
 
+After every successful deploy, bridge, or rollback, the restricted target controller
+retains exactly the ten newest immutable release directories, always counting and
+preserving the targets of both `current` and `previous`. Release pruning accepts only
+direct child directories whose names are lowercase 40-character commit SHAs, rejects
+symlinks or paths that do not resolve exactly as expected, and runs under the same
+exclusive release lock. Operators can run `omnireach-release prune` to apply the same
+policy without activating a release. This policy does not prune Docker images, named
+volumes, shared content, database state, uploaded media, or backups.
+
 The first Auth Contract v2-to-v3 bridge cannot use the currently deployed v2 artifact
 as its automatic rollback after the v3 migration has replaced the v2 RLS policies. That
 binary would fail closed against the v3 database. Before starting the bridge, prepare
