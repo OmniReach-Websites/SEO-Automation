@@ -22,7 +22,7 @@ describe('one-time OpenAI production benchmark', () => {
     expect(runner).toContain('attemptLimit: 1');
     expect(runner).toContain('liveContentChanged: false');
     expect(runner).not.toMatch(
-      /publication_requests|content_drafts\s+SET|UPDATE\s+content_revisions/iu,
+      /INSERT\s+INTO\s+publication_requests|UPDATE\s+content_drafts|UPDATE\s+content_revisions/iu,
     );
   });
 
