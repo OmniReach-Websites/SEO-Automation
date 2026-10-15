@@ -19,6 +19,7 @@ describe('AI proposal runtime security boundaries', () => {
     expect(migration).toContain('tenant_scope_ai_proposal_job_materials');
     expect(admission).toContain("'aio_proposal'");
     expect(admission).toContain('material.id');
+    expect(admission).not.toMatch(/FROM ai_proposal_job_materials[\s\S]*?FOR UPDATE/u);
     expect(admission).not.toMatch(/JSON\.stringify\(\{[^}]*currentValue/su);
   });
 

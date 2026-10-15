@@ -182,8 +182,7 @@ export class PostgresAiProposalRequestRepository {
               `SELECT id, field_id, base_revision, policy_version, field_purpose,
                       evidence, source_value_hash, expires_at
                  FROM ai_proposal_job_materials
-                WHERE tenant_id = $1 AND site_id = $2 AND request_key = $3
-                FOR UPDATE`,
+                WHERE tenant_id = $1 AND site_id = $2 AND request_key = $3`,
               [context.tenantId, context.siteId, requestKey],
             )
           ).rows[0],
