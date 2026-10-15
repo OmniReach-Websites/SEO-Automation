@@ -24,32 +24,39 @@ route returns `503 ai_provider_disabled` and performs no database/provider work 
 The owner authorized a one-time production benchmark costing no more than $1 USD on
 2026-10-15. Migration `20261015183000_ai_runtime_reservation_caps` adds atomic optional
 request-scoped site and platform ceilings to the same reservation transaction used by
-normal proposal generation. A benchmark process must set
-`OPENAI_EVALUATION_CAP_USD_MICROS=1000000`; both the site and platform month-to-date
+normal proposal generation. A benchmark process must set an owner-approved request cap;
+both the site and platform month-to-date
 usage plus active reservations must remain within that ceiling before each provider
 request. This is deliberately conservative if unrelated usage already exists.
 
-The production credential was not present during the 2026-10-15 review, so no paid call
-was made and model availability was not claimed. `OPENAI_PROVIDER_ENABLED` remains
-`false` in the production environment. The controlled benchmark must run as a one-off
-worker invocation against an eligible non-protected field; it must record provider token
-usage and cost in the normal ledger, pass deterministic prompt-injection/protected-fact
-evaluation, persist only a review proposal or draft candidate, and then exit without
-changing the persistent provider gate.
+The owner installed the dedicated-project credential and authorized the controlled test
+on 2026-10-15. A nonbillable model lookup returned HTTP 200 for `gpt-6.1-sol`. The first
+provider-reaching attempt exposed an accounting-order defect after reserving at most
+3,377 USD micros; it persisted no proposal or usage entry. The defect was corrected so
+provider usage is reconciled before local safety evaluation, while rejected output still
+cannot be staged. The follow-up call recorded a 2,240 USD-micro charge ($0.002240), but
+the output failed deterministic proposal evaluation. No proposal, draft, revision, build,
+or publication was created. Conservatively treating the entire first reservation as
+spent places total possible benchmark exposure at no more than $0.005617.
+
+`OPENAI_PROVIDER_ENABLED=false` remains the production setting. The benchmark service is
+manual-only under the Compose `benchmark` profile, and the temporary report endpoint was
+removed after evidence collection. Model access and cost enforcement are verified;
+safe-content quality, prompt-injection resistance, protected-fact preservation, and
+proposal persistence did not pass end-to-end and must not be represented as verified.
 
 The dated price ledger records the official 2026-10-14 standard rates used only for
 budget reservation and reconciliation: `gpt-6.1-sol` at $2/M input and $10/M output
-tokens, and `gpt-6-luna` at $0.10/M input and $0.50/M output tokens. Sources:
-`https://developers.openai.com/api/docs/models/gpt-6.1-sol` and
-`https://developers.openai.com/api/docs/models/gpt-6-luna`. A configured alias must
+tokens, and `gpt-6-luna` at $0.10/M input and $0.50/M output tokens. Source checked on
+2026-10-15: `https://platform.openai.com/pricing`. A configured alias must
 match both the provider model and a currently effective dated price row or execution
 fails closed.
 
 Before any paid activation the owner must record:
 
 - approved model alias and provider project;
-- representative paid-provider quality result and known failure modes (the synthetic
-  provider-independent safety benchmark is complete);
+- a passing representative paid-provider quality result; the current known failure mode
+  is deterministic proposal-evaluation rejection;
 - published input/output prices and the date checked;
 - maximum output tokens, timeout, retry and concurrency;
 - site and platform USD ceilings and plan cycle quotas;
@@ -57,4 +64,4 @@ Before any paid activation the owner must record:
 - prompt/response retention and provider data-processing decision;
 - smoke-test, emergency-stop and rollback owner.
 
-Estimate monthly cost as `(input tokens × input rate + output tokens × output rate) / 1,000,000`, multiplied by approved cycles and a retry margin, then ensure both hard caps are lower than the owner's maximum exposure. The owner authorization and ceiling now exist. Until a representative paid-provider benchmark, explicit activation, and production smoke evidence exist, paid production AI is **TODO/Disabled**, which is the safe completed posture.
+Estimate monthly cost as `(input tokens × input rate + output tokens × output rate) / 1,000,000`, multiplied by approved cycles and a retry margin, then ensure both hard caps are lower than the owner's maximum exposure. The bounded benchmark is complete but did not pass safety evaluation. Until a representative benchmark passes and ongoing activation is explicitly authorized, paid production AI is **TODO/Disabled**, which is the safe completed posture.

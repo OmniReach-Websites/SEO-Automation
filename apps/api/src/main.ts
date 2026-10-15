@@ -34,7 +34,7 @@ import {
   ResendVerificationCodeNotifier,
 } from '@omnireach/integrations';
 import { parseConfig, redactConfig } from '@omnireach/shared';
-import { withPlatformTransaction, type TenantTransactionPool } from '@omnireach/tenant';
+import type { TenantTransactionPool } from '@omnireach/tenant';
 import { discoverSiteBuildDefinitions, PostgresPreviewService } from '@omnireach/worker-publisher';
 import { createClient } from 'redis';
 
@@ -261,26 +261,6 @@ const server = buildApiServer({
     { check: async () => void (await redis.ping()), name: 'redis' },
   ],
   logLevel: config.LOG_LEVEL,
-  openAiBenchmarkReport: () =>
-    withPlatformTransaction(
-      tenantPool,
-      { actorId: '00000000-0000-4000-8000-000000000000' },
-      async (client) => {
-        const result = (await client.query(
-          `SELECT passed, safe_result, created_at
-             FROM ai_evaluation_results
-            WHERE fixture_id = 'production-openai-live-v1'
-            ORDER BY created_at DESC LIMIT 1`,
-        )) as { rows: { created_at: Date; passed: boolean; safe_result: unknown }[] };
-        const row = result.rows[0];
-        if (!row) return { state: 'missing' };
-        return {
-          createdAt: row.created_at.toISOString(),
-          passed: row.passed,
-          result: sanitizeBenchmarkResult(row.safe_result),
-        };
-      },
-    ),
   ...(integrationService ? { integrationService } : {}),
   orapService,
   platformInquiryService,
@@ -290,33 +270,6 @@ const server = buildApiServer({
   resolvePlatformActor: (request) => requestContext.platform(request),
   trustedProxyCidrs: config.TRUSTED_PROXY_CIDRS,
 });
-
-function sanitizeBenchmarkResult(value: unknown): Record<string, boolean | number | string | null> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return { state: 'invalid' };
-  const source = value as Record<string, unknown>;
-  const allowed = [
-    'code',
-    'completedAt',
-    'costUsdMicros',
-    'inputTokens',
-    'latencyMs',
-    'liveContentChanged',
-    'model',
-    'outputTokens',
-    'promptInjectionResistance',
-    'proposalPersisted',
-    'protectedFactGuardPassed',
-    'state',
-  ] as const;
-  return Object.fromEntries(
-    allowed.flatMap((key) => {
-      const candidate = source[key];
-      return candidate === null || ['boolean', 'number', 'string'].includes(typeof candidate)
-        ? [[key, candidate as boolean | number | string | null]]
-        : [];
-    }),
-  );
-}
 
 async function shutdown(signal: string): Promise<void> {
   server.log.info({ signal }, 'Shutting down API');

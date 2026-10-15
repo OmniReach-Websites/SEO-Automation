@@ -188,21 +188,21 @@ consoles before treating reporting values as production-verified.
 
 ## Provider and production-input status
 
-| Input                             | Current state                                                  | Remaining proof or decision                                                                                                              |
-| --------------------------------- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| R-001 domain/ORAP host            | Complete/live                                                  | Continue exact-host enforcement                                                                                                          |
-| R-002 owner/auth/custody          | Complete for current owner-operated model                      | Review custody before broader employee operations                                                                                        |
-| R-003 infrastructure inventory    | Complete historical inventory                                  | Refresh read-only evidence before material shared-host changes                                                                           |
-| R-004 Cloudflare zone/token scope | Complete for approved zone access                              | Every DNS mutation still needs explicit scope and review                                                                                 |
-| R-005 off-site backup             | Partial                                                        | Install separated secrets, enable automated encrypted transfer, prove 7 daily/4 weekly retention, alerts, cost, and a timed real restore |
-| R-006 legal/privacy               | Partial                                                        | Owner-approved final privacy, cookie, terms, consent, and deletion policies                                                              |
-| R-007 Google                      | Partial/deployed                                               | First-sync and live-console reconciliation; confirm consent-screen/provider status                                                       |
-| R-008 auth/alert email            | Complete and active                                            | Maintain dynamic active-Platform-Owner delivery and the 100/day and 3,000/month account-wide enforcement                                 |
-| R-009 contact forms               | Partial                                                        | Verify customer recipients, Turnstile/provider activation, retention operation, and approved consent text                                |
-| R-010 deployment                  | Complete/live                                                  | Preserve restricted non-root deployment and protected `main` policy                                                                      |
-| R-011 subscriptions               | Technical controls implemented; commercial approval incomplete | Final prices, setup/bespoke pricing, quota definitions, overages, collection, cancellation                                               |
-| R-012 OpenAI                      | Policy/ledger implemented; provider disabled                   | Complete benchmark, dated pricing, material/job path, smoke evidence, and explicit paid-call activation                                  |
-| R-013 service objectives          | Approved                                                       | Measure them with ongoing production evidence and restoration drills                                                                     |
+| Input                             | Current state                                                   | Remaining proof or decision                                                                                                              |
+| --------------------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| R-001 domain/ORAP host            | Complete/live                                                   | Continue exact-host enforcement                                                                                                          |
+| R-002 owner/auth/custody          | Complete for current owner-operated model                       | Review custody before broader employee operations                                                                                        |
+| R-003 infrastructure inventory    | Complete historical inventory                                   | Refresh read-only evidence before material shared-host changes                                                                           |
+| R-004 Cloudflare zone/token scope | Complete for approved zone access                               | Every DNS mutation still needs explicit scope and review                                                                                 |
+| R-005 off-site backup             | Partial                                                         | Install separated secrets, enable automated encrypted transfer, prove 7 daily/4 weekly retention, alerts, cost, and a timed real restore |
+| R-006 legal/privacy               | Partial                                                         | Owner-approved final privacy, cookie, terms, consent, and deletion policies                                                              |
+| R-007 Google                      | Partial/deployed                                                | First-sync and live-console reconciliation; confirm consent-screen/provider status                                                       |
+| R-008 auth/alert email            | Complete and active                                             | Maintain dynamic active-Platform-Owner delivery and the 100/day and 3,000/month account-wide enforcement                                 |
+| R-009 contact forms               | Partial                                                         | Verify customer recipients, Turnstile/provider activation, retention operation, and approved consent text                                |
+| R-010 deployment                  | Complete/live                                                   | Preserve restricted non-root deployment and protected `main` policy                                                                      |
+| R-011 subscriptions               | Technical controls implemented; commercial approval incomplete  | Final prices, setup/bespoke pricing, quota definitions, overages, collection, cancellation                                               |
+| R-012 OpenAI                      | Model/cost verified; safety benchmark failed; provider disabled | Tune and pass representative safety/quality evaluation, then obtain explicit ongoing activation                                          |
+| R-013 service objectives          | Approved                                                        | Measure them with ongoing production evidence and restoration drills                                                                     |
 
 R-013 targets are 99.5% monthly availability; Sunday 02:00–04:00
 America/Chicago maintenance; 24-hour RPO; 8-hour RTO; 30-minute critical and 24-hour
@@ -253,9 +253,11 @@ capacity. ORAP may configure aliases, limits, and per-site modes.
 
 `content-review-balanced` currently maps to the selected benchmark candidate
 `gpt-6.1-sol`; `content-review-economy` maps to `gpt-6-luna`. These are configurable
-candidates rather than permanent promises. Paid production calls remain disabled with
-`OPENAI_PROVIDER_ENABLED=false` until the missing benchmark, dated pricing, complete job
-material path, production smoke evidence, and explicit authorization exist.
+candidates rather than permanent promises. The 2026-10-15 production benchmark verified
+model access and recorded a $0.002240 call, but deterministic proposal evaluation rejected
+the output and nothing was persisted or published. Paid production calls remain disabled
+with `OPENAI_PROVIDER_ENABLED=false` until a representative safety/quality benchmark
+passes and ongoing activation is explicitly authorized.
 
 Eligible fields use `AUTO`, `SUGGEST`, or `PROTECTED`. No plan, override, prompt, model,
 or administrator convenience may override protected-fact restrictions.
@@ -313,8 +315,8 @@ Never weaken these to make a feature work:
    the active urgent-alert owner resolver and quota controls.
 4. Obtain final owner/legal approval for privacy, cookie, consent, terms, and deletion
    text before customer launch claims.
-5. Complete OpenAI cost/quality benchmarking and the missing production job-material path
-   before enabling paid calls.
+5. Diagnose the deterministic OpenAI evaluation failure, tune the bounded prompt/model
+   path, and obtain a passing representative result before enabling ongoing paid calls.
 6. Run employee-focused ORAP usability and accessibility passes using real permitted
    workflows, without weakening authorization or audit safeguards.
 7. Resolve or close the six old Dependabot pull requests only after reviewing their major

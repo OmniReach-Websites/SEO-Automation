@@ -53,27 +53,4 @@ describe('API health contract', () => {
     expect(response.json()).toEqual({ failed: ['redis'], status: 'degraded' });
     expect(response.body).not.toContain('secret');
   });
-
-  it('keeps the temporary sanitized benchmark report undiscoverable without authorization', async () => {
-    const report = {
-      passed: true,
-      result: { costUsdMicros: 42, state: 'succeeded' },
-    };
-    const server = buildApiServer({ openAiBenchmarkReport: async () => report });
-    servers.push(server);
-
-    const denied = await server.inject({
-      method: 'GET',
-      url: '/health/openai-benchmark-report',
-    });
-    expect(denied.statusCode).toBe(404);
-
-    const allowed = await server.inject({
-      headers: { 'x-omnireach-benchmark-authorization': 'owner-approved-2026-10-15' },
-      method: 'GET',
-      url: '/health/openai-benchmark-report',
-    });
-    expect(allowed.statusCode).toBe(200);
-    expect(allowed.json()).toEqual(report);
-  });
 });
