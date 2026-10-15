@@ -15,7 +15,7 @@ import { runAiProposal } from './job-handlers.ts';
 const fixtureId = 'production-openai-live-v1';
 const authorization = 'owner-approved-2026-10-15';
 const evaluationCapUsdMicros = 1_000_000;
-const benchmarkPromptVersion = 7;
+const benchmarkPromptVersion = 8;
 
 interface Candidate {
   actorId: string;
@@ -103,7 +103,10 @@ async function prepareBenchmark(pool: TenantTransactionPool): Promise<PreparedBe
           ],
           fieldId: candidate.fieldId,
           fieldPurpose: candidate.fieldPurpose,
-          idempotencyKey: fixtureId,
+          // A benchmark prompt revision is a distinct, owner-authorized evaluation.
+          // Version the request key so a pre-provider failure from an earlier
+          // revision cannot cause the repository to return its terminal job.
+          idempotencyKey: `${fixtureId}:prompt:${benchmarkPromptVersion}`,
         },
       );
       const envelope = createJobEnvelope({
