@@ -84,6 +84,7 @@
       "kind": "worker",
       "allowedWorkspaceDependencies": [
         "@omnireach/ai",
+        "@omnireach/content",
         "@omnireach/contracts",
         "@omnireach/database",
         "@omnireach/integrations",

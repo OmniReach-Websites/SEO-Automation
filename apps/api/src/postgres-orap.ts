@@ -2473,6 +2473,18 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
             'Platform AI budget is not configured',
           )
         : null;
+      const aiBenchmark = budgetAllowed
+        ? (
+            await query<{ created_at: Date; passed: boolean; safe_result: unknown }>(
+              client,
+              `SELECT passed, safe_result, created_at
+                 FROM ai_evaluation_results
+                WHERE fixture_id = 'production-openai-live-v1'
+                ORDER BY created_at DESC LIMIT 1`,
+              [],
+            )
+          ).rows[0]
+        : undefined;
       const backup = backupAllowed
         ? (
             await query<{
@@ -2574,6 +2586,15 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
           )
         : undefined;
       return {
+        ...(aiBenchmark
+          ? {
+              aiBenchmark: {
+                createdAt: aiBenchmark.created_at.toISOString(),
+                passed: aiBenchmark.passed,
+                safeResult: aiBenchmark.safe_result,
+              },
+            }
+          : {}),
         alerts: alerts.rows,
         ...(backupAllowed
           ? {

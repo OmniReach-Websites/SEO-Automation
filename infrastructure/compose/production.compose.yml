@@ -260,6 +260,26 @@ services:
     pids_limit: 96
     stop_grace_period: 45s
 
+  openai-benchmark:
+    <<: *omnireach-runtime
+    profiles: ['application']
+    command:
+      ['node', '--experimental-transform-types', 'workers/runner/src/production-ai-benchmark.ts']
+    environment:
+      OPENAI_BENCHMARK_AUTHORIZATION: owner-approved-2026-10-15
+      OPENAI_EVALUATION_CAP_USD_MICROS: '1000000'
+      OPENAI_MAX_OUTPUT_TOKENS: '200'
+      OPENAI_PROVIDER_ENABLED: 'false'
+      SOURCE_COMMIT_SHA: ${OMNIREACH_RELEASE_SHA}
+    depends_on: *worker-dependencies
+    restart: 'no'
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cpus: 0.25
+    mem_limit: 256m
+    pids_limit: 96
+
   publisher:
     <<: *omnireach-runtime
     profiles: ['application']
