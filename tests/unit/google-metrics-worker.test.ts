@@ -199,6 +199,8 @@ describe('Google metrics worker', () => {
       expect.stringContaining('"dataset":"ga4_source_medium"'),
     );
     expect(statusUpdate?.values?.[6]).toBe('partial');
+    expect(statusUpdate?.text).toContain('$7::varchar(30)');
+    expect(statusUpdate?.text).toContain('$1::uuid');
     const insert = calls.find(({ text }) => text.includes('INSERT INTO metric_snapshots'));
     expect(insert?.text).toContain('$3::uuid');
     expect(insert?.text).toContain('$3::uuid::text');
