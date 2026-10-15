@@ -991,6 +991,7 @@ model SiteContactForm {
 model EmailDeliveryPolicy {
   singleton    Boolean  @id @default(true)
   provider     String   @default("resend") @db.VarChar(30)
+  dailyLimit   Int      @default(100) @map("daily_limit")
   monthlyLimit Int      @default(3000) @map("monthly_limit")
   policyVersion Int     @default(1) @map("policy_version")
   updatedAt    DateTime @default(now()) @map("updated_at") @db.Timestamptz(3)
@@ -1003,16 +1004,35 @@ model EmailDeliveryPeriod {
   capCount           Int                        @map("cap_count")
   sentCount          Int                        @default(0) @map("sent_count")
   failedAttemptCount Int                        @default(0) @map("failed_attempt_count")
+  providerUsedCount  Int                        @default(0) @map("provider_used_count")
+  providerLimit      Int                        @default(3000) @map("provider_limit")
+  providerObservedAt DateTime?                  @map("provider_observed_at") @db.Timestamptz(3)
   updatedAt          DateTime                   @default(now()) @map("updated_at") @db.Timestamptz(3)
   reservations       EmailDeliveryReservation[]
 
   @@map("email_delivery_periods")
 }
 
+model EmailDeliveryDay {
+  dayStart           DateTime                   @id @map("day_start") @db.Timestamptz(3)
+  capCount           Int                        @map("cap_count")
+  sentCount          Int                        @default(0) @map("sent_count")
+  failedAttemptCount Int                        @default(0) @map("failed_attempt_count")
+  providerUsedCount  Int                        @default(0) @map("provider_used_count")
+  providerLimit      Int                        @default(100) @map("provider_limit")
+  providerObservedAt DateTime?                  @map("provider_observed_at") @db.Timestamptz(3)
+  updatedAt          DateTime                   @default(now()) @map("updated_at") @db.Timestamptz(3)
+  reservations       EmailDeliveryReservation[]
+
+  @@map("email_delivery_days")
+}
+
 model EmailDeliveryReservation {
   id                String              @id @default(uuid()) @db.Uuid
   periodStart       DateTime            @map("period_start") @db.Timestamptz(3)
   period            EmailDeliveryPeriod @relation(fields: [periodStart], references: [periodStart], onDelete: Restrict)
+  dayStart          DateTime            @map("day_start") @db.Timestamptz(3)
+  day               EmailDeliveryDay    @relation(fields: [dayStart], references: [dayStart], onDelete: Restrict)
   channel           String              @db.VarChar(30)
   state             String              @default("active") @db.VarChar(20)
   providerReference String?             @map("provider_reference") @db.VarChar(200)
@@ -1022,6 +1042,7 @@ model EmailDeliveryReservation {
   finalizedAt       DateTime?           @map("finalized_at") @db.Timestamptz(3)
 
   @@index([periodStart, state, createdAt])
+  @@index([dayStart, state, createdAt])
   @@map("email_delivery_reservations")
 }
 

@@ -10,7 +10,7 @@ import {
 } from '@omnireach/ai';
 import { validateSiteContract } from '@omnireach/contracts';
 import { PostgresEmailDeliveryQuota, type EmailDeliveryQuotaPool } from '@omnireach/database';
-import { ResendUrgentEmailAdapter } from '@omnireach/integrations';
+import { ResendAccountUsageProvider, ResendUrgentEmailAdapter } from '@omnireach/integrations';
 import { JobExecutionError, type JobEnvelope } from '@omnireach/queue';
 import { auditSite, type AuditPage } from '@omnireach/seo-core';
 import {
@@ -486,6 +486,7 @@ function alertEmailAdapter(context: JobHandlerContext) {
   const quota = new PostgresEmailDeliveryQuota(
     context.pool as unknown as EmailDeliveryQuotaPool,
     'omnireach_worker',
+    new ResendAccountUsageProvider({ apiKey }),
   );
   return new ResendUrgentEmailAdapter({ apiKey, from, quota, recipient });
 }

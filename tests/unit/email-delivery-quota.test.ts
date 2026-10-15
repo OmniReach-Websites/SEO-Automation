@@ -1,5 +1,6 @@
 import { PostgresEmailDeliveryQuota } from '@omnireach/database';
 import {
+  ResendAccountUsageProvider,
   ResendContactDelivery,
   ResendVerificationCodeNotifier,
   type EmailDeliveryQuota,
@@ -7,6 +8,13 @@ import {
 import { describe, expect, it, vi } from 'vitest';
 
 describe('email delivery quota', () => {
+  const usage = {
+    read: vi.fn(async () => ({
+      daily: { limit: 100, resetsAt: '2026-10-16T00:00:00.000Z', used: 7 },
+      monthly: { limit: 3000, resetsAt: '2026-11-01T00:00:00.000Z', used: 28 },
+    })),
+  };
+
   it('reserves and finalizes one atomic provider send without message or recipient data', async () => {
     const query = vi
       .fn()
@@ -20,16 +28,20 @@ describe('email delivery quota', () => {
       .mockResolvedValueOnce({ rows: [{ finalized: true }] })
       .mockResolvedValueOnce({ rows: [] });
     const release = vi.fn();
-    const quota = new PostgresEmailDeliveryQuota({
-      connect: vi.fn(async () => ({ query, release })),
-    });
+    const quota = new PostgresEmailDeliveryQuota(
+      {
+        connect: vi.fn(async () => ({ query, release })),
+      },
+      'omnireach_app',
+      usage,
+    );
     const reservation = await quota.reserve('authentication');
     await quota.finalize(reservation, { providerReference: 'provider-a', state: 'sent' });
 
     expect(query.mock.calls[0]?.[0]).toBe('BEGIN');
     expect(query.mock.calls[1]?.[0]).toBe('SET LOCAL ROLE omnireach_app');
     expect(query.mock.calls[2]?.[0]).toContain('reserve_email_delivery');
-    expect(query.mock.calls[2]?.[1]).toEqual(['authentication']);
+    expect(query.mock.calls[2]?.[1]).toEqual(['authentication', 7, 100, 28, 3000]);
     expect(query.mock.calls[6]?.[0]).toContain('finalize_email_delivery');
     expect(query.mock.calls[6]?.[1]).toEqual([
       '90000000-0000-4000-8000-000000000001',
@@ -53,6 +65,7 @@ describe('email delivery quota', () => {
     const quota = new PostgresEmailDeliveryQuota(
       { connect: vi.fn(async () => ({ query, release })) },
       'omnireach_worker',
+      usage,
     );
 
     await expect(quota.reserve('alert')).rejects.toBe(failure);
@@ -63,6 +76,43 @@ describe('email delivery quota', () => {
       'ROLLBACK',
     ]);
     expect(release).toHaveBeenCalledOnce();
+  });
+
+  it('fails closed before opening a transaction when account-wide usage is unavailable', async () => {
+    const connect = vi.fn();
+    const quota = new PostgresEmailDeliveryQuota({ connect });
+    await expect(quota.reserve('authentication')).rejects.toThrow(
+      'Account-wide email usage guard is not configured',
+    );
+    expect(connect).not.toHaveBeenCalled();
+  });
+
+  it('reads only bounded account-wide quota metadata from Resend', async () => {
+    const provider = new ResendAccountUsageProvider({
+      apiKey: 'fictional-resend-key',
+      fetchImplementation: vi.fn<typeof fetch>().mockResolvedValue(
+        Response.json({
+          emails: {
+            daily: { limit: 100, resets_at: '2026-10-16T00:00:00.000Z', used: 9 },
+            monthly: { limit: 3000, resets_at: '2026-11-01T00:00:00.000Z', used: 31 },
+          },
+        }),
+      ),
+    });
+    await expect(provider.read()).resolves.toEqual({
+      daily: { limit: 100, resetsAt: '2026-10-16T00:00:00.000Z', used: 9 },
+      monthly: { limit: 3000, resetsAt: '2026-11-01T00:00:00.000Z', used: 31 },
+    });
+  });
+
+  it('fails closed when Resend usage metadata is malformed', async () => {
+    const provider = new ResendAccountUsageProvider({
+      apiKey: 'fictional-resend-key',
+      fetchImplementation: vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(Response.json({ emails: { daily: {}, monthly: {} } })),
+    });
+    await expect(provider.read()).rejects.toThrow('invalid response');
   });
 
   it('uses the reservation as a provider idempotency key and records safe failures', async () => {

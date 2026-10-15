@@ -16,6 +16,15 @@ export interface EmailDeliveryQuotaPool {
   connect(): Promise<EmailDeliveryQuotaClient>;
 }
 
+export interface EmailProviderUsageSnapshot {
+  readonly daily: { readonly limit: number; readonly resetsAt: string; readonly used: number };
+  readonly monthly: { readonly limit: number; readonly resetsAt: string; readonly used: number };
+}
+
+export interface EmailProviderUsageReader {
+  read(): Promise<EmailProviderUsageSnapshot>;
+}
+
 export class EmailDeliveryQuotaExceededError extends Error {
   override readonly name = 'EmailDeliveryQuotaExceededError';
 }
@@ -24,20 +33,31 @@ export class PostgresEmailDeliveryQuota {
   constructor(
     private readonly pool: EmailDeliveryQuotaPool,
     private readonly role: 'omnireach_app' | 'omnireach_worker' = 'omnireach_app',
+    private readonly providerUsage?: EmailProviderUsageReader,
   ) {}
 
   async reserve(channel: EmailDeliveryChannel): Promise<EmailDeliveryReservation> {
+    if (!this.providerUsage) {
+      throw new Error('Account-wide email usage guard is not configured');
+    }
+    const usage = await this.providerUsage.read();
     try {
       const result = await this.transaction((client) =>
         client.query<{ id: string }>(
-          `SELECT reserve_email_delivery($1::varchar(30), now() + interval '15 minutes') AS id`,
-          [channel],
+          `SELECT reserve_email_delivery(
+                    $1::varchar(30), now() + interval '15 minutes',
+                    $2::integer, $3::integer, $4::integer, $5::integer
+                  ) AS id`,
+          [channel, usage.daily.used, usage.daily.limit, usage.monthly.used, usage.monthly.limit],
         ),
       );
       const id = result.rows[0]?.id;
       if (!id) throw new Error('Email delivery reservation failed');
       return { id };
     } catch (error) {
+      if (error instanceof Error && error.message.includes('email daily quota exhausted')) {
+        throw new EmailDeliveryQuotaExceededError('Email daily quota exhausted');
+      }
       if (error instanceof Error && error.message.includes('email monthly quota exhausted')) {
         throw new EmailDeliveryQuotaExceededError('Email monthly quota exhausted');
       }

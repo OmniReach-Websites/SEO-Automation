@@ -181,9 +181,11 @@ verification satisfies a NIST Authentication Assurance Level. See the
   the running v2 binary is intentionally unavailable after that point; failure of both
   v3 artifacts requires a compatible forward fix or an owner-authorized restore of the
   pre-transition database backup with its matching v2 artifact.
-- Resend authentication delivery remains disabled until its sender domain, account,
-  credentials, limits, and production activation receive the existing explicit
-  approval. A disabled or unavailable provider never causes MFA bypass.
+- Resend authentication delivery may be activated under the 2026-10-15 owner approval:
+  the sender domain is verified, the host-only credential can read account usage, and
+  admission enforces account-wide provider usage plus atomic daily/monthly reservations.
+  Delivery must pass a controlled approved-recipient test. A disabled, unavailable, or
+  quota-exhausted provider never causes MFA bypass.
 - Forwarded client addresses are accepted only when the immediate peer matches an
   explicitly configured Caddy/proxy IP or CIDR. With no allowlist, forwarded headers
   are ignored. The proxy chain is evaluated from the application outward so an

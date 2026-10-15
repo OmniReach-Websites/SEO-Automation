@@ -84,10 +84,15 @@ describe('PostgreSQL ORAP service', () => {
           rows: [
             {
               cap_count: 3000,
+              daily_cap_count: 100,
+              daily_reserved_count: 0,
+              daily_sent_count: 7,
+              day_start: new Date('2026-10-14T00:00:00.000Z'),
               failed_attempt_count: 2,
               last_attempt_at: new Date('2026-10-14T01:00:00.000Z'),
               last_error_code: 'provider detail that must not be exposed',
               period_start: new Date('2026-10-01T00:00:00.000Z'),
+              provider_observed_at: new Date('2026-10-14T01:00:00.000Z'),
               reserved_count: 1,
               sent_count: 12,
             },
@@ -116,6 +121,8 @@ describe('PostgreSQL ORAP service', () => {
     await expect(service.listOperations(actor)).resolves.toMatchObject({
       email: {
         credentialConfigured: true,
+        dailyLimit: 100,
+        dailyUsedCount: 7,
         failedAttemptCount: 2,
         lastErrorCode: 'provider_failure',
         monthlyLimit: 3000,

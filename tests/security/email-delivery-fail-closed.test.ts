@@ -29,6 +29,21 @@ describe('email delivery activation boundaries', () => {
     const worker = readFileSync('workers/runner/src/job-handlers.ts', 'utf8');
     expect(worker).toContain("ALERT_EMAIL_DELIVERY_ENABLED !== 'true'");
     expect(worker).toContain('new PostgresEmailDeliveryQuota');
+    expect(worker).toContain('new ResendAccountUsageProvider({ apiKey })');
     expect(worker).toContain('new ResendUrgentEmailAdapter');
+  });
+
+  it('requires account-wide daily and monthly usage before admitting a provider send', () => {
+    const quota = readFileSync('packages/database/src/email-delivery-quota.ts', 'utf8');
+    const migration = readFileSync(
+      'packages/database/prisma/migrations/20261015033000_resend_account_quota/migration.sql',
+      'utf8',
+    );
+    expect(quota).toContain('Account-wide email usage guard is not configured');
+    expect(quota).toContain('usage.daily.used');
+    expect(quota).toContain('usage.monthly.used');
+    expect(migration).toContain('GREATEST(sent_count, provider_used_count)');
+    expect(migration).toContain("RAISE EXCEPTION 'email daily quota exhausted'");
+    expect(migration).toContain("RAISE EXCEPTION 'email monthly quota exhausted'");
   });
 });

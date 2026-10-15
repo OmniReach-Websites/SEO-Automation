@@ -28,6 +28,7 @@ import {
   GoogleHttpProvider,
   MockTurnstileVerifier,
   ResendAuthenticationNotifier,
+  ResendAccountUsageProvider,
   ResendContactDelivery,
   ResendPlatformInquiryDelivery,
   ResendVerificationCodeNotifier,
@@ -62,8 +63,13 @@ import { PostgresGoogleIntegrationService } from './postgres-google.ts';
 
 const config = parseConfig(process.env);
 const database = createDatabase(config.DATABASE_URL);
+const resendAccountUsage = config.RESEND_API_KEY
+  ? new ResendAccountUsageProvider({ apiKey: config.RESEND_API_KEY })
+  : undefined;
 const emailDeliveryQuota = new PostgresEmailDeliveryQuota(
   database.pool as unknown as EmailDeliveryQuotaPool,
+  'omnireach_app',
+  resendAccountUsage,
 );
 const redis = createClient({ url: config.REDIS_URL });
 const authRepository = new PostgresAuthenticationRepository(

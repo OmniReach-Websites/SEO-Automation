@@ -20,13 +20,15 @@ Analytics and search data require consent, external permissions, careful propert
 - Store metric source/property/window/ingestion/freshness/provenance and show not-connected/stale/unavailable states rather than invented zeroes.
 - Track observable AI referral sources through a versioned mapping; keep unknown sources unknown.
 - Implement an ORAP alert center with fingerprint, severity, scope, occurrence count, owner, acknowledgment, remediation, and resolution.
-- Send only policy-defined urgent alerts through an email adapter, deduplicated against the alert lifecycle. Production email waits for R-008.
+- Send only policy-defined urgent alerts through an email adapter, deduplicated against the alert lifecycle. Production email waits for the channel-specific R-008 recipient and delivery proof.
 - R-008 selects Resend for critical operational email. ORAP remains authoritative for all
-  alerts. The planned free-tier configuration uses `updates.omnireach.cloud`, confirmed
-  sender `alerts@updates.omnireach.cloud`, a $0 budget, and up to three
-  exponential-backoff retries. Verified sender/domain, recipient, credentials, provider
-  setup, and explicit activation remain gated. Provider failure never affects public
-  website availability.
+  alerts. The verified free-tier configuration uses `updates.omnireach.cloud`, approved
+  senders `auth@`, `alerts@`, and `forms@` on that domain, a $0 budget, and up to three
+  exponential-backoff alert retries. Every send first reads account-wide provider usage
+  and atomically reserves against the lower of provider and internal hard limits,
+  currently 100/day and 3,000/month. Urgent alerts still require a final approved
+  recipient and successful test. Provider failure never affects public website
+  availability.
 
 ## Alternatives considered
 
@@ -44,4 +46,8 @@ Analytics and search data require consent, external permissions, careful propert
 
 ## Validation
 
-G22 alert/email lifecycle, G27 OAuth/property/metric tests, G28 reporting fixtures, and G30 replay/privacy/permissions tests prove the decision.
+G22 alert/email lifecycle, G27 OAuth/property/metric tests, G28 reporting fixtures, and
+G30 replay/privacy/permissions tests prove the decision. On 2026-10-15, controlled
+messages from the approved authentication and alert identities were provider-confirmed
+delivered to the approved test recipient and recorded as sent without message content.
+Automated urgent delivery remains off until its final recipient is approved.

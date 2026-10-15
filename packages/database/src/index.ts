@@ -12,6 +12,8 @@ export {
   type EmailDeliveryQuotaClient,
   type EmailDeliveryQuotaPool,
   type EmailDeliveryReservation,
+  type EmailProviderUsageReader,
+  type EmailProviderUsageSnapshot,
 } from './email-delivery-quota.ts';
 
 export interface DatabaseConnection {

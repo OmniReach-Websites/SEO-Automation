@@ -197,7 +197,7 @@ consoles before treating reporting values as production-verified.
 | R-005 off-site backup             | Partial                                                        | Install separated secrets, enable automated encrypted transfer, prove 7 daily/4 weekly retention, alerts, cost, and a timed real restore |
 | R-006 legal/privacy               | Partial                                                        | Owner-approved final privacy, cookie, terms, consent, and deletion policies                                                              |
 | R-007 Google                      | Partial/deployed                                               | First-sync and live-console reconciliation; confirm consent-screen/provider status                                                       |
-| R-008 auth/alert email            | Planned/needs re-verification                                  | Verify Resend domain/senders, final recipient, credential, free-tier limits, flags, and live delivery                                    |
+| R-008 auth/alert email            | Authentication active; urgent automation partially gated      | Keep account-wide 100/day and 3,000/month enforcement; confirm final urgent-alert recipient                                               |
 | R-009 contact forms               | Partial                                                        | Verify customer recipients, Turnstile/provider activation, retention operation, and approved consent text                                |
 | R-010 deployment                  | Complete/live                                                  | Preserve restricted non-root deployment and protected `main` policy                                                                      |
 | R-011 subscriptions               | Technical controls implemented; commercial approval incomplete | Final prices, setup/bespoke pricing, quota definitions, overages, collection, cancellation                                               |
@@ -224,16 +224,19 @@ the owner's authorization and an audit record.
 
 ## Email and forms
 
-Planned Resend senders are:
+Approved Resend senders are:
 
 - `auth@updates.omnireach.cloud` for authentication;
 - `alerts@updates.omnireach.cloud` for urgent operational alerts;
 - `forms@updates.omnireach.cloud` for centralized contact forms.
 
 The testing address is recorded in `production-inputs.md`; do not duplicate personal
-addresses in new logs or fixtures. Treat provider activation and live delivery as
-**Waiting** until current sender verification, credentials, flags, recipients, quota,
-and delivery evidence are recorded.
+addresses in new logs or fixtures. On 2026-10-15, the provider reported the domain
+verified, the host-only credential passed domain/usage checks, and controlled auth and
+alert messages were reported delivered and recorded without message content.
+Authentication delivery is active. Urgent-alert automation remains disabled until its
+final recipient is confirmed. Account-wide provider usage plus atomic reservations are
+enforced against 100/day and 3,000/month hard caps at the approved $0 spend.
 
 Contact forms are optional reusable components, not separate per-customer backends. ORAP
 administrators can enable them per site; authorized customers can configure supported
@@ -305,8 +308,8 @@ Never weaken these to make a feature work:
    properties and source-console totals.
 2. Complete production off-site backup installation and a timed isolated restore without
    exposing either the R2 credential or encryption key.
-3. Re-verify and activate Resend senders and bounded delivery paths only after recording
-   recipients, quota, and failure behavior.
+3. Confirm the final urgent-alert recipient before enabling automated urgent delivery;
+   keep forms and confirmations disabled until all R-009 gates are complete.
 4. Obtain final owner/legal approval for privacy, cookie, consent, terms, and deletion
    text before customer launch claims.
 5. Complete OpenAI cost/quality benchmarking and the missing production job-material path
@@ -321,7 +324,7 @@ Never weaken these to make a feature work:
 - final commercial approval of subscription prices, setup/bespoke fees, overages,
   cancellation, and collection rules;
 - final legal/policy text and consent language;
-- final production recipients and authorization to activate each Resend delivery class;
+- final urgent-alert recipient; contact/form recipient, consent, and Turnstile approvals;
 - authorization to install backup credentials/key material and enable the production
   backup schedule;
 - explicit authorization to enable paid OpenAI calls after technical gates pass;

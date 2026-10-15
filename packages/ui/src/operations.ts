@@ -50,12 +50,17 @@ export interface EmailOperationsView {
     readonly sender: string;
   }[];
   readonly credentialConfigured: boolean;
+  readonly dailyLimit: number;
+  readonly dailyReservedCount: number;
+  readonly dailyUsedCount: number;
+  readonly dayStart: string;
   readonly failedAttemptCount: number;
   readonly lastAttemptAt?: string;
   readonly lastErrorCode?: string;
   readonly monthlyLimit: number;
   readonly periodStart: string;
   readonly provider: string;
+  readonly providerObservedAt?: string;
   readonly reservedCount: number;
   readonly sentCount: number;
   readonly turnstileConfigured: boolean;
@@ -120,7 +125,9 @@ export function renderOperationsCenter(input: {
 function renderEmailOperations(email: EmailOperationsView | undefined): string {
   if (!email) return '';
   const enabled = email.channels.filter((channel) => channel.enabled);
-  const quotaExhausted = email.sentCount + email.reservedCount >= email.monthlyLimit;
+  const quotaExhausted =
+    email.sentCount + email.reservedCount >= email.monthlyLimit ||
+    email.dailyUsedCount + email.dailyReservedCount >= email.dailyLimit;
   const blocked =
     enabled.length > 0 &&
     (!email.credentialConfigured ||
@@ -138,7 +145,7 @@ function renderEmailOperations(email: EmailOperationsView | undefined): string {
         `<tr><th scope="row">${escapeHtml(channel.kind)}</th><td>${channel.enabled ? 'Enabled' : 'Disabled'}</td><td>${escapeHtml(channel.sender)}</td></tr>`,
     )
     .join('');
-  return `<section class="panel" aria-labelledby="email-heading"><div class="panel-header"><div><h2 id="email-heading">Email delivery</h2><p class="help">Provider health and quota evidence only. Credentials, recipients, and message contents are never shown.</p></div><span class="state-pill ${state.className}">${state.label}</span></div><dl class="stats"><div class="stat"><dt>Provider</dt><dd>${escapeHtml(email.provider)}</dd><small>${email.credentialConfigured ? 'Credential configured' : 'Credential missing'}</small></div><div class="stat"><dt>Monthly sent</dt><dd>${email.sentCount} / ${email.monthlyLimit}</dd><small>UTC period ${escapeHtml(email.periodStart)}</small></div><div class="stat"><dt>Reserved</dt><dd>${email.reservedCount}</dd><small>In-flight provider calls</small></div><div class="stat"><dt>Failed attempts</dt><dd>${email.failedAttemptCount}</dd><small>Latest attempt ${escapeHtml(email.lastAttemptAt ?? 'Never')}</small></div></dl><table><caption>Configured email channels and approved sender identities</caption><thead><tr><th>Channel</th><th>State</th><th>Sender</th></tr></thead><tbody>${channelRows}</tbody></table>${email.lastErrorCode ? `<p class="notice error"><strong>Latest safe failure code:</strong> <code>${escapeHtml(email.lastErrorCode)}</code></p>` : ''}</section>`;
+  return `<section class="panel" aria-labelledby="email-heading"><div class="panel-header"><div><h2 id="email-heading">Email delivery</h2><p class="help">Provider health and quota evidence only. Credentials, recipients, and message contents are never shown.</p></div><span class="state-pill ${state.className}">${state.label}</span></div><dl class="stats"><div class="stat"><dt>Provider</dt><dd>${escapeHtml(email.provider)}</dd><small>${email.credentialConfigured ? 'Credential configured' : 'Credential missing'} · observed ${escapeHtml(email.providerObservedAt ?? 'Never')}</small></div><div class="stat"><dt>Account daily used</dt><dd>${email.dailyUsedCount} / ${email.dailyLimit}</dd><small>UTC day ${escapeHtml(email.dayStart)} · ${email.dailyReservedCount} reserved</small></div><div class="stat"><dt>Account monthly used</dt><dd>${email.sentCount} / ${email.monthlyLimit}</dd><small>UTC policy period ${escapeHtml(email.periodStart)} · ${email.reservedCount} reserved</small></div><div class="stat"><dt>Failed attempts</dt><dd>${email.failedAttemptCount}</dd><small>Latest attempt ${escapeHtml(email.lastAttemptAt ?? 'Never')}</small></div></dl><table><caption>Configured email channels and approved sender identities</caption><thead><tr><th>Channel</th><th>State</th><th>Sender</th></tr></thead><tbody>${channelRows}</tbody></table>${email.lastErrorCode ? `<p class="notice error"><strong>Latest safe failure code:</strong> <code>${escapeHtml(email.lastErrorCode)}</code></p>` : ''}</section>`;
 }
 
 function renderBackupStatus(backup: BackupStatusView | null | undefined): string {
