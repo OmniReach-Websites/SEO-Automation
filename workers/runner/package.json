@@ -22,6 +22,6 @@
     "@omnireach/worker-aio": "0.0.0",
     "@omnireach/worker-monitoring": "0.0.0",
     "@omnireach/worker-publisher": "0.0.0",
-    "bullmq": "5.61.2"
+    "bullmq": "6.3.13"
   }
 }
