@@ -15,7 +15,7 @@ import { runAiProposal } from './job-handlers.ts';
 const fixtureId = 'production-openai-live-v1';
 const authorization = 'owner-approved-2026-10-15';
 const evaluationCapUsdMicros = 1_000_000;
-const benchmarkPromptVersion = 6;
+const benchmarkPromptVersion = 7;
 
 interface Candidate {
   actorId: string;
@@ -514,6 +514,8 @@ function safeFailureCode(error: unknown): string {
     'no_eligible_benchmark_field',
     'persistent_provider_gate_must_remain_disabled',
   ]);
+  const permissionTarget = safePermissionTarget(error);
+  if (permissionTarget) return `benchmark_runtime_permission_denied_${permissionTarget}`;
   return allowed.has(message) || /^benchmark_material_permission_denied_[a-z_]+$/u.test(message)
     ? message
     : 'benchmark_execution_failed';
@@ -539,34 +541,48 @@ function safeAdmissionFailureCode(error: unknown): string {
   if (databaseCode === '23503') return 'benchmark_material_foreign_key_failed';
   if (databaseCode === '23514') return 'benchmark_material_check_failed';
   if (databaseCode === '42501') {
-    const permittedTargets = new Set([
-      'ai_proposal_job_materials',
-      'audit_events',
-      'content_drafts',
-      'content_fields',
-      'content_revisions',
-      'feature_definitions',
-      'jobs',
-      'plan_features',
-      'site_emergency_controls',
-      'site_feature_overrides',
-      'sites',
-      'subscriptions',
-    ]);
-    const structuredTarget =
-      error && typeof error === 'object' && 'table' in error && typeof error.table === 'string'
-        ? error.table
-        : '';
-    const messageTarget =
-      error instanceof Error
-        ? /^permission denied for table ([a-z_]+)$/u.exec(error.message)?.[1]
-        : '';
-    const reportedTarget = structuredTarget || messageTarget || '';
-    return permittedTargets.has(reportedTarget)
-      ? `benchmark_material_permission_denied_${reportedTarget}`
+    const permissionTarget = safePermissionTarget(error);
+    return permissionTarget
+      ? `benchmark_material_permission_denied_${permissionTarget}`
       : 'benchmark_material_permission_denied';
   }
   return 'benchmark_material_admission_failed';
+}
+
+function safePermissionTarget(error: unknown): string | undefined {
+  const permittedTargets = new Set([
+    'ai_budget_periods',
+    'ai_model_prices',
+    'ai_proposal_job_materials',
+    'ai_reservations',
+    'ai_usage_entries',
+    'audit_events',
+    'business_facts',
+    'content_drafts',
+    'content_fields',
+    'content_proposals',
+    'content_revisions',
+    'feature_definitions',
+    'jobs',
+    'plan_features',
+    'platform_ai_budget',
+    'platform_ai_budget_periods',
+    'site_ai_budgets',
+    'site_emergency_controls',
+    'site_feature_overrides',
+    'sites',
+    'subscriptions',
+  ]);
+  const structuredTarget =
+    error && typeof error === 'object' && 'table' in error && typeof error.table === 'string'
+      ? error.table
+      : '';
+  const messageTarget =
+    error instanceof Error
+      ? /^permission denied for table ([a-z_]+)$/u.exec(error.message)?.[1]
+      : '';
+  const reportedTarget = structuredTarget || messageTarget || '';
+  return permittedTargets.has(reportedTarget) ? reportedTarget : undefined;
 }
 
 function required(source: NodeJS.ProcessEnv, key: string): string {
