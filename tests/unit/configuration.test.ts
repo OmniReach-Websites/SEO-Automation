@@ -118,9 +118,13 @@ describe('configuration and logging safety', () => {
     expect(() => parseConfig({ ...validConfig, AUTH_EMAIL_DELIVERY_ENABLED: 'true' })).toThrow(
       'RESEND_AUTH_FROM',
     );
-    expect(() => parseConfig({ ...validConfig, ALERT_EMAIL_DELIVERY_ENABLED: 'true' })).toThrow(
-      'ALERT_EMAIL_RECIPIENT',
-    );
+    expect(
+      parseConfig({
+        ...validConfig,
+        ALERT_EMAIL_DELIVERY_ENABLED: 'true',
+        RESEND_API_KEY: 'fictional-key',
+      }).ALERT_EMAIL_DELIVERY_ENABLED,
+    ).toBe(true);
     expect(() =>
       parseConfig({
         ...validConfig,

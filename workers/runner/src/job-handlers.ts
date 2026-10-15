@@ -455,7 +455,7 @@ async function runHealthCheck(envelope: JobEnvelope, context: JobHandlerContext)
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
   } catch {
-    const email = alertEmailAdapter(context);
+    const email = await alertEmailAdapter(context, envelope);
     await new PostgresAlertCenter(context.pool).report(
       {
         jobId: context.execution.jobId,
@@ -475,20 +475,34 @@ async function runHealthCheck(envelope: JobEnvelope, context: JobHandlerContext)
   }
 }
 
-function alertEmailAdapter(context: JobHandlerContext) {
+async function alertEmailAdapter(context: JobHandlerContext, envelope: JobEnvelope) {
   if (context.environment.ALERT_EMAIL_DELIVERY_ENABLED !== 'true') return undefined;
   const apiKey = context.environment.RESEND_API_KEY?.trim();
   const from = context.environment.RESEND_ALERT_FROM?.trim();
-  const recipient = context.environment.ALERT_EMAIL_RECIPIENT?.trim();
-  if (!apiKey || !from || !recipient) {
+  if (!apiKey || !from) {
     throw new JobExecutionError('Alert email configuration is incomplete', 'permanent');
+  }
+  const recipients = await workerTransaction(
+    context.pool,
+    envelope,
+    context.execution.jobId,
+    async (client) =>
+      (
+        await query<{ normalized_email: string }>(
+          client,
+          'SELECT normalized_email FROM active_platform_owner_alert_recipients()',
+        )
+      ).rows.map((row) => row.normalized_email),
+  );
+  if (recipients.length === 0) {
+    throw new JobExecutionError('No active Platform Owner alert recipients exist', 'permanent');
   }
   const quota = new PostgresEmailDeliveryQuota(
     context.pool as unknown as EmailDeliveryQuotaPool,
     'omnireach_worker',
     new ResendAccountUsageProvider({ apiKey }),
   );
-  return new ResendUrgentEmailAdapter({ apiKey, from, quota, recipient });
+  return new ResendUrgentEmailAdapter({ apiKey, from, quota, recipients });
 }
 
 function auditPage(evidence: Record<string, unknown>): AuditPage {

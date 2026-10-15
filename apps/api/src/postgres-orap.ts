@@ -2368,12 +2368,14 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
                           AS daily_sent_count,
                         COALESCE(period.failed_attempt_count, 0)::integer
                           AS failed_attempt_count,
-                        (SELECT count(*)::integer FROM email_delivery_reservations reservation
+                        (SELECT COALESCE(sum(reservation.units), 0)::integer
+                           FROM email_delivery_reservations reservation
                           WHERE reservation.period_start =
                             date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
                             AND reservation.state = 'active'
                             AND reservation.expires_at > now()) AS reserved_count,
-                        (SELECT count(*)::integer FROM email_delivery_reservations reservation
+                        (SELECT COALESCE(sum(reservation.units), 0)::integer
+                           FROM email_delivery_reservations reservation
                           WHERE reservation.day_start =
                             date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
                             AND reservation.state = 'active'
