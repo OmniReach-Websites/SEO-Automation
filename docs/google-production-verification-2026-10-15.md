@@ -8,12 +8,12 @@ The review covered the production Google connections, worker execution, stored r
 
 ## Connection inventory
 
-| Website | Integration | Mapped property | Evidence | Status before repair |
-| --- | --- | --- | --- | --- |
-| Coop's Mobile Detailing | GA4 | `properties/558804599` | Production connection and Google API response | Error after the 2026-10-15 scheduled run |
+| Website                 | Integration    | Mapped property                           | Evidence                                      | Status before repair                     |
+| ----------------------- | -------------- | ----------------------------------------- | --------------------------------------------- | ---------------------------------------- |
+| Coop's Mobile Detailing | GA4            | `properties/558804599`                    | Production connection and Google API response | Error after the 2026-10-15 scheduled run |
 | Coop's Mobile Detailing | Search Console | `sc-domain:coopsmobiledetailingaledo.com` | Production connection and Google API response | Error after the 2026-10-15 scheduled run |
-| OmniReach | GA4 | No connection | Production connection inventory | Disconnected; no metrics claimed |
-| OmniReach | Search Console | No connection | Production connection inventory | Disconnected; no metrics claimed |
+| OmniReach               | GA4            | No connection                             | Production connection inventory               | Disconnected; no metrics claimed         |
+| OmniReach               | Search Console | No connection                             | Production connection inventory               | Disconnected; no metrics claimed         |
 
 Both Coop connections use the approved read-only scopes. Their OAuth credentials remained encrypted at rest and the access token refreshed successfully during the review.
 
