@@ -55,7 +55,7 @@ describe('AIO proposal orchestration', () => {
       }),
     ).resolves.toMatchObject({ action: 'draft_candidate' });
   });
-  it('never calls the provider for protected mode and releases failed reservations', async () => {
+  it('never calls the provider for protected mode and records usage for rejected output', async () => {
     let calls = 0;
     const provider = {
       generate: async () => {
@@ -101,7 +101,9 @@ describe('AIO proposal orchestration', () => {
         reviewCycles: reviewCycles(),
       }),
     ).rejects.toThrow(/restricted_fact_changed/u);
-    expect(budget.reservations[0]?.state).toBe('released');
+    expect(budget.reservations[0]?.state).toBe('reconciled');
+    expect(budget.usage).toHaveLength(1);
+    expect(budget.usage[0]?.amountUsdMicros).toBe(30);
   });
 
   it('consumes one review cycle per successful provider call and releases failed calls', async () => {
