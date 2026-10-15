@@ -10,6 +10,7 @@ metadata_validator=/usr/local/libexec/omnireach-validate-release-metadata
 required_auth_contract=3
 required_crypto_contract=2
 api_port=44100
+release_retention=10
 
 fail() {
   printf 'omnireach-release: %s\n' "$1" >&2
@@ -202,6 +203,58 @@ set_release_pointers() {
   fi
 }
 
+prune_old_releases() (
+  set -eu
+  resolve_pointer current
+  retention_current=$resolved_pointer
+  resolve_pointer previous
+  retention_previous=$resolved_pointer
+
+  retained=0
+  [ -z "$retention_current" ] || retained=1
+  if [ -n "$retention_previous" ] && [ "$retention_previous" != "$retention_current" ]; then
+    retained=$((retained + 1))
+  fi
+  [ "$retained" -le "$release_retention" ] ||
+    fail 'protected release pointers exceed the retention limit'
+
+  release_list=$(mktemp "$deploy_root/.release-retention.XXXXXX")
+  trap 'rm -f -- "$release_list"' EXIT HUP INT TERM
+  find "$releases_root" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %f\n' |
+    sort -rn >"$release_list"
+
+  pruned=0
+  while read -r release_timestamp release_name; do
+    [ -n "$release_name" ] || continue
+    if ! printf '%s' "$release_name" | grep -Eq '^[0-9a-f]{40}$'; then
+      continue
+    fi
+
+    release_dir=$releases_root/$release_name
+    if [ "$release_dir" = "$retention_current" ] ||
+      [ "$release_dir" = "$retention_previous" ]; then
+      continue
+    fi
+    if [ "$retained" -lt "$release_retention" ]; then
+      retained=$((retained + 1))
+      continue
+    fi
+
+    [ -d "$release_dir" ] && [ ! -L "$release_dir" ] ||
+      fail 'release selected for pruning is not a regular directory'
+    resolved_release=$(readlink -f "$release_dir") ||
+      fail 'release selected for pruning cannot be resolved'
+    [ "$resolved_release" = "$release_dir" ] ||
+      fail 'release selected for pruning resolved outside its expected path'
+    rm -rf -- "$release_dir"
+    pruned=$((pruned + 1))
+    printf 'omnireach-release: pruned %s\n' "$release_name"
+  done <"$release_list"
+
+  printf 'omnireach-release: retained %s immutable releases; pruned %s\n' \
+    "$retained" "$pruned"
+)
+
 restore_release() {
   restore_dir=$1
   restore_prior=$2
@@ -252,6 +305,7 @@ deploy_release() {
   fi
   set_release_pointers "$candidate_dir" "$prior_dir"
   rm -f -- "$incoming_root/$deploy_id.tgz" "$incoming_root/$deploy_id.tgz.sha256"
+  prune_old_releases
   printf 'omnireach-release: activated %s\n' "$deploy_id"
 }
 
@@ -299,6 +353,7 @@ bridge_release() {
   rm -f -- \
     "$incoming_root/$candidate_id.tgz" "$incoming_root/$candidate_id.tgz.sha256" \
     "$incoming_root/$rollback_id.tgz" "$incoming_root/$rollback_id.tgz.sha256"
+  prune_old_releases
   printf 'omnireach-release: activated bridge candidate %s with rollback %s\n' \
     "$candidate_id" "$rollback_id"
 }
@@ -332,6 +387,7 @@ rollback_release() {
     fail 'rollback failed and the active release was restored'
   fi
   set_release_pointers "$rollback_dir" "$active_dir"
+  prune_old_releases
   printf 'omnireach-release: rolled back to %s\n' "$(basename "$rollback_dir")"
 }
 
@@ -350,5 +406,10 @@ case "${1:-}" in
     [ "$#" -eq 1 ] || fail 'usage: omnireach-release rollback'
     rollback_release
     ;;
-  *) fail 'permitted operations are deploy, bridge, and rollback' ;;
+  prune)
+    [ "$#" -eq 1 ] || fail 'usage: omnireach-release prune'
+    lock_release_operation
+    prune_old_releases
+    ;;
+  *) fail 'permitted operations are deploy, bridge, rollback, and prune' ;;
 esac

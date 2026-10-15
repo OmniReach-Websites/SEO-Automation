@@ -72,6 +72,19 @@ describe('restricted production release wrapper', () => {
     expect(deployReadme).toMatch(/prepare\s+and review two distinct v3-compatible artifacts/u);
   });
 
+  it('retains ten immutable releases while protecting current and previous', () => {
+    expect(target).toContain('release_retention=10');
+    expect(target).toContain('prune_old_releases');
+    expect(target).toContain('retention_current=$resolved_pointer');
+    expect(target).toContain('retention_previous=$resolved_pointer');
+    expect(target).toContain("grep -Eq '^[0-9a-f]{40}$'");
+    expect(target).toContain('[ ! -L "$release_dir" ]');
+    expect(target).toContain('[ "$resolved_release" = "$release_dir" ]');
+    expect(target).toContain('rm -rf -- "$release_dir"');
+    expect(target).toContain("fail 'usage: omnireach-release prune'");
+    expect(target.match(/prune_old_releases/g)?.length).toBeGreaterThanOrEqual(5);
+  });
+
   it('installs a single command-scoped sudo rule without Docker-socket access', () => {
     expect(installer).toContain(
       'omnireach-deploy ALL=(root) NOPASSWD: /usr/local/sbin/omnireach-release-root *',
