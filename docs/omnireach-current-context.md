@@ -197,7 +197,7 @@ consoles before treating reporting values as production-verified.
 | R-005 off-site backup             | Partial                                                        | Install separated secrets, enable automated encrypted transfer, prove 7 daily/4 weekly retention, alerts, cost, and a timed real restore |
 | R-006 legal/privacy               | Partial                                                        | Owner-approved final privacy, cookie, terms, consent, and deletion policies                                                              |
 | R-007 Google                      | Partial/deployed                                               | First-sync and live-console reconciliation; confirm consent-screen/provider status                                                       |
-| R-008 auth/alert email            | Authentication active; urgent owner routing approved           | Deploy and verify dynamic delivery to every active Platform Owner while preserving 100/day and 3,000/month enforcement                   |
+| R-008 auth/alert email            | Complete and active                                            | Maintain dynamic active-Platform-Owner delivery and the 100/day and 3,000/month account-wide enforcement                                 |
 | R-009 contact forms               | Partial                                                        | Verify customer recipients, Turnstile/provider activation, retention operation, and approved consent text                                |
 | R-010 deployment                  | Complete/live                                                  | Preserve restricted non-root deployment and protected `main` policy                                                                      |
 | R-011 subscriptions               | Technical controls implemented; commercial approval incomplete | Final prices, setup/bespoke pricing, quota definitions, overages, collection, cancellation                                               |
@@ -234,9 +234,10 @@ The testing address is recorded in `production-inputs.md`; do not duplicate pers
 addresses in new logs or fixtures. On 2026-10-15, the provider reported the domain
 verified, the host-only credential passed domain/usage checks, and controlled auth and
 alert messages were reported delivered and recorded without message content.
-Authentication delivery is active. Urgent-alert automation remains disabled until its
-dynamic active-Platform-Owner routing is deployed and verified. Account-wide provider usage plus recipient-counted atomic reservations are
-enforced against 100/day and 3,000/month hard caps at the approved $0 spend.
+Authentication and urgent-alert delivery are active. A two-owner production alert was
+reported delivered after the dynamic active-Platform-Owner resolver was deployed.
+Account-wide provider usage plus recipient-counted atomic reservations are enforced
+against 100/day and 3,000/month hard caps at the approved $0 spend.
 
 Contact forms are optional reusable components, not separate per-customer backends. ORAP
 administrators can enable them per site; authorized customers can configure supported
@@ -308,8 +309,8 @@ Never weaken these to make a feature work:
    properties and source-console totals.
 2. Complete production off-site backup installation and a timed isolated restore without
    exposing either the R2 credential or encryption key.
-3. Deploy and verify urgent-alert delivery to every active Platform Owner before enabling automated delivery;
-   keep forms and confirmations disabled until all R-009 gates are complete.
+3. Keep forms and confirmations disabled until all R-009 gates are complete; maintain
+   the active urgent-alert owner resolver and quota controls.
 4. Obtain final owner/legal approval for privacy, cookie, consent, terms, and deletion
    text before customer launch claims.
 5. Complete OpenAI cost/quality benchmarking and the missing production job-material path
@@ -324,7 +325,7 @@ Never weaken these to make a feature work:
 - final commercial approval of subscription prices, setup/bespoke fees, overages,
   cancellation, and collection rules;
 - final legal/policy text and consent language;
-- multi-owner urgent-alert deployment proof; contact/form recipient, consent, and Turnstile approvals;
+- contact/form recipient, consent, and Turnstile approvals;
 - authorization to install backup credentials/key material and enable the production
   backup schedule;
 - explicit authorization to enable paid OpenAI calls after technical gates pass;

@@ -53,5 +53,6 @@ delivered to the approved test recipient and recorded as sent without message co
 Every active Platform Owner ORAP account is an approved urgent-alert recipient. Resolve
 the list at delivery time through a worker-only database function that requires active
 user, ORAP staff, and legacy owner state. Send one provider request for the deduplicated
-list and reserve quota by recipient count. Automated urgent delivery remains off until
-this routing is deployed and a multi-owner delivery test passes.
+list and reserve quota by recipient count. This routing was deployed on 2026-10-15; a
+two-owner production message was reported delivered before automated urgent delivery
+was activated.
