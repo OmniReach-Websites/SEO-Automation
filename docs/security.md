@@ -253,8 +253,10 @@ AND current resource belongs to resolved site
 - Authentication email delivery remains inactive until the approved sender domain,
   provider account, credentials, quotas, and explicit production activation are
   verified. Provider failure never falls back to password-only ORAP access.
-- Resend credentials do not imply activation. Authentication, contact/platform inquiry,
-  and urgent-alert delivery have independent explicit flags, all disabled by default.
+- Resend credentials do not imply activation. Authentication, customer contact,
+  platform inquiry, and urgent-alert delivery have independent explicit flags, all
+  disabled by default. The production Compose release explicitly enables only the
+  OmniReach platform inquiry after owner approval.
   Contact activation also fails startup unless both Turnstile keys are present.
 - Every enabled email channel passes through one atomic PostgreSQL monthly admission
   boundary. Application and worker roles can execute only the security-definer

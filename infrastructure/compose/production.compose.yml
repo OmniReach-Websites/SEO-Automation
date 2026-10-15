@@ -149,6 +149,9 @@ services:
   api:
     <<: *omnireach-runtime
     profiles: ['application']
+    environment:
+      PLATFORM_INQUIRY_ENABLED: 'true'
+      SOURCE_COMMIT_SHA: ${OMNIREACH_RELEASE_SHA}
     networks:
       backend:
       egress:

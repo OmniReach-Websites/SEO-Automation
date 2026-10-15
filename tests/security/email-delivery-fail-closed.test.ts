@@ -6,12 +6,14 @@ describe('email delivery activation boundaries', () => {
   it('never activates public inquiry delivery from credential presence alone', () => {
     const source = readFileSync('apps/api/src/main.ts', 'utf8');
     expect(source).toContain(
-      'const platformInquiryDeliveryEnabled = config.CONTACT_DELIVERY_ENABLED;',
+      'const platformInquiryDeliveryEnabled = config.PLATFORM_INQUIRY_ENABLED;',
     );
     expect(source).not.toContain(
       'const platformInquiryDeliveryEnabled = Boolean(config.RESEND_API_KEY)',
     );
     expect(source).toContain('deliveryEnabled: config.CONTACT_DELIVERY_ENABLED');
+    const productionCompose = readFileSync('infrastructure/compose/production.compose.yml', 'utf8');
+    expect(productionCompose).toContain("PLATFORM_INQUIRY_ENABLED: 'true'");
   });
 
   it('keeps email quota records free of recipients and message content', () => {

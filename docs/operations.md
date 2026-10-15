@@ -156,7 +156,8 @@ approved production set of 3 daily and 1 weekly recovery points.
 - Authentication delivery uses the selected sender `auth@updates.omnireach.cloud`.
   Authentication and urgent-alert delivery are active. Urgent recipients are every
   active Platform Owner ORAP account, dynamically resolved under the database policy
-  below. The contact flag remains disabled until its separate prerequisites are complete.
+  below. OmniReach's bounded public inquiry has its own production switch; customer-site
+  contact delivery remains disabled until each site's separate prerequisites are complete.
 - Contact submissions route only to a verified per-customer business address, reject
   attachments by default, use Cloudflare Turnstile, honeypots, and rate limits, and are
   retained for 30 days before audited automatic deletion unless a legal or security hold

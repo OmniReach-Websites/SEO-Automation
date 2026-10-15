@@ -227,7 +227,7 @@ const contactService = new PostgresContactService(tenantPool, contactDelivery, {
     : new MockTurnstileVerifier(config.OMNIREACH_ENV === 'local'),
   ...(config.TURNSTILE_SITE_KEY ? { turnstileSiteKey: config.TURNSTILE_SITE_KEY } : {}),
 });
-const platformInquiryDeliveryEnabled = config.CONTACT_DELIVERY_ENABLED;
+const platformInquiryDeliveryEnabled = config.PLATFORM_INQUIRY_ENABLED;
 const platformInquiryDelivery = platformInquiryDeliveryEnabled
   ? new ResendPlatformInquiryDelivery({
       apiKey: config.RESEND_API_KEY ?? '',

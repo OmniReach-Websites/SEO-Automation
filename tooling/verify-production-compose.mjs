@@ -163,10 +163,10 @@ try {
   );
 
   await cp(environmentExample, environmentFile);
-  const fixtureEnvironment = (await readFile(environmentFile, 'utf8')).replace(
+  const fixtureEnvironment = `${(await readFile(environmentFile, 'utf8')).replace(
     /^TRUSTED_PROXY_CIDRS=.*$/mu,
     'TRUSTED_PROXY_CIDRS=127.0.0.1/32',
-  );
+  )}\nRESEND_API_KEY=compose-verification-only\nTURNSTILE_SITE_KEY=compose-verification-site\nTURNSTILE_SECRET_KEY=compose-verification-secret\n`;
   await writeFile(environmentFile, fixtureEnvironment, { encoding: 'utf8', mode: 0o600 });
   const rendered = dockerCompose(['config', '--format', 'json'], { capture: true });
   const configuration = JSON.parse(rendered.stdout);
