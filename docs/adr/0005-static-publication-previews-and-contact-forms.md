@@ -25,8 +25,10 @@ Initial sites should remain online when control/worker/provider systems fail. Cu
 - R-009 selects Resend for production contact delivery from the
   `forms@updates.omnireach.cloud` sender to each site's verified business recipient.
   Submissions have a 30-day retention period and audited automatic deletion, subject to
-  legal/security holds and owner-approved consent wording. Sender/domain verification,
-  credentials, explicit activation, and legal consent approval remain gated.
+  legal/security holds and owner-approved consent wording. The shared Resend domain and
+  credential are verified; customer recipient verification, production Turnstile
+  configuration, explicit contact-channel activation, and legal consent approval remain
+  gated.
 
 ## Alternatives considered
 
