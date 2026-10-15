@@ -262,7 +262,7 @@ services:
 
   openai-benchmark:
     <<: *omnireach-runtime
-    profiles: ['application']
+    profiles: ['benchmark']
     command:
       ['node', '--experimental-transform-types', 'workers/runner/src/production-ai-benchmark.ts']
     environment:

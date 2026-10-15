@@ -10,6 +10,7 @@ describe('one-time OpenAI production benchmark', () => {
     expect(compose).toMatch(/openai-benchmark:[\s\S]*OPENAI_EVALUATION_CAP_USD_MICROS: '996623'/u);
     expect(compose).toMatch(/openai-benchmark:[\s\S]*OPENAI_MAX_OUTPUT_TOKENS: '200'/u);
     expect(compose).toMatch(/openai-benchmark:[\s\S]*OPENAI_PROVIDER_ENABLED: 'false'/u);
+    expect(compose).toMatch(/openai-benchmark:[\s\S]*profiles: \['benchmark'\]/u);
     expect(runner).toContain("OPENAI_PROVIDER_ENABLED !== 'false'");
     expect(runner).toContain('evaluationCapUsdMicros = 996_623');
   });

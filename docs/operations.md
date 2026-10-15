@@ -195,8 +195,12 @@ approved production set of 3 daily and 1 weekly recovery points.
 
   The initial configurable aliases are `content-review-balanced` → `gpt-6.1-sol` and
   `content-review-economy` → `gpt-6-luna`. The balanced alias is selected initially, but
-  `OPENAI_PROVIDER_ENABLED=false` remains the activation control until cost/quality tests
-  pass and paid calls are explicitly authorized.
+  `OPENAI_PROVIDER_ENABLED=false` remains the activation control. A bounded 2026-10-15
+  production benchmark verified model access and recorded a $0.002240 charge, but the
+  generated result failed deterministic proposal evaluation and was not persisted. The
+  provider stays disabled until a representative safety/quality test passes and ongoing
+  calls are explicitly authorized. The benchmark runner is available only through the
+  manual Compose `benchmark` profile.
 
 - Google OAuth is configured and the owner reported completing the intended Search
   Console and GA4 connections on 2026-10-13. A successful connection enables one
