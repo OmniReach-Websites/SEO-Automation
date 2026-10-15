@@ -266,90 +266,46 @@ const server = buildApiServer({
       tenantPool,
       { actorId: '00000000-0000-4000-8000-000000000000' },
       async (client) => {
-        const [result, diagnostics] = (await Promise.all([
-          client.query(
-            `SELECT passed, safe_result, created_at
+        const result = (await client.query(
+          `SELECT passed, safe_result, created_at
              FROM ai_evaluation_results
             WHERE fixture_id = 'production-openai-live-v1'
             ORDER BY created_at DESC LIMIT 1`,
-          ),
-          client.query(
-            `WITH latest_feature AS (
-               SELECT key, version, overrideable, safe_default
-                 FROM feature_definitions
-                WHERE key = 'content.edit'
-                ORDER BY version DESC LIMIT 1
-             ), site_policy AS (
-               SELECT site.id, site.tenant_id,
-                      COALESCE(control.editing_frozen, false) AS editing_frozen,
-                      sub.status AS subscription_status,
-                      sub.grace_ends_at,
-                      COALESCE(
-                        CASE WHEN feature.overrideable THEN site_override.enabled END,
-                        plan.enabled,
-                        feature.safe_default,
-                        false
-                      ) AS feature_enabled
-                 FROM sites site
-                 LEFT JOIN subscriptions sub
-                   ON sub.tenant_id = site.tenant_id AND sub.site_id = site.id
-                 LEFT JOIN site_emergency_controls control
-                   ON control.tenant_id = site.tenant_id AND control.site_id = site.id
-                 LEFT JOIN latest_feature feature ON true
-                 LEFT JOIN site_feature_overrides site_override
-                   ON site_override.tenant_id = site.tenant_id
-                  AND site_override.site_id = site.id
-                  AND site_override.feature_key = feature.key
-                  AND site_override.feature_version = feature.version
-                 LEFT JOIN plan_features plan
-                   ON plan.plan_id = sub.plan_id AND plan.feature_key = feature.key
-                  AND plan.feature_version = feature.version
-                WHERE site.status = 'active'
-             )
-             SELECT
-               count(*)::integer AS active_site_count,
-               count(*) FILTER (
-                 WHERE NOT editing_frozen AND feature_enabled
-                   AND (subscription_status = 'active'
-                     OR (subscription_status IN ('past_due', 'cancelled')
-                       AND grace_ends_at >= now()))
-               )::integer AS content_edit_allowed_site_count,
-               (SELECT count(*)::integer FROM content_fields field
-                 JOIN site_policy policy
-                   ON policy.tenant_id = field.tenant_id AND policy.id = field.site_id
-                WHERE NOT field.protected AND field.ai_mode <> 'disabled'
-                  AND field.field_type IN ('text', 'richText'))
-                 AS eligible_field_metadata_count,
-               (SELECT count(DISTINCT (revision.tenant_id, revision.site_id))::integer
-                  FROM content_revisions revision
-                  JOIN site_policy policy
-                    ON policy.tenant_id = revision.tenant_id AND policy.id = revision.site_id)
-                 AS site_with_revision_count
-             FROM site_policy`,
-          ),
-        ])) as [
-          { rows: { created_at: Date; passed: boolean; safe_result: unknown }[] },
-          {
-            rows: {
-              active_site_count: number;
-              content_edit_allowed_site_count: number;
-              eligible_field_metadata_count: number;
-              site_with_revision_count: number;
-            }[];
-          },
-        ];
+        )) as { rows: { created_at: Date; passed: boolean; safe_result: unknown }[] };
+        const activeSites = await benchmarkCount(
+          client,
+          `SELECT count(*)::integer AS value FROM sites WHERE status = 'active'`,
+        );
+        const activeSubscriptions = await benchmarkCount(
+          client,
+          `SELECT count(*)::integer AS value
+             FROM subscriptions subscription
+             JOIN sites site
+               ON site.tenant_id = subscription.tenant_id AND site.id = subscription.site_id
+            WHERE site.status = 'active' AND subscription.status = 'active'`,
+        );
+        const eligibleFields = await benchmarkCount(
+          client,
+          `SELECT count(*)::integer AS value
+             FROM content_fields field
+             JOIN sites site ON site.tenant_id = field.tenant_id AND site.id = field.site_id
+            WHERE site.status = 'active' AND NOT field.protected
+              AND field.ai_mode <> 'disabled' AND field.field_type IN ('text', 'richText')`,
+        );
+        const sitesWithRevisions = await benchmarkCount(
+          client,
+          `SELECT count(DISTINCT revision.site_id)::integer AS value
+             FROM content_revisions revision
+             JOIN sites site
+               ON site.tenant_id = revision.tenant_id AND site.id = revision.site_id
+            WHERE site.status = 'active'`,
+        );
         const row = result.rows[0];
-        const preflight = diagnostics.rows[0] ?? {
-          active_site_count: 0,
-          content_edit_allowed_site_count: 0,
-          eligible_field_metadata_count: 0,
-          site_with_revision_count: 0,
-        };
         const safePreflight = {
-          activeSiteCount: preflight.active_site_count,
-          contentEditAllowedSiteCount: preflight.content_edit_allowed_site_count,
-          eligibleFieldMetadataCount: preflight.eligible_field_metadata_count,
-          siteWithRevisionCount: preflight.site_with_revision_count,
+          activeSiteCount: activeSites,
+          activeSubscriptionCount: activeSubscriptions,
+          eligibleFieldMetadataCount: eligibleFields,
+          siteWithRevisionCount: sitesWithRevisions,
         };
         if (!row) return { preflight: safePreflight, state: 'missing' };
         return {
@@ -395,6 +351,14 @@ function sanitizeBenchmarkResult(value: unknown): Record<string, boolean | numbe
         : [];
     }),
   );
+}
+
+async function benchmarkCount(
+  client: { query(query: string): Promise<unknown> },
+  queryText: string,
+): Promise<number> {
+  const result = (await client.query(queryText)) as { rows: { value: number }[] };
+  return Number(result.rows[0]?.value ?? 0);
 }
 
 async function shutdown(signal: string): Promise<void> {
