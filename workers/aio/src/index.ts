@@ -21,6 +21,7 @@ export {
 
 export async function generateFieldProposal(options: {
   readonly budget: AiBudgetLedger;
+  readonly budgetCapUsdMicros?: number;
   readonly input: ProposalInput;
   readonly mode: EffectiveAiMode;
   readonly maxOutputTokens?: number;
@@ -29,6 +30,7 @@ export async function generateFieldProposal(options: {
   readonly provider: ProposalProvider;
   readonly providerEnabled: boolean;
   readonly protectedFacts: readonly string[];
+  readonly platformBudgetCapUsdMicros?: number;
   readonly reviewCycles: AiReviewCycleQuota;
   readonly siteId: string;
   readonly tenantId: string;
@@ -70,8 +72,14 @@ export async function generateFieldProposal(options: {
   try {
     budgetReservation = await options.budget.reserve({
       amountUsdMicros: estimate,
+      ...(options.budgetCapUsdMicros !== undefined
+        ? { capUsdMicros: options.budgetCapUsdMicros }
+        : {}),
       expiresAt: new Date(options.now.getTime() + 10 * 60_000),
       now: options.now,
+      ...(options.platformBudgetCapUsdMicros !== undefined
+        ? { platformCapUsdMicros: options.platformBudgetCapUsdMicros }
+        : {}),
       siteId: options.siteId,
       tenantId: options.tenantId,
     });

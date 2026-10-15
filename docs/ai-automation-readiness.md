@@ -21,6 +21,22 @@ proposal-result linkage, and a synthetic deterministic safety benchmark. The req
 route returns `503 ai_provider_disabled` and performs no database/provider work while
 `OPENAI_PROVIDER_ENABLED=false`, which remains the production default.
 
+The owner authorized a one-time production benchmark costing no more than $1 USD on
+2026-10-15. Migration `20261015183000_ai_runtime_reservation_caps` adds atomic optional
+request-scoped site and platform ceilings to the same reservation transaction used by
+normal proposal generation. A benchmark process must set
+`OPENAI_EVALUATION_CAP_USD_MICROS=1000000`; both the site and platform month-to-date
+usage plus active reservations must remain within that ceiling before each provider
+request. This is deliberately conservative if unrelated usage already exists.
+
+The production credential was not present during the 2026-10-15 review, so no paid call
+was made and model availability was not claimed. `OPENAI_PROVIDER_ENABLED` remains
+`false` in the production environment. The controlled benchmark must run as a one-off
+worker invocation against an eligible non-protected field; it must record provider token
+usage and cost in the normal ledger, pass deterministic prompt-injection/protected-fact
+evaluation, persist only a review proposal or draft candidate, and then exit without
+changing the persistent provider gate.
+
 The dated price ledger records the official 2026-10-14 standard rates used only for
 budget reservation and reconciliation: `gpt-6.1-sol` at $2/M input and $10/M output
 tokens, and `gpt-6-luna` at $0.10/M input and $0.50/M output tokens. Sources:

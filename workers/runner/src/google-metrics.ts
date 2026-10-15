@@ -56,7 +56,8 @@ export async function runGoogleMetricsSync(
           AND credential.tenant_id = connection.tenant_id
           AND credential.site_id = connection.site_id
         WHERE connection.tenant_id = $1 AND connection.site_id = $2
-          AND connection.provider = 'google' AND connection.status = 'connected'
+          AND connection.provider = 'google'
+          AND connection.status IN ('connected', 'error', 'partial')
           AND connection.collection_stopped_at IS NULL AND credential.revoked_at IS NULL
         ORDER BY connection.property_kind, connection.id`,
       [envelope.tenantId, envelope.siteId],
@@ -145,11 +146,11 @@ async function persistMetrics(
            (tenant_id, site_id, connection_id, source, metric, dimensions,
             window_start, window_end, value, source_hash, ingested_at, expires_at)
          VALUES (
-           $1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9,
+           $1, $2, $3::uuid, $4, $5, $6::jsonb, $7, $8, $9,
            encode(
              digest(
                concat_ws(
-                 chr(31), $3::text, $4, $5, ($6::jsonb)::text,
+                 chr(31), $3::uuid::text, $4, $5, ($6::jsonb)::text,
                  extract(epoch FROM $7::timestamptz)::text,
                  extract(epoch FROM $8::timestamptz)::text
                ),

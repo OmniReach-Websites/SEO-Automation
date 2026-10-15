@@ -95,6 +95,37 @@ describe('Google metrics worker', () => {
     expect(client.release).toHaveBeenCalledOnce();
   });
 
+  it('retries recoverable error and partial connections without selecting expired credentials', async () => {
+    const queries: string[] = [];
+    const client = {
+      query: vi.fn(async (text: string) => {
+        queries.push(text);
+        if (text.includes('FROM integration_connections connection')) return { rows: [] };
+        return { rows: [] };
+      }),
+      release: vi.fn(),
+    };
+    await expect(
+      runGoogleMetricsSync(envelope, {
+        environment: {
+          GOOGLE_CLIENT_ID: 'fixture-client',
+          GOOGLE_CLIENT_SECRET: 'fixture-secret',
+          GOOGLE_INTEGRATION_ENABLED: 'true',
+          GOOGLE_TOKEN_ENCRYPTION_KEY: keyHex,
+        },
+        jobId: randomUUID(),
+        pool: { connect: vi.fn(async () => client) },
+        provider: {} as GoogleProviderClient,
+      }),
+    ).rejects.toMatchObject({ category: 'cancelled' });
+
+    const loadQuery = queries.find((text) => text.includes('FROM integration_connections'));
+    expect(loadQuery).toContain("connection.status IN ('connected', 'error', 'partial')");
+    expect(loadQuery).not.toContain(
+      "connection.status IN ('connected', 'error', 'partial', 'expired')",
+    );
+  });
+
   it('persists a bounded partial collection with durable diagnostics', async () => {
     const calls: { text: string; values?: unknown[] }[] = [];
     const client = {
@@ -168,6 +199,9 @@ describe('Google metrics worker', () => {
       expect.stringContaining('"dataset":"ga4_source_medium"'),
     );
     expect(statusUpdate?.values?.[6]).toBe('partial');
+    const insert = calls.find(({ text }) => text.includes('INSERT INTO metric_snapshots'));
+    expect(insert?.text).toContain('$3::uuid');
+    expect(insert?.text).toContain('$3::uuid::text');
   });
 
   it('continues remaining property backfills before surfacing one safe provider failure', async () => {

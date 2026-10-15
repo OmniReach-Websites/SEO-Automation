@@ -76,6 +76,33 @@ export interface OrapStaffRoleOption {
   slug: string;
 }
 
+export interface OrapPlanCatalogModel {
+  features: readonly {
+    description: string;
+    enabled: boolean | null;
+    key: string;
+    overrideable: boolean;
+    planId: string | null;
+    readiness: 'deployable' | 'planned' | 'tested';
+    version: number;
+  }[];
+  plans: readonly {
+    aiReviewCyclesPerMonth: number;
+    businessLocationLimit: number;
+    code: string;
+    commercialStatus: 'approved' | 'proposal';
+    currency: 'USD';
+    customerSeatLimit: number;
+    id: string;
+    monthlyPriceCents: number;
+    name: string;
+    pendingInvitationsCountAsSeats: boolean;
+    seoAuditIntervalHours: 24 | 168;
+    standardPageLimit: number;
+    version: number;
+  }[];
+}
+
 const platformOwnerAuthority: OrapStaffRoleOption = {
   description: 'Full owner authority, including internal staff and security administration.',
   name: 'Platform Owner',
@@ -84,7 +111,7 @@ const platformOwnerAuthority: OrapStaffRoleOption = {
 };
 
 export type OrapNavigationItem =
-  'analytics' | 'operations' | 'overview' | 'security' | 'sites' | 'staff';
+  'analytics' | 'operations' | 'overview' | 'plans' | 'security' | 'sites' | 'staff';
 
 export interface OrapOverviewModel {
   alerts: readonly { message: string; severity: string; state: string }[];
@@ -108,6 +135,7 @@ html,body{background:var(--canvas);color:var(--ink)}body{accent-color:var(--acce
 .auth-workspace{background:var(--canvas)}
 @media(max-width:900px){.auth-brand-panel{border-right:0;border-bottom:1px solid rgba(134,187,216,.2)}}
 @media(max-width:680px){th,td{white-space:normal;padding:.68rem .52rem}.site-table th:nth-child(2),.site-table td:nth-child(2){display:none}.table-action{white-space:normal}.table-action .button{padding:.48rem .55rem;font-size:.78rem}}
+.feature-list{display:grid;gap:.65rem;margin-top:.75rem}.feature-toggle{display:flex;align-items:center;justify-content:space-between;gap:1rem;border:1px solid rgba(134,187,216,.2);border-radius:.65rem;background:#0d2029;padding:.75rem .85rem}.feature-toggle span{display:grid;gap:.15rem}.feature-toggle small{color:var(--muted);font-weight:400}.feature-toggle input{flex:0 0 auto;width:auto}fieldset{border:1px solid rgba(134,187,216,.25);border-radius:.7rem;padding:1rem}legend{padding:0 .35rem;color:var(--ink);font-weight:720}
 `;
 
 export function renderOrapShell(input: {
@@ -137,6 +165,9 @@ export function renderOrapShell(input: {
   const analyticsLink = navigation.has('analytics')
     ? `<a href="/orap/analytics"${current('analytics')}>Analytics &amp; SEO</a>`
     : '';
+  const plansLink = navigation.has('plans')
+    ? `<a href="/orap/plans"${current('plans')}>Tier editor</a>`
+    : '';
   const operationsLink = navigation.has('operations')
     ? `<p class="nav-label">Operations</p><a href="/orap/operations"${current('operations')}>Jobs &amp; alerts</a>`
     : '';
@@ -155,7 +186,49 @@ export function renderOrapShell(input: {
         : navigation.has('operations')
           ? '/orap/operations'
           : '/security';
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><meta name="theme-color" content="#0b1820"><link rel="icon" type="image/png" href="/assets/omnireach-logo.png"><link rel="stylesheet" href="/assets/admin.css?v=orap-4"><title>${escapeHtml(input.title)} | OmniReach Administration</title></head><body><a class="skip-link" href="#main">Skip to content</a><div class="app-shell"><aside class="sidebar"><a class="brand" href="${home}"><img class="brand-mark" src="/assets/omnireach-logo.png" alt="" width="48" height="48"><span class="brand-copy"><strong>OmniReach</strong><small>Agency operations</small></span></a><nav class="nav" aria-label="Administration">${overviewLink}${siteLink}${analyticsLink}${operationsLink}${staffLink}${securityLink}</nav><div class="sidebar-footer"><form method="post" action="/auth/logout"><button class="link-button" type="submit">Sign out</button></form></div></aside><div class="workspace"><main class="content" id="main"><div class="page-head"><div>${input.eyebrow ? `<p class="eyebrow">${escapeHtml(input.eyebrow)}</p>` : ''}<h1>${escapeHtml(input.heading)}</h1></div>${input.actions ?? ''}</div>${notice}${input.content}</main></div></div></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><meta name="theme-color" content="#0b1820"><link rel="icon" type="image/png" href="/assets/omnireach-logo.png"><link rel="stylesheet" href="/assets/admin.css?v=orap-5"><title>${escapeHtml(input.title)} | OmniReach Administration</title></head><body><a class="skip-link" href="#main">Skip to content</a><div class="app-shell"><aside class="sidebar"><a class="brand" href="${home}"><img class="brand-mark" src="/assets/omnireach-logo.png" alt="" width="48" height="48"><span class="brand-copy"><strong>OmniReach</strong><small>Agency operations</small></span></a><nav class="nav" aria-label="Administration">${overviewLink}${siteLink}${analyticsLink}${plansLink}${operationsLink}${staffLink}${securityLink}</nav><div class="sidebar-footer"><form method="post" action="/auth/logout"><button class="link-button" type="submit">Sign out</button></form></div></aside><div class="workspace"><main class="content" id="main"><div class="page-head"><div>${input.eyebrow ? `<p class="eyebrow">${escapeHtml(input.eyebrow)}</p>` : ''}<h1>${escapeHtml(input.heading)}</h1></div>${input.actions ?? ''}</div>${notice}${input.content}</main></div></div></body></html>`;
+}
+
+export function renderOrapTierEditor(
+  model: OrapPlanCatalogModel,
+  navigation?: readonly OrapNavigationItem[],
+  selectedCode?: string,
+  notice?: { kind?: 'error' | 'success'; message: string },
+): string {
+  const selected = model.plans.find((plan) => plan.code === selectedCode) ?? model.plans[0];
+  if (!selected) {
+    return renderOrapShell({
+      content:
+        '<section class="panel"><p class="lede">No active subscription tiers are configured.</p></section>',
+      current: 'plans',
+      heading: 'Tier editor',
+      title: 'Tier editor',
+      ...(navigation ? { navigation } : {}),
+      ...(notice ? { notice } : {}),
+    });
+  }
+  const options = model.plans
+    .map(
+      (plan) =>
+        `<option value="${escapeHtml(plan.code)}"${plan.code === selected.code ? ' selected' : ''}>${escapeHtml(plan.name)} (${escapeHtml(plan.code)})</option>`,
+    )
+    .join('');
+  const features = model.features.filter((feature) => feature.planId === selected.id);
+  const featureFields = features
+    .map((feature) => {
+      const cannotApprove = feature.readiness !== 'deployable';
+      return `<label class="feature-toggle"><span><strong>${escapeHtml(feature.key)}</strong><small>${escapeHtml(feature.description)} · ${escapeHtml(feature.readiness)}${feature.overrideable ? '' : ' · not site-overrideable'}</small></span><input type="checkbox" name="features" value="${escapeHtml(`${feature.key}:${feature.version}`)}"${feature.enabled ? ' checked' : ''}${selected.commercialStatus === 'approved' && cannotApprove ? ' disabled' : ''}></label>`;
+    })
+    .join('');
+  return renderOrapShell({
+    content: `<section class="panel"><form method="get" action="/orap/plans"><div class="field"><label for="tier">Select tier</label><select id="tier" name="tier" onchange="this.form.submit()">${options}</select></div><noscript><button type="submit">Load tier</button></noscript></form></section><section class="panel"><h2>Edit ${escapeHtml(selected.name)}</h2><p class="help">Saving creates an immutable version ${selected.version + 1}. Existing subscriptions retain their assigned historical version until explicitly reassigned.</p><form method="post" action="/orap/plans/${encodeURIComponent(selected.code)}"><div class="field-grid"><div class="field"><label for="name">Display name</label><input id="name" name="name" value="${escapeHtml(selected.name)}" maxlength="160" required></div><div class="field"><label for="priceUsd">Monthly price (USD)</label><input id="priceUsd" name="priceUsd" type="number" min="0" max="100000" step="0.01" value="${(selected.monthlyPriceCents / 100).toFixed(2)}" required></div><div class="field"><label for="customerSeatLimit">Customer seats</label><input id="customerSeatLimit" name="customerSeatLimit" type="number" min="1" value="${selected.customerSeatLimit}" required></div><div class="field"><label for="standardPageLimit">Standard pages</label><input id="standardPageLimit" name="standardPageLimit" type="number" min="1" value="${selected.standardPageLimit}" required></div><div class="field"><label for="businessLocationLimit">Business locations</label><input id="businessLocationLimit" name="businessLocationLimit" type="number" min="1" value="${selected.businessLocationLimit}" required></div><div class="field"><label for="aiReviewCyclesPerMonth">AI review cycles/month</label><input id="aiReviewCyclesPerMonth" name="aiReviewCyclesPerMonth" type="number" min="0" value="${selected.aiReviewCyclesPerMonth}" required></div><div class="field"><label for="seoAuditIntervalHours">SEO audit frequency</label><select id="seoAuditIntervalHours" name="seoAuditIntervalHours"><option value="168"${selected.seoAuditIntervalHours === 168 ? ' selected' : ''}>Weekly</option><option value="24"${selected.seoAuditIntervalHours === 24 ? ' selected' : ''}>Daily</option></select></div><div class="field"><label for="commercialStatus">Commercial status</label><select id="commercialStatus" name="commercialStatus"><option value="approved"${selected.commercialStatus === 'approved' ? ' selected' : ''}>Approved</option><option value="proposal"${selected.commercialStatus === 'proposal' ? ' selected' : ''}>Proposal</option></select></div></div><fieldset><legend>Features</legend><p class="help">Approved tiers can enable deployable features only. Tested or planned features remain unavailable for sale until promoted through engineering review.</p><div class="feature-list">${featureFields || '<p class="help">No feature definitions are assigned.</p>'}</div></fieldset><label class="checkbox-label"><input type="checkbox" name="pendingInvitationsCountAsSeats" value="true"${selected.pendingInvitationsCountAsSeats ? ' checked' : ''}><span>Count pending invitations toward the seat limit</span></label><div class="field"><label for="reason">Change record</label><textarea id="reason" name="reason" minlength="3" maxlength="500" required>Update ${escapeHtml(selected.name)} commercial or entitlement configuration</textarea></div><button type="submit">Save new tier version</button></form></section>`,
+    current: 'plans',
+    eyebrow: 'Commercial controls',
+    heading: 'Tier editor',
+    title: 'Tier editor',
+    ...(navigation ? { navigation } : {}),
+    ...(notice ? { notice } : {}),
+  });
 }
 
 export function renderAuthPage(input: {

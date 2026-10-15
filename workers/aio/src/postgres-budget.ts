@@ -16,8 +16,10 @@ export class PostgresAiBudgetLedger implements AiBudgetLedger {
 
   reserve(input: {
     readonly amountUsdMicros: number;
+    readonly capUsdMicros?: number;
     readonly expiresAt: Date;
     readonly now: Date;
+    readonly platformCapUsdMicros?: number;
     readonly siteId: string;
     readonly tenantId: string;
   }): Promise<BudgetReservation> {
@@ -29,8 +31,15 @@ export class PostgresAiBudgetLedger implements AiBudgetLedger {
     return withWorkerTransaction(this.pool, { ...input, jobId }, async (client) => {
       const result = await query<{ id: string }>(
         client,
-        'SELECT reserve_ai_budget($1, $2, $3, $4) AS id',
-        [input.tenantId, input.siteId, input.amountUsdMicros, input.expiresAt],
+        'SELECT reserve_ai_budget($1, $2, $3, $4, $5, $6) AS id',
+        [
+          input.tenantId,
+          input.siteId,
+          input.amountUsdMicros,
+          input.expiresAt,
+          input.capUsdMicros ?? null,
+          input.platformCapUsdMicros ?? null,
+        ],
       );
       const id = result.rows[0]?.id;
       if (!id) throw new Error('AI budget reservation failed');

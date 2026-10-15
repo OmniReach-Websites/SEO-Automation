@@ -16,16 +16,20 @@ Users can belong to multiple tenants/sites, workers act asynchronously, and a te
 - Use fixed roles: Platform Owner, Platform Admin, Staff, Customer Owner, Customer Editor, Customer Viewer. Action grants are deny-by-default.
 - Customer Owners may publish. Customer Editors require an explicit site-scoped publish grant. Customer Viewers are read-only.
 - A tenant may own multiple sites; each website has exactly one subscription, independent effective entitlements/overrides, and a site AI budget.
-- The selected commercial proposal uses four versioned plans: STARTER, GROWTH, PRO, and
+- The approved commercial structure uses four versioned plans: STARTER, GROWTH, PRO, and
   ELITE. Each subscription belongs to one website and includes one primary website and
   one business location by default. Proposed monthly price, seats, standard-page quota,
   SEO-audit cadence, and AI content-review cycles are plan data, not hardcoded branches.
 - ORAP owns plan configuration and site-specific overrides. Nonoverrideable security,
   tenant isolation, protected-fact rules, and infrastructure safeguards are identical
   across plans. The 14-day nonpayment grace period remains.
-- The proposed values are STARTER ($500, 2 seats, 5 pages, weekly audits, 2 AI cycles),
+- The approved values are STARTER ($500, 2 seats, 5 pages, weekly audits, 2 AI cycles),
   GROWTH ($1,000, 5, 10, daily, 8), PRO ($1,500, 10, 20, daily, 16), and ELITE ($2,000,
-  20, 30, daily, 30). Prices are not final until commercial approval before launch.
+  20, 30, daily, 30). The owner approved the monthly prices on 2026-10-15. Setup is
+  quoted per customer, service is month-to-month, additional work may receive a separate
+  quote, email cancellation remains effective through the paid cycle, and initial
+  payment is in person or by check. Contract execution and legal terms remain launch
+  gates.
 - Contact forms remain unavailable for sale until implementation, security testing, and
   deployment complete. Expansion features excluded by R-011 are not plan entitlements;
   sampled AI-answer measurements, if retained for internal evaluation under D-022, are
