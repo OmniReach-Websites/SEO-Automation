@@ -7,11 +7,11 @@ const compose = readFileSync('infrastructure/compose/production.compose.yml', 'u
 
 describe('one-time OpenAI production benchmark', () => {
   it('keeps the persistent provider gate disabled and caps the isolated process at one dollar', () => {
-    expect(compose).toMatch(/openai-benchmark:[\s\S]*OPENAI_EVALUATION_CAP_USD_MICROS: '1000000'/u);
+    expect(compose).toMatch(/openai-benchmark:[\s\S]*OPENAI_EVALUATION_CAP_USD_MICROS: '996623'/u);
     expect(compose).toMatch(/openai-benchmark:[\s\S]*OPENAI_MAX_OUTPUT_TOKENS: '200'/u);
     expect(compose).toMatch(/openai-benchmark:[\s\S]*OPENAI_PROVIDER_ENABLED: 'false'/u);
     expect(runner).toContain("OPENAI_PROVIDER_ENABLED !== 'false'");
-    expect(runner).toContain('evaluationCapUsdMicros = 1_000_000');
+    expect(runner).toContain('evaluationCapUsdMicros = 996_623');
   });
 
   it('admits only one provider attempt and never applies or publishes the proposal', () => {
@@ -20,7 +20,7 @@ describe('one-time OpenAI production benchmark', () => {
       'ON CONFLICT (fixture_id, model_alias, prompt_version, schema_version) DO NOTHING',
     );
     expect(runner).toContain('attemptLimit: 1');
-    expect(runner).toContain('const benchmarkPromptVersion = 9');
+    expect(runner).toContain('const benchmarkPromptVersion = 10');
     expect(runner).toContain('OPENAI_PROMPT_VERSION: String(benchmarkPromptVersion)');
     expect(runner).toContain('idempotencyKey: `${fixtureId}:prompt:${benchmarkPromptVersion}`');
     expect(runner).toContain('reviewCycles: new MemoryAiReviewCycleQuota(1)');

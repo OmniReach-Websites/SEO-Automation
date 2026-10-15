@@ -84,6 +84,16 @@ export async function generateFieldProposal(options: {
       tenantId: options.tenantId,
     });
     const result = await options.provider.generate(options.input);
+    const actual = Math.ceil(
+      (result.usage.inputTokens * options.modelPrice.inputUsdMicrosPerMillion +
+        result.usage.outputTokens * options.modelPrice.outputUsdMicrosPerMillion) /
+        1_000_000,
+    );
+    // Provider usage is incurred before local safety evaluation. Reconcile it
+    // immediately so rejected proposals remain billed and auditable even though
+    // they are never staged or applied.
+    await options.budget.reconcile(budgetReservation, actual, options.modelPrice.version);
+    budgetFinalized = true;
     const evaluation = evaluateProposal({
       proposal: result.output,
       protectedFacts: options.protectedFacts,
@@ -96,13 +106,6 @@ export async function generateFieldProposal(options: {
       facts: options.protectedFacts,
       mode: options.mode,
     });
-    const actual = Math.ceil(
-      (result.usage.inputTokens * options.modelPrice.inputUsdMicrosPerMillion +
-        result.usage.outputTokens * options.modelPrice.outputUsdMicrosPerMillion) /
-        1_000_000,
-    );
-    await options.budget.reconcile(budgetReservation, actual, options.modelPrice.version);
-    budgetFinalized = true;
     await options.reviewCycles.consume(reviewCycle);
     return {
       action: options.mode === 'AUTO' ? 'draft_candidate' : 'review',

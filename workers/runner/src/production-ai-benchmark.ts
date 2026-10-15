@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import { createDatabase } from '@omnireach/database';
 import { PostgresAiProposalRequestRepository } from '@omnireach/content';
-import { createJobEnvelope, type JobEnvelope } from '@omnireach/queue';
+import { createJobEnvelope, JobExecutionError, type JobEnvelope } from '@omnireach/queue';
 import {
   SitePolicyDeniedError,
   MemoryAiReviewCycleQuota,
@@ -15,8 +15,11 @@ import { runAiProposal } from './job-handlers.ts';
 
 const fixtureId = 'production-openai-live-v1';
 const authorization = 'owner-approved-2026-10-15';
-const evaluationCapUsdMicros = 1_000_000;
-const benchmarkPromptVersion = 9;
+// The first provider-reaching attempt reserved at most 3,377 micros before a
+// safety-path failure exposed missing failed-call accounting. Conservatively
+// subtract that full reservation from the owner's one-dollar total authorization.
+const evaluationCapUsdMicros = 996_623;
+const benchmarkPromptVersion = 10;
 
 interface Candidate {
   actorId: string;
@@ -529,6 +532,14 @@ function safeFailureCode(error: unknown): string {
   ]);
   const permissionTarget = safePermissionTarget(error);
   if (permissionTarget) return `benchmark_runtime_permission_denied_${permissionTarget}`;
+  if (error instanceof JobExecutionError) {
+    const jobFailures = new Map([
+      ['AI proposal failed deterministic evaluation', 'benchmark_proposal_evaluation_failed'],
+      ['OpenAI request failed transiently', 'benchmark_provider_transient_failure'],
+      ['OpenAI request was rejected', 'benchmark_provider_rejected'],
+    ]);
+    return jobFailures.get(error.message) ?? `benchmark_job_${error.category}_failure`;
+  }
   return allowed.has(message) || /^benchmark_material_permission_denied_[a-z_]+$/u.test(message)
     ? message
     : 'benchmark_execution_failed';

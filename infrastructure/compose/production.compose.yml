@@ -267,7 +267,7 @@ services:
       ['node', '--experimental-transform-types', 'workers/runner/src/production-ai-benchmark.ts']
     environment:
       OPENAI_BENCHMARK_AUTHORIZATION: owner-approved-2026-10-15
-      OPENAI_EVALUATION_CAP_USD_MICROS: '1000000'
+      OPENAI_EVALUATION_CAP_USD_MICROS: '996623'
       OPENAI_MAX_OUTPUT_TOKENS: '200'
       OPENAI_PROVIDER_ENABLED: 'false'
       SOURCE_COMMIT_SHA: ${OMNIREACH_RELEASE_SHA}
