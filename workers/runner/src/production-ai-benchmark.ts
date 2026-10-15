@@ -4,7 +4,7 @@ import { createDatabase } from '@omnireach/database';
 import { PostgresAiProposalRequestRepository } from '@omnireach/content';
 import { createJobEnvelope, type JobEnvelope } from '@omnireach/queue';
 import {
-  assertSiteFeatureEnabled,
+  SitePolicyDeniedError,
   withTenantTransaction,
   type TenantTransactionClient,
   type TenantTransactionPool,
@@ -15,7 +15,7 @@ import { runAiProposal } from './job-handlers.ts';
 const fixtureId = 'production-openai-live-v1';
 const authorization = 'owner-approved-2026-10-15';
 const evaluationCapUsdMicros = 1_000_000;
-const benchmarkPromptVersion = 2;
+const benchmarkPromptVersion = 3;
 
 interface Candidate {
   actorId: string;
@@ -87,6 +87,8 @@ function assertBenchmarkEnvironment(source: NodeJS.ProcessEnv): void {
 async function prepareBenchmark(pool: TenantTransactionPool): Promise<PreparedBenchmark> {
   const actorId = await platformOwnerId(pool);
   const sites = await activeSites(pool);
+  let admissionFailure = false;
+  let policyDenied = false;
   for (const site of sites) {
     const candidate = await eligibleField(pool, { ...site, actorId });
     if (!candidate) continue;
@@ -124,10 +126,14 @@ async function prepareBenchmark(pool: TenantTransactionPool): Promise<PreparedBe
         siteId: site.siteId,
         tenantId: site.tenantId,
       };
-    } catch {
+    } catch (error) {
+      if (error instanceof SitePolicyDeniedError) policyDenied = true;
+      else admissionFailure = true;
       // Try the next active site. No provider request has occurred at this point.
     }
   }
+  if (policyDenied) throw new Error('benchmark_field_policy_denied');
+  if (admissionFailure) throw new Error('benchmark_material_admission_failed');
   throw new Error('no_eligible_benchmark_field');
 }
 
@@ -297,7 +303,6 @@ async function eligibleField(
     pool,
     { siteId: context.siteId, tenantId: context.tenantId, userId: context.actorId },
     async (client) => {
-      await assertSiteFeatureEnabled(client, context, 'content.edit');
       const result = await query<{ stable_id: string }>(
         client,
         `WITH base AS (
@@ -361,7 +366,7 @@ async function eligibleField(
           }
         : undefined;
     },
-  ).catch(() => undefined);
+  );
 }
 
 async function proposalResult(
@@ -493,7 +498,9 @@ function safeFailureCode(error: unknown): string {
     'active_platform_owner_missing',
     'benchmark_authorization_missing',
     'benchmark_cap_invalid',
+    'benchmark_field_policy_denied',
     'benchmark_job_not_admitted',
+    'benchmark_material_admission_failed',
     'benchmark_model_alias_invalid',
     'benchmark_output_limit_invalid',
     'benchmark_proposal_not_persisted',
