@@ -434,7 +434,12 @@ try {
       `import pg from 'pg';
        import { EmailDeliveryQuotaExceededError, PostgresEmailDeliveryQuota } from './packages/database/src/index.ts';
        const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
-       const quota = new PostgresEmailDeliveryQuota(pool);
+       const quota = new PostgresEmailDeliveryQuota(pool, 'omnireach_app', {
+         read: async () => ({
+           daily: { limit: 100, resetsAt: '2099-01-02T00:00:00.000Z', used: 0 },
+           monthly: { limit: 3000, resetsAt: '2099-02-01T00:00:00.000Z', used: 0 },
+         }),
+       });
        const first = await quota.reserve('contact');
        await quota.finalize(first, { providerReference: 'fixture-provider-reference', state: 'sent' });
        const second = await quota.reserve('authentication');
