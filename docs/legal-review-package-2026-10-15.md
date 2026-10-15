@@ -9,14 +9,14 @@ committed.
 
 ## Reviewed public versions
 
-| Public artifact               | Repository source                                                                                         | Version reviewed     | Status                                          |
-| ----------------------------- | --------------------------------------------------------------------------------------------------------- | -------------------- | ----------------------------------------------- |
-| Terms of Service              | `sites/omnireach/src/pages/tos.astro`                                                                     | effective 2026-10-13 | Published; public-website terms only            |
-| Privacy Policy                | `sites/omnireach/src/pages/privacy.astro`                                                                 | effective 2026-10-12 | Published; incomplete against current providers |
-| Cookie choice                 | `sites/omnireach/src/components/AnalyticsConsent.astro` and `sites/omnireach/public/analytics-consent.js` | current commit       | Published; consent-mode implementation present  |
-| Data deletion                 | no public page                                                                                            | none                 | Missing                                         |
-| Public inquiry consent        | `sites/omnireach/src/components/ContactForm.astro`                                                        | current commit       | Form is production-disabled                     |
-| Customer contact-form consent | site-specific integration contracts                                                                       | none approved        | Forms must remain disabled                      |
+| Public artifact               | Repository source                                                                                         | Version reviewed     | Status                                            |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------- | -------------------- | ------------------------------------------------- |
+| Terms of Service              | `sites/omnireach/src/pages/tos.astro`                                                                     | effective 2026-10-13 | Published; public-website terms only              |
+| Privacy Policy                | `sites/omnireach/src/pages/privacy.astro`                                                                 | effective 2026-10-12 | Published; incomplete against current providers   |
+| Cookie choice                 | `sites/omnireach/src/components/AnalyticsConsent.astro` and `sites/omnireach/public/analytics-consent.js` | current commit       | Published; consent-mode implementation present    |
+| Data deletion                 | no public page                                                                                            | none                 | Missing                                           |
+| Public inquiry consent        | `sites/omnireach/src/components/ContactForm.astro`                                                        | current commit       | Activation approved; wording not legally approved |
+| Customer contact-form consent | site-specific integration contracts                                                                       | none approved        | Forms must remain disabled                        |
 
 ## Behavior verified from code and production configuration
 
@@ -24,9 +24,9 @@ committed.
   denied. A visitor choice is stored locally; accepting enables Analytics and declining
   attempts to remove first-party `_ga` cookies.
 - The OmniReach inquiry component uses exact-origin checks, a honeypot, rate limiting,
-  a consent checkbox, and Cloudflare Turnstile when activated. Production inquiry and
-  customer-form delivery are currently disabled. Turnstile keys were not present in the
-  production environment during this review.
+  a consent checkbox, and Cloudflare Turnstile. The owner approved production activation
+  on 2026-10-15 after reporting the Turnstile keys installed. Customer-form delivery
+  remains disabled behind its independent activation gate.
 - When platform inquiries are activated, Resend sends one message to the active Platform
   Owner recipient list. The application does not persist the inquiry body in its own
   database, but provider and recipient mailboxes may retain it.
@@ -43,9 +43,9 @@ committed.
 
 ## Material gaps and inconsistencies
 
-1. The Privacy Policy describes an available inquiry form even though the production
-   channel is disabled. It should describe what happens _when enabled_ and must not imply
-   a successful submission when delivery is unavailable.
+1. The Privacy Policy describes the now-approved inquiry channel but does not specify a
+   precise mailbox/provider retention period. It must not imply a successful submission
+   when delivery is unavailable.
 2. Provider disclosures are incomplete. Google Analytics is named, but Cloudflare,
    Resend, Google OAuth reporting, the hosting provider, encrypted backup storage, and a
    future activated OpenAI processor need purpose-specific treatment.

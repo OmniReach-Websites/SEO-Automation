@@ -76,6 +76,10 @@ const configSchema = z
       .enum(['true', 'false'])
       .default('false')
       .transform((value) => value === 'true'),
+    PLATFORM_INQUIRY_ENABLED: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((value) => value === 'true'),
     AUTH_EMAIL_DELIVERY_ENABLED: z
       .enum(['true', 'false'])
       .default('false')
@@ -220,22 +224,24 @@ const configSchema = z
         path: ['OPENAI_MODEL_SELECTION'],
       });
     }
-    if (config.CONTACT_DELIVERY_ENABLED && !config.RESEND_API_KEY) {
+    const publicContactDeliveryEnabled =
+      config.CONTACT_DELIVERY_ENABLED || config.PLATFORM_INQUIRY_ENABLED;
+    if (publicContactDeliveryEnabled && !config.RESEND_API_KEY) {
       context.addIssue({
         code: 'custom',
-        message: 'Resend API key is required when contact delivery is enabled',
+        message: 'Resend API key is required when public contact delivery is enabled',
         path: ['RESEND_API_KEY'],
       });
     }
     if (
-      config.CONTACT_DELIVERY_ENABLED &&
+      publicContactDeliveryEnabled &&
       (!config.TURNSTILE_SECRET_KEY || !config.TURNSTILE_SITE_KEY)
     ) {
       for (const path of ['TURNSTILE_SECRET_KEY', 'TURNSTILE_SITE_KEY'] as const) {
         if (!config[path]) {
           context.addIssue({
             code: 'custom',
-            message: 'Turnstile keys are required when contact delivery is enabled',
+            message: 'Turnstile keys are required when public contact delivery is enabled',
             path: [path],
           });
         }

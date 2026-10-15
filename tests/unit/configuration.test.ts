@@ -90,11 +90,15 @@ describe('configuration and logging safety', () => {
   it('keeps contact delivery disabled by default and requires complete provider keys', () => {
     const defaults = parseConfig(validConfig);
     expect(defaults.CONTACT_DELIVERY_ENABLED).toBe(false);
+    expect(defaults.PLATFORM_INQUIRY_ENABLED).toBe(false);
     expect(defaults.AUTH_EMAIL_DELIVERY_ENABLED).toBe(false);
     expect(defaults.ALERT_EMAIL_DELIVERY_ENABLED).toBe(false);
     expect(defaults.OPENAI_PROVIDER_ENABLED).toBe(false);
     expect(defaults.TRUSTED_PROXY_CIDRS).toEqual([]);
     expect(() => parseConfig({ ...validConfig, CONTACT_DELIVERY_ENABLED: 'true' })).toThrow(
+      'RESEND_API_KEY',
+    );
+    expect(() => parseConfig({ ...validConfig, PLATFORM_INQUIRY_ENABLED: 'true' })).toThrow(
       'RESEND_API_KEY',
     );
     expect(() =>
@@ -115,6 +119,15 @@ describe('configuration and logging safety', () => {
       TURNSTILE_SITE_KEY: 'fictional-public-key',
     });
     expect(redactConfig(config).RESEND_API_KEY).toBe('[REDACTED]');
+    expect(
+      parseConfig({
+        ...validConfig,
+        PLATFORM_INQUIRY_ENABLED: 'true',
+        RESEND_API_KEY: 'fictional-key',
+        TURNSTILE_SECRET_KEY: 'fictional-secret',
+        TURNSTILE_SITE_KEY: 'fictional-public-key',
+      }).PLATFORM_INQUIRY_ENABLED,
+    ).toBe(true);
     expect(() => parseConfig({ ...validConfig, AUTH_EMAIL_DELIVERY_ENABLED: 'true' })).toThrow(
       'RESEND_AUTH_FROM',
     );
