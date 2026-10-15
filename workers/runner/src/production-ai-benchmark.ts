@@ -15,7 +15,7 @@ import { runAiProposal } from './job-handlers.ts';
 const fixtureId = 'production-openai-live-v1';
 const authorization = 'owner-approved-2026-10-15';
 const evaluationCapUsdMicros = 1_000_000;
-const benchmarkPromptVersion = 5;
+const benchmarkPromptVersion = 6;
 
 interface Candidate {
   actorId: string;
