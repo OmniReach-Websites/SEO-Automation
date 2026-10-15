@@ -15,7 +15,7 @@ import { runAiProposal } from './job-handlers.ts';
 const fixtureId = 'production-openai-live-v1';
 const authorization = 'owner-approved-2026-10-15';
 const evaluationCapUsdMicros = 1_000_000;
-const benchmarkPromptVersion = 3;
+const benchmarkPromptVersion = 4;
 
 interface Candidate {
   actorId: string;
@@ -87,7 +87,7 @@ function assertBenchmarkEnvironment(source: NodeJS.ProcessEnv): void {
 async function prepareBenchmark(pool: TenantTransactionPool): Promise<PreparedBenchmark> {
   const actorId = await platformOwnerId(pool);
   const sites = await activeSites(pool);
-  let admissionFailure = false;
+  let admissionFailureCode: string | undefined;
   let policyDenied = false;
   for (const site of sites) {
     const candidate = await eligibleField(pool, { ...site, actorId });
@@ -128,12 +128,12 @@ async function prepareBenchmark(pool: TenantTransactionPool): Promise<PreparedBe
       };
     } catch (error) {
       if (error instanceof SitePolicyDeniedError) policyDenied = true;
-      else admissionFailure = true;
+      else admissionFailureCode ??= safeAdmissionFailureCode(error);
       // Try the next active site. No provider request has occurred at this point.
     }
   }
   if (policyDenied) throw new Error('benchmark_field_policy_denied');
-  if (admissionFailure) throw new Error('benchmark_material_admission_failed');
+  if (admissionFailureCode) throw new Error(admissionFailureCode);
   throw new Error('no_eligible_benchmark_field');
 }
 
@@ -501,6 +501,13 @@ function safeFailureCode(error: unknown): string {
     'benchmark_field_policy_denied',
     'benchmark_job_not_admitted',
     'benchmark_material_admission_failed',
+    'benchmark_material_check_failed',
+    'benchmark_material_foreign_key_failed',
+    'benchmark_material_permission_denied',
+    'benchmark_material_unique_conflict',
+    'benchmark_request_idempotency_conflict',
+    'benchmark_request_invalid',
+    'benchmark_source_missing',
     'benchmark_model_alias_invalid',
     'benchmark_output_limit_invalid',
     'benchmark_proposal_not_persisted',
@@ -508,6 +515,29 @@ function safeFailureCode(error: unknown): string {
     'persistent_provider_gate_must_remain_disabled',
   ]);
   return allowed.has(message) ? message : 'benchmark_execution_failed';
+}
+
+function safeAdmissionFailureCode(error: unknown): string {
+  if (error instanceof Error) {
+    const knownMessages = new Map([
+      ['Invalid AI proposal request', 'benchmark_request_invalid'],
+      ['AI proposal field or source revision was not found', 'benchmark_source_missing'],
+      ['AI proposal material admission failed', 'benchmark_material_admission_failed'],
+      [
+        'AI proposal idempotency key was reused for a different request',
+        'benchmark_request_idempotency_conflict',
+      ],
+    ]);
+    const classified = knownMessages.get(error.message);
+    if (classified) return classified;
+  }
+  const databaseCode =
+    error && typeof error === 'object' && 'code' in error ? String(error.code) : '';
+  if (databaseCode === '23505') return 'benchmark_material_unique_conflict';
+  if (databaseCode === '23503') return 'benchmark_material_foreign_key_failed';
+  if (databaseCode === '23514') return 'benchmark_material_check_failed';
+  if (databaseCode === '42501') return 'benchmark_material_permission_denied';
+  return 'benchmark_material_admission_failed';
 }
 
 function required(source: NodeJS.ProcessEnv, key: string): string {
