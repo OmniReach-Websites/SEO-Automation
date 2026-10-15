@@ -202,6 +202,9 @@ describe('Google metrics worker', () => {
     const insert = calls.find(({ text }) => text.includes('INSERT INTO metric_snapshots'));
     expect(insert?.text).toContain('$3::uuid');
     expect(insert?.text).toContain('$3::uuid::text');
+    expect(insert?.text).toContain('$4::varchar(40)');
+    expect(insert?.text).toContain('$5::varchar(100)');
+    expect(insert?.text).toContain('$9::numeric(20,6)');
   });
 
   it('continues remaining property backfills before surfacing one safe provider failure', async () => {

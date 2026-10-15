@@ -146,11 +146,13 @@ async function persistMetrics(
            (tenant_id, site_id, connection_id, source, metric, dimensions,
             window_start, window_end, value, source_hash, ingested_at, expires_at)
          VALUES (
-           $1, $2, $3::uuid, $4, $5, $6::jsonb, $7, $8, $9,
+           $1::uuid, $2::uuid, $3::uuid, $4::varchar(40), $5::varchar(100),
+           $6::jsonb, $7::timestamptz, $8::timestamptz, $9::numeric(20,6),
            encode(
              digest(
                concat_ws(
-                 chr(31), $3::uuid::text, $4, $5, ($6::jsonb)::text,
+                 chr(31), $3::uuid::text, $4::varchar(40)::text,
+                 $5::varchar(100)::text, ($6::jsonb)::text,
                  extract(epoch FROM $7::timestamptz)::text,
                  extract(epoch FROM $8::timestamptz)::text
                ),
@@ -158,7 +160,7 @@ async function persistMetrics(
              ),
              'hex'
            ),
-           $10, $11
+           $10::timestamptz, $11::timestamptz
          )
          ON CONFLICT (connection_id, source_hash) DO UPDATE
            SET value = EXCLUDED.value,
