@@ -140,7 +140,12 @@ export async function runAiProposal(
         ),
         modelAliases,
         modelSelection,
-        promptVersion: 1,
+        promptVersion: integerEnvironment(
+          context.environment.OPENAI_PROMPT_VERSION,
+          1,
+          1,
+          1_000_000,
+        ),
         timeoutMs: integerEnvironment(
           context.environment.OPENAI_TIMEOUT_MS,
           30_000,

@@ -15,6 +15,7 @@ import { runAiProposal } from './job-handlers.ts';
 const fixtureId = 'production-openai-live-v1';
 const authorization = 'owner-approved-2026-10-15';
 const evaluationCapUsdMicros = 1_000_000;
+const benchmarkPromptVersion = 2;
 
 interface Candidate {
   actorId: string;
@@ -42,13 +43,14 @@ try {
     writeResult({ event: 'openai_benchmark_skipped', ...existing });
     process.exitCode = existing.state === 'succeeded' ? 0 : 1;
   } else {
-    const prepared = await prepareBenchmark(pool);
-    const admitted = await admitSingleAttempt(pool, prepared);
+    const admitted = await admitSingleAttempt(pool);
     if (!admitted) {
       const result = await benchmarkResult(pool);
       writeResult({ event: 'openai_benchmark_skipped', ...(result ?? { state: 'in_doubt' }) });
       process.exitCode = result?.state === 'succeeded' ? 0 : 1;
     } else {
+      const prepared = await prepareBenchmark(pool);
+      await startBenchmarkJob(pool, prepared);
       await executeBenchmark(pool, prepared, environment);
     }
   }
@@ -138,6 +140,7 @@ async function executeBenchmark(
     ...source,
     OPENAI_EVALUATION_CAP_USD_MICROS: String(evaluationCapUsdMicros),
     OPENAI_MAX_OUTPUT_TOKENS: '200',
+    OPENAI_PROMPT_VERSION: String(benchmarkPromptVersion),
     OPENAI_PROVIDER_ENABLED: 'true',
   };
   try {
@@ -168,10 +171,7 @@ async function executeBenchmark(
   }
 }
 
-async function admitSingleAttempt(
-  pool: TenantTransactionPool,
-  prepared: PreparedBenchmark,
-): Promise<boolean> {
+async function admitSingleAttempt(pool: TenantTransactionPool): Promise<boolean> {
   const modelAlias = required(environment, 'OPENAI_MODEL_SELECTION');
   const client = await pool.connect();
   try {
@@ -180,16 +180,16 @@ async function admitSingleAttempt(
     const result = (await client.query(
       `INSERT INTO ai_evaluation_results
          (fixture_id, model_alias, prompt_version, schema_version, passed, safe_result)
-       VALUES ($1, $2, 1, 1, false, $3::jsonb)
+       VALUES ($1, $2, $3, 1, false, $4::jsonb)
        ON CONFLICT (fixture_id, model_alias, prompt_version, schema_version) DO NOTHING
        RETURNING id`,
       [
         fixtureId,
         modelAlias,
+        benchmarkPromptVersion,
         JSON.stringify({
           authorization,
           attemptLimit: 1,
-          materialId: prepared.materialId,
           state: 'running',
           startedAt: new Date().toISOString(),
         }),
@@ -200,20 +200,6 @@ async function admitSingleAttempt(
       return false;
     }
     await client.query('COMMIT');
-    await withTenantTransaction(
-      pool,
-      { siteId: prepared.siteId, tenantId: prepared.tenantId, userId: prepared.actorId },
-      async (tenantClient) => {
-        const updated = (await tenantClient.query(
-          `UPDATE jobs SET state = 'running', hold = true, updated_at = now()
-            WHERE tenant_id = $1 AND site_id = $2 AND id = $3
-              AND state IN ('queued', 'cancelled')
-            RETURNING id`,
-          [prepared.tenantId, prepared.siteId, prepared.jobId],
-        )) as { rows: { id: string }[] };
-        if (!updated.rows[0]) throw new Error('benchmark_job_not_admitted');
-      },
-    );
     return true;
   } catch (error) {
     await client.query('ROLLBACK').catch(() => undefined);
@@ -221,6 +207,33 @@ async function admitSingleAttempt(
   } finally {
     client.release();
   }
+}
+
+async function startBenchmarkJob(
+  pool: TenantTransactionPool,
+  prepared: PreparedBenchmark,
+): Promise<void> {
+  await updateBenchmark(pool, false, {
+    authorization,
+    attemptLimit: 1,
+    materialId: prepared.materialId,
+    state: 'running',
+    startedAt: new Date().toISOString(),
+  });
+  await withTenantTransaction(
+    pool,
+    { siteId: prepared.siteId, tenantId: prepared.tenantId, userId: prepared.actorId },
+    async (tenantClient) => {
+      const updated = (await tenantClient.query(
+        `UPDATE jobs SET state = 'running', hold = true, updated_at = now()
+          WHERE tenant_id = $1 AND site_id = $2 AND id = $3
+            AND state IN ('queued', 'cancelled')
+          RETURNING id`,
+        [prepared.tenantId, prepared.siteId, prepared.jobId],
+      )) as { rows: { id: string }[] };
+      if (!updated.rows[0]) throw new Error('benchmark_job_not_admitted');
+    },
+  );
 }
 
 async function platformOwnerId(pool: TenantTransactionPool): Promise<string> {
@@ -330,7 +343,7 @@ async function eligibleField(
                  AND proposal.policy_version = COALESCE(
                    (SELECT policy_version FROM site_emergency_controls
                      WHERE tenant_id = field.tenant_id AND site_id = field.site_id), 1)
-                 AND COALESCE(proposal.prompt_version, 0) = 1
+                 AND COALESCE(proposal.prompt_version, 0) = ${benchmarkPromptVersion}
                  AND proposal.state IN ('pending', 'approved')
             )
           ORDER BY CASE WHEN field.stable_id ~* '(description|intro|summary)' THEN 0 ELSE 1 END,
@@ -427,9 +440,9 @@ async function benchmarkResult(
     await client.query('SET LOCAL ROLE omnireach_platform');
     const result = (await client.query(
       `SELECT safe_result FROM ai_evaluation_results
-        WHERE fixture_id = $1 AND prompt_version = 1 AND schema_version = 1
+        WHERE fixture_id = $1 AND prompt_version = $2 AND schema_version = 1
         ORDER BY created_at DESC LIMIT 1`,
-      [fixtureId],
+      [fixtureId, benchmarkPromptVersion],
     )) as { rows: { safe_result: unknown }[] };
     await client.query('COMMIT');
     return isRecord(result.rows[0]?.safe_result) ? result.rows[0]?.safe_result : undefined;
@@ -453,8 +466,13 @@ async function updateBenchmark(
     await client.query(
       `UPDATE ai_evaluation_results
           SET passed = $2, safe_result = $3::jsonb
-        WHERE fixture_id = $1 AND prompt_version = 1 AND schema_version = 1`,
-      [fixtureId, passed, JSON.stringify({ ...safeResult, completedAt: new Date().toISOString() })],
+        WHERE fixture_id = $1 AND prompt_version = $4 AND schema_version = 1`,
+      [
+        fixtureId,
+        passed,
+        JSON.stringify({ ...safeResult, completedAt: new Date().toISOString() }),
+        benchmarkPromptVersion,
+      ],
     );
     await client.query('COMMIT');
   } catch (error) {
