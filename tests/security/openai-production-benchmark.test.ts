@@ -20,7 +20,7 @@ describe('one-time OpenAI production benchmark', () => {
       'ON CONFLICT (fixture_id, model_alias, prompt_version, schema_version) DO NOTHING',
     );
     expect(runner).toContain('attemptLimit: 1');
-    expect(runner).toContain('const benchmarkPromptVersion = 4');
+    expect(runner).toContain('const benchmarkPromptVersion = 5');
     expect(runner).toContain('OPENAI_PROMPT_VERSION: String(benchmarkPromptVersion)');
     expect(runner).toContain('liveContentChanged: false');
     expect(runner).not.toMatch(

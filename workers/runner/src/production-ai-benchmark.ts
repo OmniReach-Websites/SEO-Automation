@@ -15,7 +15,7 @@ import { runAiProposal } from './job-handlers.ts';
 const fixtureId = 'production-openai-live-v1';
 const authorization = 'owner-approved-2026-10-15';
 const evaluationCapUsdMicros = 1_000_000;
-const benchmarkPromptVersion = 4;
+const benchmarkPromptVersion = 5;
 
 interface Candidate {
   actorId: string;
@@ -514,7 +514,9 @@ function safeFailureCode(error: unknown): string {
     'no_eligible_benchmark_field',
     'persistent_provider_gate_must_remain_disabled',
   ]);
-  return allowed.has(message) ? message : 'benchmark_execution_failed';
+  return allowed.has(message) || /^benchmark_material_permission_denied_[a-z_]+$/u.test(message)
+    ? message
+    : 'benchmark_execution_failed';
 }
 
 function safeAdmissionFailureCode(error: unknown): string {
@@ -536,7 +538,34 @@ function safeAdmissionFailureCode(error: unknown): string {
   if (databaseCode === '23505') return 'benchmark_material_unique_conflict';
   if (databaseCode === '23503') return 'benchmark_material_foreign_key_failed';
   if (databaseCode === '23514') return 'benchmark_material_check_failed';
-  if (databaseCode === '42501') return 'benchmark_material_permission_denied';
+  if (databaseCode === '42501') {
+    const permittedTargets = new Set([
+      'ai_proposal_job_materials',
+      'audit_events',
+      'content_drafts',
+      'content_fields',
+      'content_revisions',
+      'feature_definitions',
+      'jobs',
+      'plan_features',
+      'site_emergency_controls',
+      'site_feature_overrides',
+      'sites',
+      'subscriptions',
+    ]);
+    const structuredTarget =
+      error && typeof error === 'object' && 'table' in error && typeof error.table === 'string'
+        ? error.table
+        : '';
+    const messageTarget =
+      error instanceof Error
+        ? /^permission denied for table ([a-z_]+)$/u.exec(error.message)?.[1]
+        : '';
+    const reportedTarget = structuredTarget || messageTarget || '';
+    return permittedTargets.has(reportedTarget)
+      ? `benchmark_material_permission_denied_${reportedTarget}`
+      : 'benchmark_material_permission_denied';
+  }
   return 'benchmark_material_admission_failed';
 }
 
