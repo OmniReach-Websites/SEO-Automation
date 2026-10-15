@@ -31,6 +31,8 @@ describe('email delivery activation boundaries', () => {
     expect(worker).toContain('new PostgresEmailDeliveryQuota');
     expect(worker).toContain('new ResendAccountUsageProvider({ apiKey })');
     expect(worker).toContain('new ResendUrgentEmailAdapter');
+    expect(worker).toContain('active_platform_owner_alert_recipients()');
+    expect(worker).not.toContain('ALERT_EMAIL_RECIPIENT');
   });
 
   it('requires account-wide daily and monthly usage before admitting a provider send', () => {
@@ -45,5 +47,21 @@ describe('email delivery activation boundaries', () => {
     expect(migration).toContain('GREATEST(sent_count, provider_used_count)');
     expect(migration).toContain("RAISE EXCEPTION 'email daily quota exhausted'");
     expect(migration).toContain("RAISE EXCEPTION 'email monthly quota exhausted'");
+  });
+
+  it('resolves only active owner identities through a worker-only database function', () => {
+    const migration = readFileSync(
+      'packages/database/prisma/migrations/20261015050000_owner_alert_recipients/migration.sql',
+      'utf8',
+    );
+    expect(migration).toContain("staff.identity_kind = 'platform_owner'");
+    expect(migration).toContain("staff.status = 'active'");
+    expect(migration).toContain("users.status = 'active'");
+    expect(migration).toContain("legacy.role = 'platform_owner'");
+    expect(migration).toContain('REVOKE ALL ON FUNCTION active_platform_owner_alert_recipients()');
+    expect(migration).toContain(
+      'GRANT EXECUTE ON FUNCTION active_platform_owner_alert_recipients() TO omnireach_worker',
+    );
+    expect(migration).toContain('sum(units)');
   });
 });

@@ -2,6 +2,7 @@ import {
   ResendAuthenticationNotifier,
   ResendUrgentEmailAdapter,
   ResendVerificationCodeNotifier,
+  type EmailDeliveryQuota,
 } from '@omnireach/integrations';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -159,12 +160,17 @@ describe('Resend authentication and alert adapters', () => {
     const sleep = vi.fn(async (milliseconds: number) => {
       void milliseconds;
     });
+    const quota: EmailDeliveryQuota = {
+      finalize: vi.fn(async () => undefined),
+      reserve: vi.fn(async () => ({ id: '90000000-0000-4000-8000-000000000005' })),
+    };
     const adapter = new ResendUrgentEmailAdapter({
       apiKey: 'fictional-resend-key',
       fetchImplementation,
       from: 'alerts@updates.omnireach.cloud',
       maxAttempts: 4,
-      recipient: 'owner@example.test',
+      quota,
+      recipients: ['second-owner@example.test', 'owner@example.test'],
       sleep,
     });
     await expect(
@@ -176,8 +182,10 @@ describe('Resend authentication and alert adapters', () => {
     ).resolves.toEqual({ providerReference: 'alert-message-a' });
     expect(fetchImplementation).toHaveBeenCalledTimes(3);
     expect(sleep.mock.calls.map(([milliseconds]) => milliseconds)).toEqual([250, 500]);
+    expect(quota.reserve).toHaveBeenCalledWith('alert', 2);
     expect(JSON.parse(String(fetchImplementation.mock.calls[0]?.[1]?.body))).toMatchObject({
       headers: { 'X-Entity-Ref-ID': 'fingerprint-a' },
+      to: ['owner@example.test', 'second-owner@example.test'],
     });
   });
 });

@@ -427,6 +427,14 @@ channel, lifecycle timestamps, a provider reference, and an allowlisted safe err
 code—never a recipient, subject, body, verification code, form payload, API key, or raw
 provider response.
 
+Urgent alerts resolve recipients at delivery time through a worker-only security-definer
+function. It returns the normalized addresses of accounts whose user, ORAP staff
+membership, and legacy platform membership all agree that the identity is an active
+Platform Owner. No static recipient environment variable is used. One provider request
+contains the deduplicated owner list, and quota admission reserves one unit for each
+recipient before that request is sent. Recipient addresses are never copied into the
+quota ledger, alert record, ORAP status, or application logs.
+
 The reservation UUID is sent as Resend's `Idempotency-Key`. Contact delivery performs
 one initial attempt plus at most three retries for network, throttling, and provider 5xx
 failures, with bounded exponential backoff. Client/provider 4xx failures are terminal.

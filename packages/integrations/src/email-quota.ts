@@ -16,7 +16,7 @@ export interface EmailDeliveryQuota {
           readonly state: 'failed' | 'released';
         },
   ): Promise<void>;
-  reserve(channel: EmailDeliveryChannel): Promise<{ readonly id: string }>;
+  reserve(channel: EmailDeliveryChannel, units?: number): Promise<{ readonly id: string }>;
 }
 
 export type EmailDeliveryFailureCode =
@@ -41,9 +41,10 @@ export async function withEmailDeliveryQuota<T extends { readonly providerRefere
   quota: EmailDeliveryQuota | undefined,
   channel: EmailDeliveryChannel,
   operation: (idempotencyKey?: string) => Promise<T>,
+  units = 1,
 ): Promise<T> {
   if (!quota) return operation();
-  const reservation = await quota.reserve(channel);
+  const reservation = await quota.reserve(channel, units);
   try {
     const result = await operation(reservation.id);
     await quota.finalize(reservation, {

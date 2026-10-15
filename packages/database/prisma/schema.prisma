@@ -1037,6 +1037,7 @@ model EmailDeliveryReservation {
   state             String              @default("active") @db.VarChar(20)
   providerReference String?             @map("provider_reference") @db.VarChar(200)
   errorCode         String?             @map("error_code") @db.VarChar(100)
+  units             Int                 @default(1)
   createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
   expiresAt         DateTime            @map("expires_at") @db.Timestamptz(3)
   finalizedAt       DateTime?           @map("finalized_at") @db.Timestamptz(3)

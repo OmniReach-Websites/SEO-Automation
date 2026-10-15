@@ -50,4 +50,8 @@ G22 alert/email lifecycle, G27 OAuth/property/metric tests, G28 reporting fixtur
 G30 replay/privacy/permissions tests prove the decision. On 2026-10-15, controlled
 messages from the approved authentication and alert identities were provider-confirmed
 delivered to the approved test recipient and recorded as sent without message content.
-Automated urgent delivery remains off until its final recipient is approved.
+Every active Platform Owner ORAP account is an approved urgent-alert recipient. Resolve
+the list at delivery time through a worker-only database function that requires active
+user, ORAP staff, and legacy owner state. Send one provider request for the deduplicated
+list and reserve quota by recipient count. Automated urgent delivery remains off until
+this routing is deployed and a multi-owner delivery test passes.

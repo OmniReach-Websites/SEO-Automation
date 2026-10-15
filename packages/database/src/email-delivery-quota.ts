@@ -36,9 +36,12 @@ export class PostgresEmailDeliveryQuota {
     private readonly providerUsage?: EmailProviderUsageReader,
   ) {}
 
-  async reserve(channel: EmailDeliveryChannel): Promise<EmailDeliveryReservation> {
+  async reserve(channel: EmailDeliveryChannel, units = 1): Promise<EmailDeliveryReservation> {
     if (!this.providerUsage) {
       throw new Error('Account-wide email usage guard is not configured');
+    }
+    if (!Number.isInteger(units) || units < 1 || units > 50) {
+      throw new Error('Email delivery reservation units must be between 1 and 50');
     }
     const usage = await this.providerUsage.read();
     try {
@@ -46,9 +49,16 @@ export class PostgresEmailDeliveryQuota {
         client.query<{ id: string }>(
           `SELECT reserve_email_delivery(
                     $1::varchar(30), now() + interval '15 minutes',
-                    $2::integer, $3::integer, $4::integer, $5::integer
+                    $2::integer, $3::integer, $4::integer, $5::integer, $6::integer
                   ) AS id`,
-          [channel, usage.daily.used, usage.daily.limit, usage.monthly.used, usage.monthly.limit],
+          [
+            channel,
+            units,
+            usage.daily.used,
+            usage.daily.limit,
+            usage.monthly.used,
+            usage.monthly.limit,
+          ],
         ),
       );
       const id = result.rows[0]?.id;

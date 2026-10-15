@@ -68,7 +68,6 @@ const configSchema = z
       .enum(['true', 'false'])
       .default('false')
       .transform((value) => value === 'true'),
-    ALERT_EMAIL_RECIPIENT: optionalNonempty.pipe(z.string().email().optional()),
     ASSET_STORAGE_ROOT: z.string().trim().min(1).default('runtime-data/assets'),
     API_HOST: z.string().default('127.0.0.1'),
     API_PORT: z.coerce.number().int().min(1).max(65535).default(4100),
@@ -259,13 +258,14 @@ const configSchema = z
     }
     if (
       config.ALERT_EMAIL_DELIVERY_ENABLED &&
-      (!config.RESEND_API_KEY || !config.ALERT_EMAIL_RECIPIENT)
+      (!config.RESEND_API_KEY || !config.RESEND_ALERT_FROM)
     ) {
-      for (const path of ['RESEND_API_KEY', 'ALERT_EMAIL_RECIPIENT'] as const) {
+      for (const path of ['RESEND_API_KEY', 'RESEND_ALERT_FROM'] as const) {
         if (!config[path]) {
           context.addIssue({
             code: 'custom',
-            message: 'Resend API key and alert recipient are required when alert email is enabled',
+            message:
+              'Resend API key and verified alert sender are required when alert email is enabled',
             path: [path],
           });
         }

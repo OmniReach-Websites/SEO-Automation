@@ -41,7 +41,7 @@ describe('email delivery quota', () => {
     expect(query.mock.calls[0]?.[0]).toBe('BEGIN');
     expect(query.mock.calls[1]?.[0]).toBe('SET LOCAL ROLE omnireach_app');
     expect(query.mock.calls[2]?.[0]).toContain('reserve_email_delivery');
-    expect(query.mock.calls[2]?.[1]).toEqual(['authentication', 7, 100, 28, 3000]);
+    expect(query.mock.calls[2]?.[1]).toEqual(['authentication', 1, 7, 100, 28, 3000]);
     expect(query.mock.calls[6]?.[0]).toContain('finalize_email_delivery');
     expect(query.mock.calls[6]?.[1]).toEqual([
       '90000000-0000-4000-8000-000000000001',
@@ -76,6 +76,25 @@ describe('email delivery quota', () => {
       'ROLLBACK',
     ]);
     expect(release).toHaveBeenCalledOnce();
+  });
+
+  it('reserves one quota unit for each recipient in a multi-owner alert', async () => {
+    const query = vi
+      .fn()
+      .mockResolvedValue({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: '90000000-0000-4000-8000-000000000004' }] })
+      .mockResolvedValueOnce({ rows: [] });
+    const quota = new PostgresEmailDeliveryQuota(
+      { connect: vi.fn(async () => ({ query, release: vi.fn() })) },
+      'omnireach_worker',
+      usage,
+    );
+
+    await quota.reserve('alert', 2);
+
+    expect(query.mock.calls[2]?.[1]).toEqual(['alert', 2, 7, 100, 28, 3000]);
   });
 
   it('fails closed before opening a transaction when account-wide usage is unavailable', async () => {
@@ -160,7 +179,7 @@ describe('email delivery quota', () => {
       quota,
     });
     await notifier.send({ code: '12345678', normalizedEmail: 'recipient@example.test' });
-    expect(quota.reserve).toHaveBeenCalledWith('authentication');
+    expect(quota.reserve).toHaveBeenCalledWith('authentication', 1);
     expect(quota.reserve).toHaveBeenCalledTimes(1);
   });
 });
