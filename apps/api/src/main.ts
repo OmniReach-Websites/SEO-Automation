@@ -272,46 +272,11 @@ const server = buildApiServer({
             WHERE fixture_id = 'production-openai-live-v1'
             ORDER BY created_at DESC LIMIT 1`,
         )) as { rows: { created_at: Date; passed: boolean; safe_result: unknown }[] };
-        const activeSites = await benchmarkCount(
-          client,
-          `SELECT count(*)::integer AS value FROM sites WHERE status = 'active'`,
-        );
-        const activeSubscriptions = await benchmarkCount(
-          client,
-          `SELECT count(*)::integer AS value
-             FROM subscriptions subscription
-             JOIN sites site
-               ON site.tenant_id = subscription.tenant_id AND site.id = subscription.site_id
-            WHERE site.status = 'active' AND subscription.status = 'active'`,
-        );
-        const eligibleFields = await benchmarkCount(
-          client,
-          `SELECT count(*)::integer AS value
-             FROM content_fields field
-             JOIN sites site ON site.tenant_id = field.tenant_id AND site.id = field.site_id
-            WHERE site.status = 'active' AND NOT field.protected
-              AND field.ai_mode <> 'disabled' AND field.field_type IN ('text', 'richText')`,
-        );
-        const sitesWithRevisions = await benchmarkCount(
-          client,
-          `SELECT count(DISTINCT revision.site_id)::integer AS value
-             FROM content_revisions revision
-             JOIN sites site
-               ON site.tenant_id = revision.tenant_id AND site.id = revision.site_id
-            WHERE site.status = 'active'`,
-        );
         const row = result.rows[0];
-        const safePreflight = {
-          activeSiteCount: activeSites,
-          activeSubscriptionCount: activeSubscriptions,
-          eligibleFieldMetadataCount: eligibleFields,
-          siteWithRevisionCount: sitesWithRevisions,
-        };
-        if (!row) return { preflight: safePreflight, state: 'missing' };
+        if (!row) return { state: 'missing' };
         return {
           createdAt: row.created_at.toISOString(),
           passed: row.passed,
-          preflight: safePreflight,
           result: sanitizeBenchmarkResult(row.safe_result),
         };
       },
@@ -351,14 +316,6 @@ function sanitizeBenchmarkResult(value: unknown): Record<string, boolean | numbe
         : [];
     }),
   );
-}
-
-async function benchmarkCount(
-  client: { query(query: string): Promise<unknown> },
-  queryText: string,
-): Promise<number> {
-  const result = (await client.query(queryText)) as { rows: { value: number }[] };
-  return Number(result.rows[0]?.value ?? 0);
 }
 
 async function shutdown(signal: string): Promise<void> {
