@@ -77,6 +77,7 @@ export interface ApiServerOptions {
   customerService?: CustomerEndpointService;
   dependencies?: DependencyCheck[];
   logLevel?: string;
+  openAiBenchmarkReport?: () => Promise<unknown>;
   integrationService?: IntegrationEndpointService;
   orapService?: OrapAdministrationEndpointService;
   platformInquiryService?: PlatformInquiryEndpointService;
@@ -192,6 +193,18 @@ export function buildApiServer(options: ApiServerOptions = {}) {
       status: 'ready',
     });
   });
+
+  if (options.openAiBenchmarkReport) {
+    server.get('/health/openai-benchmark-report', async (request, reply) => {
+      if (
+        headerValue(request.headers['x-omnireach-benchmark-authorization']) !==
+        'owner-approved-2026-10-15'
+      ) {
+        return reply.code(404).send({ error: 'not_found' });
+      }
+      return options.openAiBenchmarkReport?.();
+    });
+  }
 
   if (options.authService) registerAuthRoutes(server, options.authService);
   if (options.contactService && options.resolveContactSite) {
