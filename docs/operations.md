@@ -154,10 +154,9 @@ approved production set of 3 daily and 1 weekly recovery points.
   and 3,000/month unless a lower provider limit is reported. Paid upgrades and overages
   require new owner approval.
 - Authentication delivery uses the selected sender `auth@updates.omnireach.cloud`.
-  `rhajj@omnireach.cloud` is approved as the testing alert recipient; reconfirm the final
-  production recipient before urgent-alert activation. Authentication email has
-  channel-specific activation authorization; alert and contact flags remain disabled
-  until their separate prerequisites are complete.
+  Authentication and urgent-alert delivery are active. Urgent recipients are every
+  active Platform Owner ORAP account, dynamically resolved under the database policy
+  below. The contact flag remains disabled until its separate prerequisites are complete.
 - Contact submissions route only to a verified per-customer business address, reject
   attachments by default, use Cloudflare Turnstile, honeypots, and rate limits, and are
   retained for 30 days before audited automatic deletion unless a legal or security hold
@@ -448,8 +447,10 @@ Live R-008 evidence recorded on 2026-10-15: Resend reported the sending domain v
 the credential passed domain and usage reads; and one bounded authentication test plus
 one bounded urgent-alert test were reported delivered. The quota ledger recorded both as
 sent with no failure code and no message content. Authentication delivery is active.
-Urgent-alert automation remains disabled pending its final approved recipient. Contact
-forms, platform inquiries, and confirmation messages remain disabled under R-009.
+On 2026-10-15, a second controlled alert used the production owner resolver, listed two
+recipients in one provider message, reached `delivered`, and recorded two quota units
+with no failure code. Urgent-alert automation is active. Contact forms, platform
+inquiries, and confirmation messages remain disabled under R-009.
 
 Authentication emails use the database-resolved exact customer admin hostname and
 time-limited one-time tokens; request URLs are redacted from application logs.
