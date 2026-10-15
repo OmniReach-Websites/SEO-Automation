@@ -53,6 +53,12 @@ export {
 } from './resend-verification-code.ts';
 export { ResendUrgentEmailAdapter, type ResendUrgentEmailOptions } from './resend-alert.ts';
 export {
+  ResendAccountUsageProvider,
+  type EmailProviderUsageSnapshot,
+  type EmailProviderUsageWindow,
+  type ResendAccountUsageOptions,
+} from './resend-usage.ts';
+export {
   EncryptedTokenVault,
   GoogleConnectionManager,
   GoogleHttpProvider,

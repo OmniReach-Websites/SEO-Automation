@@ -2342,18 +2342,30 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
             (
               await query<{
                 cap_count: number;
+                daily_cap_count: number;
+                daily_reserved_count: number;
+                daily_sent_count: number;
+                day_start: Date;
                 failed_attempt_count: number;
                 last_attempt_at: Date | null;
                 last_error_code: string | null;
                 period_start: Date;
+                provider_observed_at: Date | null;
                 reserved_count: number;
                 sent_count: number;
               }>(
                 client,
                 `SELECT policy.monthly_limit AS cap_count,
+                        policy.daily_limit AS daily_cap_count,
                         date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
                           AS period_start,
-                        COALESCE(period.sent_count, 0)::integer AS sent_count,
+                        date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+                          AS day_start,
+                        GREATEST(COALESCE(period.sent_count, 0),
+                                 COALESCE(period.provider_used_count, 0))::integer AS sent_count,
+                        GREATEST(COALESCE(day.sent_count, 0),
+                                 COALESCE(day.provider_used_count, 0))::integer
+                          AS daily_sent_count,
                         COALESCE(period.failed_attempt_count, 0)::integer
                           AS failed_attempt_count,
                         (SELECT count(*)::integer FROM email_delivery_reservations reservation
@@ -2361,15 +2373,25 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
                             date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
                             AND reservation.state = 'active'
                             AND reservation.expires_at > now()) AS reserved_count,
+                        (SELECT count(*)::integer FROM email_delivery_reservations reservation
+                          WHERE reservation.day_start =
+                            date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+                            AND reservation.state = 'active'
+                            AND reservation.expires_at > now()) AS daily_reserved_count,
                         (SELECT max(created_at) FROM email_delivery_reservations)
                           AS last_attempt_at,
                         (SELECT error_code FROM email_delivery_reservations
                           WHERE state = 'failed' AND error_code IS NOT NULL
                           ORDER BY created_at DESC LIMIT 1) AS last_error_code
+                        ,GREATEST(period.provider_observed_at, day.provider_observed_at)
+                          AS provider_observed_at
                    FROM email_delivery_policy policy
                    LEFT JOIN email_delivery_periods period
                      ON period.period_start =
                        date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+                   LEFT JOIN email_delivery_days day
+                     ON day.day_start =
+                       date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
                   WHERE policy.singleton = true`,
                 [],
               )
@@ -2424,6 +2446,10 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
                 ],
                 credentialConfigured: this.emailRuntime?.credentialConfigured ?? false,
                 failedAttemptCount: email.failed_attempt_count,
+                dailyLimit: email.daily_cap_count,
+                dailyReservedCount: email.daily_reserved_count,
+                dailyUsedCount: email.daily_sent_count,
+                dayStart: email.day_start.toISOString(),
                 ...(email.last_attempt_at
                   ? { lastAttemptAt: email.last_attempt_at.toISOString() }
                   : {}),
@@ -2433,6 +2459,9 @@ export class PostgresOrapService implements OrapAdministrationEndpointService {
                 monthlyLimit: email.cap_count,
                 periodStart: email.period_start.toISOString(),
                 provider: 'Resend',
+                ...(email.provider_observed_at
+                  ? { providerObservedAt: email.provider_observed_at.toISOString() }
+                  : {}),
                 reservedCount: email.reserved_count,
                 sentCount: email.sent_count,
                 turnstileConfigured: this.emailRuntime?.turnstileConfigured ?? false,

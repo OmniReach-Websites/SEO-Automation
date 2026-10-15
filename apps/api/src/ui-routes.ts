@@ -1335,10 +1335,15 @@ function parseEmailOperations(value: unknown): EmailOperationsView | undefined {
   }
   const provider = stringValue(value.provider);
   const periodStart = stringValue(value.periodStart);
+  const dayStart = stringValue(value.dayStart);
+  const providerObservedAt = stringValue(value.providerObservedAt);
   const lastAttemptAt = stringValue(value.lastAttemptAt);
   const lastErrorCode = stringValue(value.lastErrorCode);
   const numbers = [
     value.monthlyLimit,
+    value.dailyLimit,
+    value.dailyReservedCount,
+    value.dailyUsedCount,
     value.sentCount,
     value.reservedCount,
     value.failedAttemptCount,
@@ -1346,6 +1351,7 @@ function parseEmailOperations(value: unknown): EmailOperationsView | undefined {
   if (
     !provider ||
     !periodStart ||
+    !dayStart ||
     numbers.some(
       (entry) => typeof entry !== 'number' || !Number.isSafeInteger(entry) || entry < 0,
     ) ||
@@ -1366,12 +1372,17 @@ function parseEmailOperations(value: unknown): EmailOperationsView | undefined {
   return {
     channels,
     credentialConfigured: value.credentialConfigured,
+    dailyLimit: value.dailyLimit as number,
+    dailyReservedCount: value.dailyReservedCount as number,
+    dailyUsedCount: value.dailyUsedCount as number,
+    dayStart,
     failedAttemptCount: value.failedAttemptCount as number,
     ...(lastAttemptAt ? { lastAttemptAt } : {}),
     ...(lastErrorCode ? { lastErrorCode } : {}),
     monthlyLimit: value.monthlyLimit as number,
     periodStart,
     provider,
+    ...(providerObservedAt ? { providerObservedAt } : {}),
     reservedCount: value.reservedCount as number,
     sentCount: value.sentCount as number,
     turnstileConfigured: value.turnstileConfigured,

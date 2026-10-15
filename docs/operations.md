@@ -147,15 +147,17 @@ approved production set of 3 daily and 1 weekly recovery points.
 - Google integrations use one owner-controlled OmniReach Google Cloud OAuth project.
   Each customer's Search Console and GA4 property is connected individually through an
   authorized Google account and exact verified property mapping.
-- Resend is the selected delivery adapter for critical operational alerts and customer
-  contact forms. Planned alert sending uses `updates.omnireach.cloud` and confirmed sender
-  `alerts@updates.omnireach.cloud` on a $0 budget. ORAP retains the authoritative alert
-  lifecycle; only critical failures also send email. Provider limits are hard admission
-  boundaries, and paid upgrades/overages require new owner approval.
+- Resend is the selected delivery adapter for authentication, critical operational
+  alerts, and optional customer contact forms. Its verified sending domain is
+  `updates.omnireach.cloud`; approved senders are `auth@`, `alerts@`, and `forms@` on
+  that domain. The $0 policy applies hard account-wide admission boundaries of 100/day
+  and 3,000/month unless a lower provider limit is reported. Paid upgrades and overages
+  require new owner approval.
 - Authentication delivery uses the selected sender `auth@updates.omnireach.cloud`.
   `rhajj@omnireach.cloud` is approved as the testing alert recipient; reconfirm the final
-  production recipient before activation. Email delivery flags remain disabled until
-  sender-domain verification and credential installation are complete.
+  production recipient before urgent-alert activation. Authentication email has
+  channel-specific activation authorization; alert and contact flags remain disabled
+  until their separate prerequisites are complete.
 - Contact submissions route only to a verified per-customer business address, reject
   attachments by default, use Cloudflare Turnstile, honeypots, and rate limits, and are
   retained for 30 days before audited automatic deletion unless a legal or security hold
@@ -412,16 +414,18 @@ Installing a credential alone never enables any path. Contact delivery additiona
 requires both Cloudflare Turnstile keys at process startup; missing abuse-control
 configuration rejects activation rather than exposing an unprotected form.
 
-All enabled Resend channels share one PostgreSQL-authoritative UTC calendar-month
-admission policy. The initial no-spend limit is 3,000 messages across urgent alerts,
-authentication, contact, and platform-inquiry channels. A restricted application or
-worker transaction calls security-definer reserve/finalize functions; the runtime login
-cannot read the underlying policy, period, or reservation tables directly. Admission
-locks the singleton policy/period, releases expired 15-minute reservations, and rejects
-when sent plus active reservations reaches the cap. Failed/released reservations do not
-consume sent capacity. Records contain only channel, lifecycle timestamps, a provider
-reference, and an allowlisted safe error code—never a recipient, subject, body,
-verification code, form payload, API key, or provider response.
+All enabled Resend channels first read the provider's account-wide Usage API, then share
+PostgreSQL-authoritative UTC day and calendar-month admission ledgers. The initial
+no-spend limits are 100/day and 3,000/month across urgent alerts, authentication,
+contact, platform-inquiry, and any other usage on the same Resend account. Admission
+uses the lower of the provider-reported and internal cap, the greater of observed
+provider use and finalized internal use, and all active reservations. A restricted
+application or worker transaction calls security-definer reserve/finalize functions;
+the runtime login cannot read the underlying policy, day, period, or reservation tables
+directly. Missing/malformed provider usage fails closed. Records contain only counts,
+channel, lifecycle timestamps, a provider reference, and an allowlisted safe error
+code—never a recipient, subject, body, verification code, form payload, API key, or raw
+provider response.
 
 The reservation UUID is sent as Resend's `Idempotency-Key`. Contact delivery performs
 one initial attempt plus at most three retries for network, throttling, and provider 5xx
@@ -431,6 +435,13 @@ shows only nonsecret activation/configuration state, the current limit and count
 channel status, latest attempt time, and allowlisted failure class. Quota exhaustion,
 provider failure, or ORAP status-query failure must not reduce static website
 availability.
+
+Live R-008 evidence recorded on 2026-10-15: Resend reported the sending domain verified;
+the credential passed domain and usage reads; and one bounded authentication test plus
+one bounded urgent-alert test were reported delivered. The quota ledger recorded both as
+sent with no failure code and no message content. Authentication delivery is active.
+Urgent-alert automation remains disabled pending its final approved recipient. Contact
+forms, platform inquiries, and confirmation messages remain disabled under R-009.
 
 Authentication emails use the database-resolved exact customer admin hostname and
 time-limited one-time tokens; request URLs are redacted from application logs.
