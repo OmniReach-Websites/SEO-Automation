@@ -14,7 +14,7 @@ has supplied the decision and the named approver has authorized its use.
 | R-006 | Jurisdictions and approved privacy/consent/terms/retention policies                       | Partial: initially operate in Texas, USA; privacy, cookie-consent, terms, and deletion policies require owner review before launch; exact approved texts remain pending                                                                                                                                                                                                                                                                                                                                                                                                                               | Owner, 2026-10-10                                  |
 | R-007 | Google OAuth project, redirects, properties, permissions                                  | Partial: owner supplied the existing client credentials, approved `https://admin.omnireach.cloud/v1/orap/integrations/google/callback`, reported the intended Search Console/GA4 connections completed, and authorized the bounded metrics worker on 2026-10-13. First-sync evidence, exact live-source comparison, and provider consent-screen confirmation remain TODO.                                                                                                                                                                                                                             | Owner, 2026-10-13                                  |
 | R-008 | Alert/auth-email provider, senders, recipients, escalation, spend                         | Partial/active for authentication only: Resend verified `updates.omnireach.cloud`; approved senders are `auth@`, `alerts@`, and `forms@`. The host-only credential has mode `0640`. The $0 account reports hard limits of 100/day and 3,000/provider-period; account-wide usage plus active reservations are checked before every send. Controlled auth and alert messages to the approved test recipient were provider-confirmed delivered and safely recorded on 2026-10-15. Authentication delivery is active. Urgent alerts still require a final recipient; forms/confirmations remain disabled. | Owner and live verification, 2026-10-15            |
-| R-009 | Contact delivery, recipients, abuse/attachment/retention/consent policy                   | Repository-ready, production inactive: optional centralized forms use Resend sender `forms@updates.omnireach.cloud`, verified site recipients, 30-day retention except legal/security holds, Turnstile, honeypots, rate limits, explicit activation, bounded retry, and the shared email cap; recipient/provider/DNS setup, credentials, activation, and legal wording remain pending                                                                                                                                                                                                                 | Owner, 2026-10-11                                  |
+| R-009 | Contact delivery, recipients, abuse/attachment/retention/consent policy                   | Repository-ready, production inactive: optional centralized forms use the verified Resend domain and sender `forms@updates.omnireach.cloud`, verified site recipients, 30-day retention except legal/security holds, Turnstile, honeypots, rate limits, explicit activation, bounded retry, and the shared email cap. Customer recipient verification, production Turnstile configuration, explicit contact-channel activation, and legal wording remain pending.                                                                                                                                     | Owner and live verification, 2026-10-15            |
 | R-010 | GitHub approvers, VPS deploy identity, host key, key custodian                            | Complete for this release: `omnireach-deploy`, deploy key, verified host key, protected GitHub `production` environment and main-only workflow are configured. Owner gave full Phase 3–6 production authorization and confirmed temporary root access on 2026-10-13.                                                                                                                                                                                                                                                                                                                                  | Owner, 2026-10-13                                  |
 | R-011 | Plans, prices, seats, exact nonpayment grace period                                       | TODO: draft tiers and effective ORAP plan/subscription/override/grace controls are implemented. Final prices, setup/bespoke fees, quota definitions, overages, collection, cancellation and commercial approval remain TODO.                                                                                                                                                                                                                                                                                                                                                                          | Owner, 2026-10-13                                  |
 | R-012 | OpenAI project, key custodian, production spend authority/limit                           | Partial: owner selected `content-review-balanced` (`gpt-6.1-sol`) and authorized a $5/site/month hard ceiling on 2026-10-13. The durable handler/material path, dated price record and synthetic benchmark are implemented locally. The provider gate remains off pending a representative paid-provider benchmark, explicit activation, and production smoke evidence; the $50 platform ceiling remains.                                                                                                                                                                                             | Owner, 2026-10-13; repository evidence, 2026-10-14 |
@@ -133,14 +133,14 @@ Contact forms, platform inquiries, and confirmation email remain disabled pendin
 recipient, legal-consent, and Turnstile approval. Provider or quota failure never
 bypasses MFA and never affects public website availability.
 
-The same disabled authentication adapter is the planned delivery path for routine ORAP
-and opt-in customer email verification codes. These codes are authentication material,
+The active authentication adapter is the delivery path for routine ORAP and opt-in
+customer email verification codes. These codes are authentication material,
 not operational alerts: they receive no delivery retry that could bypass resend limits,
 and their plaintext must not enter Redis/database storage, application/provider-response
 logs, audit records, chat, or Git. Resend necessarily processes message plaintext during
-delivery, so email remains a weaker, non-phishing-resistant method. No provider account,
-sender verification, credential, DNS change, or production authentication email is
-authorized by this record.
+delivery, so email remains a weaker, non-phishing-resistant method. This authorization
+does not activate automated urgent-alert delivery, contact forms, platform inquiries, or
+confirmation messages.
 
 R-009 defines contact forms as optional reusable site components backed by one
 centralized tenant-scoped submission, abuse-control, delivery, and retention system.
@@ -148,10 +148,11 @@ ORAP administrators can enable or disable forms per website. Authorized customer
 can configure only supported fields and view only their own site's submissions.
 Confirmation emails are optional and disabled by default. Production protection uses
 Cloudflare Turnstile, honeypots, and rate limits. The selected sender is
-`forms@updates.omnireach.cloud`. Verified customer recipients, sender-domain/provider
-setup, credentials, explicit production activation, and legally approved consent wording
-remain pending. Installing a Resend credential does not activate forms or platform
-inquiries; the explicit contact flag and both Turnstile keys are required.
+`forms@updates.omnireach.cloud` on the verified sender domain. Verified customer
+recipients, production Turnstile configuration, explicit production activation, and
+legally approved consent wording remain pending. Installing a Resend credential does not
+activate forms or platform inquiries; the explicit contact flag and both Turnstile keys
+are required.
 
 R-010 fixes the repository at `OmniReach-Websites/SEO-Automation` and the owner as both
 production approver and deploy-key custodian. Only a verified push to protected `main`

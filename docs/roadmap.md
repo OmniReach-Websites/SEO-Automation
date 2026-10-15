@@ -96,7 +96,7 @@ These are not architecture choices for Codex to invent. A goal may implement a c
 | R-006 | Partial: initially operate in Texas, USA. Privacy, cookie-consent, terms, and deletion policies require business-owner review before launch; exact approved policy text, incident notification, and revision-retention rules remain pending.                                                                                                                                                                                                                                                      | Real analytics or customer launch in G27/G32                           |
 | R-007 | Partial: use one owner-controlled OmniReach Google Cloud OAuth project and connect each customer's Search Console/GA4 properties individually through authorized accounts. Project ID, redirect URIs, consent-screen status, concrete properties, and access remain pending.                                                                                                                                                                                                                      | Live Search Console/GA4 connection in G27/G32                          |
 | R-008 | Partial/active for authentication: Resend reports `updates.omnireach.cloud` verified and the host-only credential can read domains and usage. The $0 policy enforces the lower of provider and OmniReach caps (100/day and 3,000/month) against account-wide usage plus atomic reservations. Controlled auth/alert tests were provider-confirmed delivered and safely recorded. Authentication is active; urgent automation still needs a final recipient. Forms remain gated by R-009.           | Production email alerts/authentication in G05/G22/G31                  |
-| R-009 | Partial: optional reusable centralized forms use Resend with selected sender `forms@updates.omnireach.cloud`, verified per-site recipients, 30-day retention except legal/security holds, Turnstile, honeypots, rate limits, and confirmation email off by default. Recipient verification, provider/DNS setup, credentials, explicit activation, and legal consent wording remain pending.                                                                                                       | Live contact forms in G31/G32                                          |
+| R-009 | Partial: optional reusable centralized forms use the verified Resend domain and sender `forms@updates.omnireach.cloud`, verified per-site recipients, 30-day retention except legal/security holds, Turnstile, honeypots, rate limits, and confirmation email off by default. Customer recipient verification, production Turnstile configuration, explicit activation, and legal consent wording remain pending.                                                                                 | Live contact forms in G31/G32                                          |
 | R-010 | In progress: repository, restricted `omnireach-deploy` identity, verified ED25519 host key, protected `production` environment, main-only deployment policy, and key custody are configured. The owner authorized end-to-end G31 completion on 2026-10-11. The one-time root install, live permission/prechecks, deployment, and rollback evidence remain pending.                                                                                                                                | Production release activation in G31                                   |
 | R-011 | Selected proposal: STARTER $500/2 seats/5 pages/weekly SEO/2 AI cycles; GROWTH $1,000/5/10/daily/8; PRO $1,500/10/20/daily/16; ELITE $2,000/20/30/daily/30. One site/location by default, ORAP configuration/overrides, $5 site AI budget, and 14-day grace apply. Final prices, setup/bespoke fees, definitions, and overage policy remain pending.                                                                                                                                              | Commercial customer onboarding in G32                                  |
 | R-012 | Partial: dedicated project/key is host-configured; owner controls spend. Atomic $5/site and $50 platform caps apply. Candidate aliases map balanced content review to `gpt-6.1-sol` and economy to `gpt-6-luna`; `OPENAI_PROVIDER_ENABLED=false` until representative cost/quality tests and explicit paid-call activation.                                                                                                                                                                       | Live OpenAI calls in G25/G32                                           |
@@ -454,9 +454,10 @@ release path refuses an unreviewed pre-v2-to-v2 boundary crossing.
 **Dependencies:** G04  
 **Decision basis / remaining inputs:** D-002, D-003, and D-006 are approved. R-002
 supplies the owner policy and custody decision. R-008 selects Resend and
-`auth@updates.omnireach.cloud`, but sender verification, credentials, provider limits,
-and activation remain production gates. Local implementation uses a non-delivering test
-adapter and does not wait for Resend activation.
+`auth@updates.omnireach.cloud`. The sender domain and host-only credential are verified,
+the current 100/day and 3,000/month account limits are enforced, and controlled delivery
+tests passed before authentication email was activated. Urgent alerts and contact email
+remain separately gated.
 
 **Requirements**
 
@@ -1034,7 +1035,7 @@ subscriptions, overrides, emergency state, and immutable policy audit history.
 **Status:** `complete`
 **Priority:** P0  
 **Dependencies:** G10, G11, G12  
-**Decision basis / remaining inputs:** D-009, D-010, and D-020 are approved. R-009 makes contact forms optional reusable components backed by one centralized service. It selects Resend sender `forms@updates.omnireach.cloud`, verified per-site recipients, 30-day retention except legal/security holds, Cloudflare Turnstile, honeypots, rate limits, and optional confirmation email disabled by default. Concrete verified recipients, provider/DNS setup, credentials, explicit activation, and owner-approved consent wording remain production gates, not local implementation gaps.
+**Decision basis / remaining inputs:** D-009, D-010, and D-020 are approved. R-009 makes contact forms optional reusable components backed by one centralized service. It selects the verified Resend domain and sender `forms@updates.omnireach.cloud`, verified per-site recipients, 30-day retention except legal/security holds, Cloudflare Turnstile, honeypots, rate limits, and optional confirmation email disabled by default. Concrete verified customer recipients, production Turnstile configuration, explicit contact-channel activation, and owner-approved consent wording remain production gates, not local implementation gaps.
 
 **Requirements**
 
@@ -1495,15 +1496,16 @@ functions. The in-memory ledger is limited to unit tests; it is not a production
 **Status:** `complete`  
 **Priority:** P1  
 **Dependencies:** G20, G21  
-**Decision basis / remaining inputs:** D-021 and D-023 are approved. R-008 plans Resend's $0 free tier using `updates.omnireach.cloud`, confirmed sender `alerts@updates.omnireach.cloud`, up to three exponential-backoff retries, deduplication, and ORAP failure history. Sender/domain verification, recipient confirmation, provider setup, credentials, and explicit activation remain before production delivery. Free-tier monthly and daily limits must be reverified at activation; no paid overage is authorized.
+**Decision basis / remaining inputs:** D-021 and D-023 are approved. R-008 uses Resend's $0 tier with the verified `updates.omnireach.cloud` domain, approved sender `alerts@updates.omnireach.cloud`, up to three exponential-backoff retries, deduplication, and ORAP failure history. The host-only credential, 100/day and 3,000/month account limits, and controlled alert delivery are verified. A final urgent-alert recipient is the remaining activation gate; no paid overage is authorized.
 
-**Current repository evidence:** The Priority 4 hardening candidate adds independent
-disabled-by-default activation flags, Turnstile-gated contact activation, a shared atomic
-3,000-message UTC monthly PostgreSQL admission boundary, restricted app/worker function
-execution with direct-table denial, provider idempotency keys, bounded retry, safe ORAP
-status, and production-equivalent Compose verification. This is implementation evidence,
-not sender/domain verification, live delivery, free-tier confirmation, or permission to
-activate Resend.
+**Current repository and production evidence:** Independent activation flags,
+Turnstile-gated contact activation, shared atomic daily/monthly PostgreSQL admission,
+account-wide provider usage reads, restricted app/worker function execution with
+direct-table denial, provider idempotency keys, bounded retry, safe ORAP status, and
+production-equivalent Compose verification are implemented. Live verification confirms
+the sender domain, credential, free-tier limits, and controlled auth/alert delivery.
+Authentication delivery is active; urgent alerts still require a final recipient and
+contact channels remain disabled under R-009.
 
 **Requirements**
 
@@ -1531,7 +1533,8 @@ activate Resend.
 4. Implement fingerprinted open/acknowledged/resolved alerts with severity, ownership, scope, and remediation link.
 5. Batch/dedupe repeated events and expose permissioned replay/cancel controls.
 6. Route only policy-defined urgent alerts to the email adapter, deduplicate them with the ORAP fingerprint, and record send/retry/failure without leaking sensitive data.
-7. Keep production email disabled until R-008 is configured and explicitly authorized.
+7. Keep each production channel independently disabled until its R-008/R-009 gates are
+   complete and explicitly authorized.
 8. Apply the 30-day operational-log and 12-month audit-record defaults through explicit retention jobs; preserve active incidents and legal/site holds.
 
 **Database impact:** Add schedules, scheduler leases, alerts, occurrences, acknowledgment/assignment, and resolution history with RLS.  
