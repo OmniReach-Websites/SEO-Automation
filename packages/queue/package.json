@@ -9,7 +9,7 @@
     "kind": "package"
   },
   "dependencies": {
-    "bullmq": "5.61.2",
+    "bullmq": "6.3.15",
     "zod": "4.6.5"
   }
 }
