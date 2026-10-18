@@ -15,7 +15,7 @@
     "@omnireach/shared": "0.0.0",
     "@omnireach/tenant": "0.0.0",
     "file-type": "22.1.1",
-    "sanitize-html": "2.18.0",
+    "sanitize-html": "2.18.1",
     "sharp": "0.35.5"
   }
 }
