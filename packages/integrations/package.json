@@ -11,6 +11,6 @@
   "dependencies": {
     "@omnireach/observability": "0.0.0",
     "@omnireach/shared": "0.0.0",
-    "zod": "4.6.5"
+    "zod": "4.6.7"
   }
 }
